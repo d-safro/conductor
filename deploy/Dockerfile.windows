@@ -1,0 +1,13 @@
+# Cross-builds maestro.exe for Windows (x86_64, MinGW) without installing anything on the host:
+#   docker build -f deploy/Dockerfile.windows --output type=local,dest=dist/windows .
+FROM rust:1-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 && rm -rf /var/lib/apt/lists/*
+RUN rustup target add x86_64-pc-windows-gnu
+ENV CARGO_BUILD_JOBS=4 \
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked --target x86_64-pc-windows-gnu
+
+FROM scratch
+COPY --from=build /src/target/x86_64-pc-windows-gnu/release/maestro.exe /maestro.exe

@@ -99,7 +99,7 @@ Then `maestro import-music-lookup <music-lookup DATA folder> [<its state folder 
 music-lookup's listening log, Encore's sync values and the podcasts (plays already brought over from Navidrome
 aren't counted twice).
 
-Docker: `docker build -f deploy/Dockerfile -t maestro .` (see `deploy/compose.example.yml`).
+Docker, Windows (`maestro.exe`, cross-built in a container): see `deploy/README.md`.
 
 ## Develop
 
@@ -109,3 +109,5 @@ cargo clippy --all-targets
 ```
 
 CI (`.github/workflows/ci.yml`) runs both on Linux and Windows.
+
+> Scratch runs against a real music folder: set `MAESTRO_READ_ONLY=1`, or downloads, trial songs and covers write into it.

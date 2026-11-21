@@ -1,0 +1,7 @@
+target
+data
+*.db
+*.db-*
+secret.key
+config.toml
+.git
