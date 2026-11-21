@@ -64,11 +64,15 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 - **AudioMuse-AI** (optional; set `audiomuse_url` / `audiomuse_token`): `getSonicSimilarTracks` and `findSonicPath`
   from AudioMuse's analysis, and Encore's read-only recommendation calls at `/rest/audiomuse/<endpoint>` (an
   allow-list, logins never passed on). Without it these say "not available" and apps fall back.
+- **ListenBrainz**: plays are sent there (`listenbrainz_token`; failed ones resent later), and its playlists made
+  for you (`listenbrainz_user`; Weekly Exploration, Weekly Jams, Daily Jams — `discovery`) become playlists: songs
+  you have go straight in, the rest are downloaded into `Discovery/` and join as they arrive; when the next list
+  comes, songs you didn't keep (heart, 4+, another playlist) are deleted and kept ones move to `Songs/`. (Explo's job.)
 - **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: Spotify sync,
+Coming next: Spotify sync, a Windows installer,
 artist info. See `docs/api/` for the extension list.
 
 ## Run it

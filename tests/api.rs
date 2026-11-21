@@ -1215,3 +1215,108 @@ async fn admin_page() {
     http.post(api("logout")).header("X-Maestro", "1").send().await.unwrap();
     assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
 }
+
+#[tokio::test]
+async fn listenbrainz_discovery_and_plays() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    if !have_ffmpeg() {
+        return;
+    }
+    let week = Arc::new(std::sync::atomic::AtomicU8::new(1));
+    let listens = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lb = format!("http://{}", l.local_addr().unwrap());
+    let (w2, l2) = (week.clone(), listens.clone());
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let (week, listens) = (w2.clone(), l2.clone());
+        async move {
+            let w = week.load(std::sync::atomic::Ordering::SeqCst);
+            let path = req.uri().path().to_string();
+            let body = match path.as_str() {
+                "/1/user/lbuser/playlists/createdfor" => json!({ "playlists": [
+                    { "playlist": { "title": format!("Weekly Exploration for lbuser, week {w}"), "identifier": format!("https://listenbrainz.org/playlist/pl-{w}"), "date": format!("2026-11-{:02}T00:00:00", 10 + w) } },
+                    { "playlist": { "title": "Weekly Jams for lbuser", "identifier": "https://listenbrainz.org/playlist/jams", "date": "2026-11-01T00:00:00" } }] }),
+                "/1/playlist/pl-1" => json!({ "playlist": { "track": [
+                    { "title": "One", "creator": "Alpha", "album": "First Album" },
+                    { "title": "Psycho Killer", "creator": "Talking Heads", "album": "Talking Heads: 77", "duration": 3000 }] } }),
+                "/1/playlist/pl-2" => json!({ "playlist": { "track": [{ "title": "Two", "creator": "Alpha" }] } }),
+                "/1/submit-listens" => {
+                    assert_eq!(req.headers()["authorization"], "Token lbtok");
+                    let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+                    listens.lock().unwrap().push(serde_json::from_slice(&b).unwrap());
+                    json!({ "status": "ok" })
+                }
+                _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let (s, _tmp) = trial_server(|c| {
+        c.listenbrainz_url = lb.clone();
+        c.listenbrainz_user = Some("lbuser".into());
+        c.listenbrainz_token = Some("lbtok".into());
+        c.discovery = vec!["weekly-exploration".into()];
+    })
+    .await;
+    tokio::spawn(maestro::listenbrainz::worker(s.st.clone()));
+
+    // week 1: the song you have goes straight in; the other is downloaded into Discovery/ and joins
+    let file = s.music.join("Discovery/Talking Heads/Talking Heads - Psycho Killer.flac");
+    let pid = {
+        let mut pid = String::new();
+        wait_for(
+            async || {
+                let r = s.ok("getPlaylists", &[]).await;
+                let p =
+                    r["playlists"]["playlist"].as_array().unwrap().iter().find(|p| p["name"] == "Weekly Exploration").cloned();
+                pid = p.map(|p| p["id"].as_str().unwrap().to_string()).unwrap_or_default();
+                !pid.is_empty()
+            },
+            "the discovery playlist",
+        )
+        .await;
+        pid
+    };
+    wait_for(async || file.is_file(), "the discovery download").await;
+    wait_for(
+        async || s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].as_array().is_some_and(|e| e.len() == 2),
+        "both songs in it",
+    )
+    .await;
+    let titles: Vec<String> = s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(titles, ["One", "Psycho Killer"]);
+
+    // plays are sent to ListenBrainz
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    s.ok("scrobble", &[("id", &one)]).await;
+    wait_for(
+        async || {
+            listens
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l["listen_type"] == "single" && l["payload"][0]["track_metadata"]["track_name"] == "One")
+        },
+        "the play at ListenBrainz",
+    )
+    .await;
+
+    // week 2: a new list; last week's song you didn't keep is deleted
+    week.store(2, std::sync::atomic::Ordering::SeqCst);
+    wait_for(async || !file.exists(), "last week's song to go").await;
+    wait_for(
+        async || {
+            let e = s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].clone();
+            e.as_array().is_some_and(|e| e.len() == 1 && e[0]["title"] == "Two")
+        },
+        "this week's list",
+    )
+    .await;
+}

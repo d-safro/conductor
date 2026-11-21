@@ -66,6 +66,14 @@ pub struct Config {
     /// AudioMuse-AI (optional): sound-alike songs, paths between sounds, Encore's recommendation calls.
     pub audiomuse_url: Option<String>,
     pub audiomuse_token: Option<String>,
+    /// ListenBrainz: plays are sent there (as Navidrome did), and its weekly playlists become discovery playlists.
+    pub listenbrainz_user: Option<String>,
+    pub listenbrainz_token: Option<String>,
+    /// Whose plays go to ListenBrainz and who owns the discovery playlists (default: the first admin).
+    pub listenbrainz_for: Option<String>,
+    pub listenbrainz_url: String,
+    /// Which ListenBrainz playlists to turn into discovery playlists ([] = none).
+    pub discovery: Vec<String>,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -118,6 +126,11 @@ impl Default for Config {
             itunes_url: "https://itunes.apple.com".into(),
             audiomuse_url: None,
             audiomuse_token: None,
+            listenbrainz_user: None,
+            listenbrainz_token: None,
+            listenbrainz_for: None,
+            listenbrainz_url: "https://api.listenbrainz.org".into(),
+            discovery: vec!["weekly-exploration".into(), "weekly-jams".into(), "daily-jams".into()],
             slskd_fast_test: false,
         }
     }
@@ -211,6 +224,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_LYRICS_ONLINE") {
             c.lyrics_online = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LISTENBRAINZ_USER") {
+            c.listenbrainz_user = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LISTENBRAINZ_TOKEN") {
+            c.listenbrainz_token = Some(v);
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

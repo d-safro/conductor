@@ -136,6 +136,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(maestro::api::podcasts::worker(state.clone()));
     tokio::spawn(maestro::catalog::acquire::worker(state.clone()));
     tokio::spawn(maestro::online::worker(state.clone()));
+    tokio::spawn(maestro::listenbrainz::worker(state.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();

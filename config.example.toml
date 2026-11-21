@@ -39,6 +39,16 @@ trial_per_day = 40
 lidarr_interval_min = 5
 lidarr_albums_per_run = 20
 lidarr_match_ratio = 0.8
+
+# ListenBrainz: plays are sent there; its playlists made for you become discovery playlists (what Explo did).
+# listenbrainz_user = "you"
+# listenbrainz_token = "…"                   # or MAESTRO_LISTENBRAINZ_TOKEN
+# listenbrainz_for = "you-in-maestro"        # default: the first admin
+discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
+
+# AudioMuse-AI (optional): sound-alike songs and Encore's recommendation calls.
+# audiomuse_url = "http://127.0.0.1:8000"
+# audiomuse_token = "…"                      # or MAESTRO_AUDIOMUSE_TOKEN
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]

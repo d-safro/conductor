@@ -88,37 +88,54 @@ struct Row {
     listed: bool,
 }
 
-/// Move a kept song from Trial/ to Songs/; the library keeps its id, hearts and playlists.
-async fn keep(st: &AppState, r: &Row) -> Result<()> {
-    let Some((lib, root)) = root(st) else { return Ok(()) };
-    let rel = r.rel.clone().unwrap_or_default();
-    let mut new_rel = rel.clone();
-    if let Some(rest) = rel.strip_prefix(&format!("{FOLDER}/")) {
-        new_rel = format!("Songs/{rest}");
-        let (src, dst) = (root.join(&rel), root.join(&new_rel));
-        if src.is_file() {
-            if let Some(d) = dst.parent() {
-                tokio::fs::create_dir_all(d).await?;
-            }
-            if dst.exists() {
-                tokio::fs::remove_file(&src).await?; // already have that file: drop the trial copy
-            } else if tokio::fs::rename(&src, &dst).await.is_err() {
-                tokio::fs::copy(&src, &dst).await?;
-                tokio::fs::remove_file(&src).await?;
-            }
-            if let Some(p) = src.parent() {
-                prune(&root.join(FOLDER), p.to_path_buf());
-            }
+/// Move a kept song from `folder`/ (Trial, Discovery) to Songs/; the library keeps its id, hearts and playlists.
+/// Returns its new place.
+pub async fn move_into_songs(st: &AppState, local_id: &str, rel: &str, folder: &str) -> Result<String> {
+    let Some((lib, root)) = root(st) else { return Ok(rel.to_string()) };
+    let Some(rest) = rel.strip_prefix(&format!("{folder}/")) else { return Ok(rel.to_string()) };
+    let new_rel = format!("Songs/{rest}");
+    let (src, dst) = (root.join(rel), root.join(&new_rel));
+    if src.is_file() {
+        if let Some(d) = dst.parent() {
+            tokio::fs::create_dir_all(d).await?;
         }
-        let mut tx = st.db.begin().await?;
-        sqlx::query("UPDATE track SET rel_path = ? WHERE id = ?").bind(&new_rel).bind(&r.local_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT OR REPLACE INTO id_override (kind, key, id) VALUES ('track', ?, ?)")
-            .bind(library::track_key(lib, &new_rel))
-            .bind(&r.local_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+        if dst.exists() {
+            tokio::fs::remove_file(&src).await?; // already have that file: drop this copy
+        } else if tokio::fs::rename(&src, &dst).await.is_err() {
+            tokio::fs::copy(&src, &dst).await?;
+            tokio::fs::remove_file(&src).await?;
+        }
+        if let Some(p) = src.parent() {
+            prune(&root.join(folder), p.to_path_buf());
+        }
     }
+    let mut tx = st.db.begin().await?;
+    sqlx::query("UPDATE track SET rel_path = ? WHERE id = ?").bind(&new_rel).bind(local_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT OR REPLACE INTO id_override (kind, key, id) VALUES ('track', ?, ?)")
+        .bind(library::track_key(lib, &new_rel))
+        .bind(local_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(new_rel)
+}
+
+/// Delete a downloaded file, but never anything outside `folder`/; empty folders go too.
+pub async fn delete_inside(st: &AppState, rel: Option<&str>, folder: &str) {
+    if let (Some((_, root)), Some(rel)) = (root(st), rel)
+        && rel.starts_with(&format!("{folder}/"))
+        && !rel.contains("..")
+    {
+        let f = root.join(rel);
+        let _ = tokio::fs::remove_file(&f).await;
+        if let Some(p) = f.parent() {
+            prune(&root.join(folder), p.to_path_buf());
+        }
+    }
+}
+
+async fn keep(st: &AppState, r: &Row) -> Result<()> {
+    let new_rel = move_into_songs(st, &r.local_id, r.rel.as_deref().unwrap_or(""), FOLDER).await?;
     sqlx::query("UPDATE request SET trial = 0, keep = 0, kept_at = ?, folder = 'Songs', rel = ? WHERE key = ?")
         .bind(now())
         .bind(&new_rel)
@@ -130,16 +147,7 @@ async fn keep(st: &AppState, r: &Row) -> Result<()> {
 }
 
 async fn drop_it(st: &AppState, r: &Row, why: &str) -> Result<()> {
-    // never delete anything outside the Trial folder
-    if let (Some((_, root)), Some(rel)) = (root(st), r.rel.as_deref())
-        && rel.starts_with(&format!("{FOLDER}/"))
-    {
-        let f = root.join(rel);
-        let _ = tokio::fs::remove_file(&f).await;
-        if let Some(p) = f.parent() {
-            prune(&root.join(FOLDER), p.to_path_buf());
-        }
-    }
+    delete_inside(st, r.rel.as_deref(), FOLDER).await;
     sqlx::query("DELETE FROM request WHERE key = ?").bind(&r.key).execute(&st.db).await?;
     info!(song = %r.title, "deleted from trial ({why})");
     Ok(())
