@@ -1,4 +1,4 @@
--- Encore Server: first schema (library, users, annotations, playlists, queue, radio).
+-- Maestro: first schema (library, users, annotations, playlists, queue, radio).
 -- Ids are opaque text. Tracks keep their id across rescans (hash of library + path); migrated
 -- Navidrome ids are kept through legacy_id.
 

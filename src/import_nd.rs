@@ -1,4 +1,4 @@
-//! Moving over from Navidrome: `encore-server import-navidrome <navidrome.db> [--artwork <navidrome data>/artwork]`.
+//! Moving over from Navidrome: `maestro import-navidrome <navidrome.db> [--artwork <navidrome data>/artwork]`.
 //!
 //! Reads a Navidrome database (opened read-only; use a copy) and brings over, keeping Navidrome's ids so apps
 //! that remember ids keep working: users (names and admin flag; passwords have to be set again), plays, ratings,

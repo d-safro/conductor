@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub const API_VERSION: &str = "1.16.1";
-pub const SERVER_TYPE: &str = "encore-server";
+pub const SERVER_TYPE: &str = "maestro";
 
 pub struct AppState {
     pub db: Db,
@@ -52,7 +52,7 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/rest/{method}", any(handle))
         .route("/health", get(health))
-        .route("/", get(|| async { "Encore Server. Point a Subsonic app at this address." }))
+        .route("/", get(|| async { "Maestro. Point a Subsonic app at this address." }))
         .with_state(state)
 }
 

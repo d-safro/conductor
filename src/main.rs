@@ -1,11 +1,11 @@
-//! Encore Server: a music server for Encore and any Subsonic / OpenSubsonic app.
+//! Maestro: a music server for Encore and any Subsonic / OpenSubsonic app.
 //!
-//!   encore-server [--config FILE] [serve]          run the server (default)
-//!   encore-server [--config FILE] scan [--full]     scan the libraries once and exit
-//!   encore-server [--config FILE] user add NAME [--admin]     password from ENCORE_PASSWORD or stdin
-//!   encore-server [--config FILE] user passwd NAME
-//!   encore-server [--config FILE] apikey NAME [LABEL]          prints a new API key
-//!   encore-server [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
+//!   maestro [--config FILE] [serve]          run the server (default)
+//!   maestro [--config FILE] scan [--full]     scan the libraries once and exit
+//!   maestro [--config FILE] user add NAME [--admin]     password from MAESTRO_PASSWORD or stdin
+//!   maestro [--config FILE] user passwd NAME
+//!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
+//!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
 
 use std::{
     collections::HashMap,
@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use encore_server::{
+use maestro::{
     api::{self, AppState},
     auth::{self, Secrets},
     config::{Config, LibraryConfig},
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     }
     let cfg = Config::load(config_path)?;
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
-    let pool = db::open(&cfg.data_dir.join("encore.db")).await?;
+    let pool = db::open(&cfg.data_dir.join("maestro.db")).await?;
     let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
     let libs = library::ensure_libraries(&pool, &cfg.libraries).await?;
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -76,11 +76,10 @@ async fn main() -> Result<()> {
         ["import-navidrome", db_path, rest @ ..] => {
             let artwork = rest.iter().position(|a| *a == "--artwork").and_then(|i| rest.get(i + 1)).map(PathBuf::from);
             let rep =
-                encore_server::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref())
-                    .await?;
+                maestro::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&rep)?);
             if !rep.users.is_empty() {
-                println!("Set a password for each imported user: encore-server user passwd NAME");
+                println!("Set a password for each imported user: maestro user passwd NAME");
             }
             Ok(())
         }
@@ -89,7 +88,7 @@ async fn main() -> Result<()> {
 }
 
 fn read_password() -> Result<String> {
-    if let Ok(p) = std::env::var("ENCORE_PASSWORD") {
+    if let Ok(p) = std::env::var("MAESTRO_PASSWORD") {
         return Ok(p);
     }
     eprint!("password: ");
@@ -105,18 +104,18 @@ fn read_password() -> Result<String> {
 
 async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>) -> Result<()> {
     if auth::user_count(&pool).await? == 0 {
-        match (std::env::var("ENCORE_ADMIN_USER"), std::env::var("ENCORE_ADMIN_PASSWORD")) {
+        match (std::env::var("MAESTRO_ADMIN_USER"), std::env::var("MAESTRO_ADMIN_PASSWORD")) {
             (Ok(u), Ok(p)) if !u.is_empty() && !p.is_empty() => {
                 auth::create_user(&pool, &secrets, &u, &p, true).await?;
-                info!(user = %u, "first admin created from ENCORE_ADMIN_USER");
+                info!(user = %u, "first admin created from MAESTRO_ADMIN_USER");
             }
             _ => warn!(
-                "no users yet: add one with `encore-server user add NAME --admin` or set ENCORE_ADMIN_USER / ENCORE_ADMIN_PASSWORD"
+                "no users yet: add one with `maestro user add NAME --admin` or set MAESTRO_ADMIN_USER / MAESTRO_ADMIN_PASSWORD"
             ),
         }
     }
     if libs.is_empty() {
-        warn!("no music folders configured (config.toml [[libraries]] or ENCORE_MUSIC)");
+        warn!("no music folders configured (config.toml [[libraries]] or MAESTRO_MUSIC)");
     }
     let addr = cfg.listen;
     let state = Arc::new(AppState {
@@ -131,7 +130,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
-    info!(%addr, "Encore Server listening");
+    info!(%addr, "Maestro listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

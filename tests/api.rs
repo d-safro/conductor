@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
 
-use encore_server::{
+use maestro::{
     api::{self, AppState},
     auth::{self, Secrets},
     config::{Config, LibraryConfig},
@@ -66,7 +66,7 @@ impl Server {
             ..Config::default()
         };
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
-        let pool = db::open(&cfg.data_dir.join("encore.db")).await.unwrap();
+        let pool = db::open(&cfg.data_dir.join("maestro.db")).await.unwrap();
         let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
         auth::create_user(&pool, &secrets, USER, PASS, true).await.unwrap();
         let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();

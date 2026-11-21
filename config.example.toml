@@ -1,10 +1,10 @@
-# Encore Server settings. Copy to config.toml (or point ENCORE_CONFIG / --config at it).
-# Every setting can also come from the environment: ENCORE_DATA_DIR, ENCORE_LISTEN, ENCORE_MUSIC,
-# ENCORE_SENTINEL, ENCORE_SCAN_THREADS, ENCORE_SCAN_INTERVAL_MIN, ENCORE_FFMPEG.
+# Maestro settings. Copy to config.toml (or point MAESTRO_CONFIG / --config at it).
+# Every setting can also come from the environment: MAESTRO_DATA_DIR, MAESTRO_LISTEN, MAESTRO_MUSIC,
+# MAESTRO_SENTINEL, MAESTRO_SCAN_THREADS, MAESTRO_SCAN_INTERVAL_MIN, MAESTRO_FFMPEG.
 
 # Database, password key and caches. Keep this on the internal disk, not on the music drive.
-# Default: ~/.local/share/encore-server (Linux), %ProgramData%\encore-server (Windows).
-# data_dir = "/var/lib/encore-server"
+# Default: ~/.local/share/maestro (Linux), %ProgramData%\maestro (Windows).
+# data_dir = "/var/lib/maestro"
 
 listen = "127.0.0.1:4533"
 scan_interval_min = 15

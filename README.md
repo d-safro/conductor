@@ -1,9 +1,9 @@
-# Encore Server
+# Maestro
 
 A music server for [Encore](https://github.com/d-safro/encore) and for any app that speaks the
 **Subsonic / OpenSubsonic** API. It's written in Rust and runs as a single program on Linux and Windows.
 
-> Working name and licence (AGPL-3.0-or-later in `Cargo.toml`) aren't final yet. Early development: phase 0 of the roadmap.
+> Early development. Licence: AGPL-3.0-or-later (see `LICENSE`).
 
 ## What works now
 
@@ -39,21 +39,21 @@ Needs **ffmpeg** on the PATH for transcoding (playing files as they are works wi
 ```bash
 cargo build --release
 cp config.example.toml config.toml        # set your music folder
-ENCORE_PASSWORD='…' ./target/release/encore-server --config config.toml user add me --admin
-./target/release/encore-server --config config.toml          # serves on 127.0.0.1:4533
+MAESTRO_PASSWORD='…' ./target/release/maestro --config config.toml user add me --admin
+./target/release/maestro --config config.toml          # serves on 127.0.0.1:4533
 ```
 
-Or with the environment only: `ENCORE_MUSIC=/path/to/music ENCORE_ADMIN_USER=me ENCORE_ADMIN_PASSWORD=… encore-server`.
+Or with the environment only: `MAESTRO_MUSIC=/path/to/music MAESTRO_ADMIN_USER=me MAESTRO_ADMIN_PASSWORD=… maestro`.
 
 Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key).
 
 **Moving over from Navidrome:** stop Navidrome, copy its data folder, then
-`encore-server import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
+`maestro import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
 password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
 
-Docker: `docker build -f deploy/Dockerfile -t encore-server .` (see `deploy/compose.example.yml`).
+Docker: `docker build -f deploy/Dockerfile -t maestro .` (see `deploy/compose.example.yml`).
 
 ## Develop
 

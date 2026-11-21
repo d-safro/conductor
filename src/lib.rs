@@ -1,4 +1,4 @@
-//! Encore Server as a library, so the binary and the tests share it.
+//! Maestro as a library, so the binary and the tests share it.
 
 pub mod api;
 pub mod auth;

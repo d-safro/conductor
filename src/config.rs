@@ -1,4 +1,4 @@
-//! Settings: `config.toml` (path from `--config` or `ENCORE_CONFIG`), then `ENCORE_*` environment variables.
+//! Settings: `config.toml` (path from `--config` or `MAESTRO_CONFIG`), then `MAESTRO_*` environment variables.
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -47,14 +47,11 @@ impl Default for Config {
 
 fn default_data_dir() -> PathBuf {
     if cfg!(windows) {
-        std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            .join("encore-server")
+        std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\ProgramData")).join("maestro")
     } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
-        PathBuf::from(x).join("encore-server")
+        PathBuf::from(x).join("maestro")
     } else if let Some(h) = std::env::var_os("HOME") {
-        PathBuf::from(h).join(".local/share/encore-server")
+        PathBuf::from(h).join(".local/share/maestro")
     } else {
         PathBuf::from("./data")
     }
@@ -62,31 +59,31 @@ fn default_data_dir() -> PathBuf {
 
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
-        let path = path.or_else(|| std::env::var_os("ENCORE_CONFIG").map(PathBuf::from));
+        let path = path.or_else(|| std::env::var_os("MAESTRO_CONFIG").map(PathBuf::from));
         let mut c: Config = match &path {
             Some(p) => toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
                 .with_context(|| format!("parsing {}", p.display()))?,
             None => Config::default(),
         };
-        if let Some(v) = std::env::var_os("ENCORE_DATA_DIR") {
+        if let Some(v) = std::env::var_os("MAESTRO_DATA_DIR") {
             c.data_dir = v.into();
         }
-        if let Ok(v) = std::env::var("ENCORE_LISTEN") {
-            c.listen = v.parse().context("ENCORE_LISTEN")?;
+        if let Ok(v) = std::env::var("MAESTRO_LISTEN") {
+            c.listen = v.parse().context("MAESTRO_LISTEN")?;
         }
-        if let Some(v) = std::env::var_os("ENCORE_MUSIC") {
-            // one library from the environment, handy for Docker: ENCORE_MUSIC=/music
+        if let Some(v) = std::env::var_os("MAESTRO_MUSIC") {
+            // one library from the environment, handy for Docker: MAESTRO_MUSIC=/music
             c.libraries = vec![LibraryConfig {
                 name: "Music".into(),
                 path: v.into(),
-                sentinel: std::env::var("ENCORE_SENTINEL").ok(),
-                scan_threads: std::env::var("ENCORE_SCAN_THREADS").ok().and_then(|v| v.parse().ok()),
+                sentinel: std::env::var("MAESTRO_SENTINEL").ok(),
+                scan_threads: std::env::var("MAESTRO_SCAN_THREADS").ok().and_then(|v| v.parse().ok()),
             }];
         }
-        if let Ok(v) = std::env::var("ENCORE_SCAN_INTERVAL_MIN") {
-            c.scan_interval_min = v.parse().context("ENCORE_SCAN_INTERVAL_MIN")?;
+        if let Ok(v) = std::env::var("MAESTRO_SCAN_INTERVAL_MIN") {
+            c.scan_interval_min = v.parse().context("MAESTRO_SCAN_INTERVAL_MIN")?;
         }
-        if let Some(v) = std::env::var_os("ENCORE_FFMPEG") {
+        if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());
         }
         Ok(c)
