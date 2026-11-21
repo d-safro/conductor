@@ -291,9 +291,17 @@ async fn stream(c: &Ctx, id: &str) -> Result<Reply, ApiError> {
         sqlx::query_scalar("SELECT local_id FROM request WHERE key = ?").bind(id).fetch_optional(&c.st.db).await?.flatten();
     if let Some(l) = local {
         let mut p = c.p.clone();
-        p.0.retain(|(k, _)| k != "id");
+        p.0.retain(|(k, _)| k != "id" && k != "hold");
         p.0.push(("id".into(), l));
         return Box::pin(super::media::stream(&sub(c, p), false)).await;
+    }
+    if c.p.bool("hold") == Some(true) {
+        // Encore is getting it: silence until it's here, not the preview
+        return Ok(raw(
+            StatusCode::OK,
+            &[(header::CONTENT_TYPE, "audio/mpeg".into()), (header::CACHE_CONTROL, "no-store".into())],
+            Body::from(silence(10)),
+        ));
     }
     let t = c.st.catalog.dz.get(&format!("track/{}", dz_id(id, 't').unwrap()), &[]).await;
     let preview = sv(&t, "preview");
@@ -387,8 +395,14 @@ async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
                     catalog::find(&c.st, sv(&t, "title"), sv(&t["artist"], "name"), t["duration"].as_i64()).await.map(|s| s.id)
                 }
             };
-            if let Some(m) = mine {
-                rest.0.push(("id".into(), m));
+            match mine {
+                Some(m) => rest.0.push(("id".into(), m)), // you have it after all: the play counts for your copy
+                None => {
+                    // playing a ⬇ song (any app reports "now playing"): it's downloaded on trial
+                    if let Err(e) = catalog::ask(&c.st, v, &c.user.id, false, None, true).await {
+                        tracing::warn!("couldn't start a trial download for {v}: {e:#}");
+                    }
+                }
             }
         } else {
             rest.0.push((k.clone(), v.clone()));
@@ -400,29 +414,58 @@ async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
     super::empty()
 }
 
-/// Encore: how getting these ⬇ songs is going (none · searching · downloading · ready · notfound).
+/// Seconds of silence as an MP3 (MPEG-1 layer III, 128 kb/s, 44.1 kHz; every frame empty).
+fn silence(seconds: usize) -> Vec<u8> {
+    let mut frame = vec![0u8; 417];
+    frame[..4].copy_from_slice(&[0xff, 0xfb, 0x90, 0xc0]);
+    frame.repeat(seconds * 44_100 / 1152)
+}
+
+fn status_json(k: &str, s: Option<&Status>) -> Value {
+    let status = match s {
+        Some(Status { local_id: Some(_), .. }) => "ready",
+        None => "none",
+        Some(Status { status: Some(st), .. }) if st == "notfound" => "notfound",
+        Some(Status { status: Some(st), .. }) if st == "queued" || st == "done" => "downloading",
+        Some(_) => "searching",
+    };
+    let mut v = json!({ "id": k, "status": status, "temporary": s.is_some_and(|s| s.trial) });
+    if let Some(l) = s.and_then(|s| s.local_id.clone()) {
+        v["songId"] = l.into();
+    }
+    v
+}
+
+/// Encore: how getting these ⬇ songs is going (none · searching · downloading · ready · notfound · limit);
+/// fetch=true first asks for each one on trial (you're playing it, queued it, or autoplay / radio picked it).
 async fn lookup_songs(c: &Ctx) -> Result<Reply, ApiError> {
     let keys: Vec<String> = c.p.all("id").into_iter().filter(|k| dz_id(k, 't').is_some()).take(100).map(String::from).collect();
-    let stat = status_map(c, &keys).await;
+    let fetch = c.p.bool("fetch") == Some(true);
+    let mut stat = status_map(c, &keys).await;
     let mut out = vec![];
     for k in &keys {
-        let s = stat.get(k);
-        let status = match s {
-            Some(Status { local_id: Some(_), .. }) => "ready",
-            None => "none",
-            Some(Status { status: Some(st), .. }) if st == "notfound" => "notfound",
-            Some(Status { status: Some(st), .. }) if st == "queued" || st == "done" => "downloading",
-            Some(_) => "searching",
-        };
-        let mut v = json!({ "id": k, "status": status, "temporary": s.is_some_and(|s| s.trial) });
-        if let Some(l) = s.and_then(|s| s.local_id.clone()) {
-            v["songId"] = l.into();
+        let mut v = status_json(k, stat.get(k));
+        if fetch && (v["status"] == "none" || v["status"] == "notfound") {
+            let t = c.st.catalog.dz.get(&format!("track/{}", dz_id(k, 't').unwrap()), &[]).await;
+            let mine = catalog::find(&c.st, sv(&t, "title"), sv(&t["artist"], "name"), t["duration"].as_i64()).await;
+            if let Some(m) = mine {
+                v = json!({ "id": k, "status": "ready", "temporary": false, "songId": m.id }); // you have it after all
+            } else if v["status"] == "none" && catalog::trials_today(&c.st).await >= c.st.cfg.trial_per_day {
+                v = json!({ "id": k, "status": "limit", "temporary": false });
+            } else if catalog::ask(&c.st, k, &c.user.id, false, None, true).await? {
+                stat = status_map(c, &keys).await;
+                v = status_json(k, stat.get(k));
+            } else {
+                v = json!({ "id": k, "status": "notfound", "temporary": false });
+            }
         }
         out.push(v);
     }
-    ok(
-        json!({ "lookupSongs": { "song": out, "trialHours": 24, "perDay": 40, "usedToday": 0, "playlistId": "", "playlist": "On trial" } }),
-    )
+    let pid = crate::catalog::trial::playlist_id(&c.st, &c.user.id, false).await?.unwrap_or_default();
+    ok(json!({ "lookupSongs": {
+        "song": out, "trialHours": c.st.cfg.trial_hours, "perDay": c.st.cfg.trial_per_day,
+        "usedToday": catalog::trials_today(&c.st).await, "playlistId": pid, "playlist": crate::catalog::trial::PLAYLIST,
+    } }))
 }
 
 async fn discoveries(c: &Ctx) -> Result<Reply, ApiError> {

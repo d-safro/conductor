@@ -50,9 +50,13 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   `Songs/<Artist>/<Artist> - <Title>.<ext>`, scanned, then hearted / added. Also `lookupSongs`, `getDiscoveries`,
   `getSongDiscoveries`. Set `slskd_url`, `slskd_api_key` and `slskd_downloads`; filing needs **write access** to the
   music folder. Apps listed in `catalog_skip_clients` (default: Symfonium) never get ⬇ items.
+- **Songs on trial**: play or queue a ⬇ song (any app's "now playing", or Encore's `lookupSongs?fetch=true`) and it's
+  downloaded into `Trial/` and listed in your "On trial" playlist; `stream?hold=true` plays silence until it's here.
+  Heart it, add it to another playlist or rate it 4+ to keep it (it moves to `Songs/`, same id); take it out of
+  "On trial" to delete it now; the rest go `trial_hours` (24) after they arrive; at most `trial_per_day` (40) a day.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: songs on trial (played but not kept), Lidarr's wanted albums, Spotify sync, LRCLIB lyrics,
+Coming next: Lidarr's wanted albums, Spotify sync, LRCLIB lyrics,
 artist info. See `docs/api/` for the extension list.
 
 ## Run it

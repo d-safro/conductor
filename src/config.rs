@@ -40,6 +40,10 @@ pub struct Config {
     pub slskd_downloads: Option<PathBuf>,
     /// The music folder downloads are filed into (a library name; default: the first).
     pub import_library: Option<String>,
+    /// Songs you play but don't have go on trial: deleted this long after they arrive unless you keep them.
+    pub trial_hours: f64,
+    /// At most this many new trial downloads a day.
+    pub trial_per_day: i64,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -77,6 +81,8 @@ impl Default for Config {
             slskd_api_key: None,
             slskd_downloads: None,
             import_library: None,
+            trial_hours: 24.0,
+            trial_per_day: 40,
             slskd_fast_test: false,
         }
     }

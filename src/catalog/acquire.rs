@@ -541,6 +541,9 @@ pub async fn worker(st: Arc<AppState>) {
 }
 
 async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
+    if let Err(e) = super::trial::tick(st).await {
+        warn!("songs on trial: {e:#}");
+    }
     if !sl.logged_in().await {
         return Ok(()); // slskd drops off Soulseek whenever its VPN tunnel reconnects; wait
     }

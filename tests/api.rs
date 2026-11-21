@@ -761,3 +761,109 @@ async fn songs_you_dont_have() {
     assert_eq!(pl["playlist"]["entry"][0]["id"], "dz-t-901");
     assert_eq!(pl["playlist"]["entry"][0]["title"].as_str().unwrap().chars().next(), Some('⏳'));
 }
+
+async fn trial_server(tune: impl FnOnce(&mut Config)) -> (Arc<Server>, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    tone(&tmp.path().join("pk.flac"), "Psycho Killer", "Talking Heads", "Talking Heads: 77", 4, 3);
+    let flac = std::fs::read(tmp.path().join("pk.flac")).unwrap();
+    let (dz, sl) = fake_services(downloads.clone(), flac).await;
+    let s = Arc::new(
+        Server::start_with(|c| {
+            c.deezer_url = dz.clone();
+            c.slskd_url = Some(sl.clone());
+            c.slskd_api_key = Some("test".into());
+            c.slskd_downloads = Some(downloads.clone());
+            c.slskd_fast_test = true;
+            tune(c);
+        })
+        .await,
+    );
+    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    (s, tmp)
+}
+
+async fn wait_for(mut f: impl AsyncFnMut() -> bool, what: &str) {
+    for _ in 0..150 {
+        if f().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test]
+async fn songs_on_trial_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    // Encore holds playback (silence, not the preview) while it waits for a song
+    let r = s.http.get(s.url("stream", &[("id", "dz-t-901"), ("hold", "true")])).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "audio/mpeg");
+    assert_eq!(r.bytes().await.unwrap().len(), 417 * (10 * 44_100 / 1152));
+
+    // played / queued: on trial
+    let r = s.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
+    assert_eq!(r["lookupSongs"]["song"][0]["status"], "searching");
+    assert_eq!(r["lookupSongs"]["song"][0]["temporary"], true);
+    assert_eq!(r["lookupSongs"]["usedToday"], 1);
+    let mut local = String::new();
+    let mut pid = String::new();
+    wait_for(
+        async || {
+            let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().unwrap_or("").to_string();
+            pid = r["lookupSongs"]["playlistId"].as_str().unwrap_or("").to_string();
+            !local.is_empty() && !pid.is_empty()
+        },
+        "the trial song and its playlist",
+    )
+    .await;
+    assert!(s.music.join("Trial/Talking Heads/Talking Heads - Psycho Killer.flac").is_file());
+    wait_for(async || s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"][0]["id"] == local, "On trial to list it")
+        .await;
+    let pl = s.ok("getPlaylist", &[("id", &pid)]).await;
+    assert_eq!(pl["playlist"]["name"], "On trial");
+
+    // hearted: kept, moved into Songs, same id, gone from On trial
+    s.ok("star", &[("id", &local)]).await;
+    wait_for(async || s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac").is_file(), "the kept song to move")
+        .await;
+    assert!(!s.music.join("Trial").join("Talking Heads").exists(), "empty Trial folders are removed");
+    wait_for(
+        async || s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].as_array().is_none_or(|e| e.is_empty()),
+        "On trial to empty",
+    )
+    .await;
+    let song = s.ok("getSong", &[("id", &local)]).await;
+    assert_eq!(song["song"]["path"], "Songs/Talking Heads/Talking Heads - Psycho Killer.flac");
+    assert!(song["song"]["starred"].is_string());
+    let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+    assert_eq!(r["lookupSongs"]["song"][0]["temporary"], false);
+}
+
+#[tokio::test]
+async fn songs_on_trial_expire() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|c| c.trial_hours = 2.0 / 3600.0).await;
+    // playing a ⬇ song in any app puts it on trial
+    s.ok("scrobble", &[("id", "dz-t-900"), ("submission", "false")]).await;
+    let file = s.music.join("Trial/Talking Heads/Talking Heads - Psycho Killer.flac");
+    wait_for(async || file.is_file(), "the trial download").await;
+    // not kept within the (two-second) trial: deleted
+    wait_for(async || !file.exists(), "the trial song to be deleted").await;
+    wait_for(
+        async || s.ok("lookupSongs", &[("id", "dz-t-900")]).await["lookupSongs"]["song"][0]["status"] == "none",
+        "the request to go",
+    )
+    .await;
+
+    // today's trial downloads used up
+    let (s2, _tmp2) = trial_server(|c| c.trial_per_day = 0).await;
+    let r = s2.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
+    assert_eq!(r["lookupSongs"]["song"][0]["status"], "limit");
+}

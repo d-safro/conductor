@@ -26,6 +26,9 @@ catalog_skip_clients = ["symfonium"]
 # slskd_api_key = "…"                       # or MAESTRO_SLSKD_API_KEY
 # slskd_downloads = "/mnt/media/data/soulseek/complete"
 # import_library = "Music"
+# Songs you play but don't have: deleted this many hours after they arrive unless kept; at most this many a day.
+trial_hours = 24
+trial_per_day = 40
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]

@@ -7,6 +7,7 @@
 pub mod acquire;
 pub mod deezer;
 pub mod text;
+pub mod trial;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -549,10 +550,26 @@ pub async fn song_discoveries(st: &AppState, title: &str, artist: &str, count: u
 
 // ── asking for songs ──
 
-/// Ask for this Deezer track. False when Deezer doesn't know it.
+/// Songs that went on trial in the last 24 hours (at most `trial_per_day`).
+pub async fn trials_today(st: &AppState) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE trial_at > ?")
+        .bind(now() - 86_400)
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or(0)
+}
+
+/// Ask for this Deezer track. False when Deezer doesn't know it (or, on trial, today's trials are used up).
+/// trial: you played / queued it; it goes to the Trial folder and is deleted unless you keep it.
 pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: Option<&str>, trial: bool) -> Result<bool> {
     let known: Option<String> =
         sqlx::query_scalar("SELECT status FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
+    if trial && known.is_some() && known.as_deref() != Some("notfound") {
+        return Ok(true); // already asked for (on trial, wanted or kept)
+    }
+    if trial && known.is_none() && trials_today(st).await >= st.cfg.trial_per_day {
+        return Ok(false); // enough trials today; it keeps playing the preview
+    }
     if known.is_none() {
         let Some(tid) = dz_id(key, 't') else { return Ok(false) };
         let t = st.catalog.dz.get(&format!("track/{tid}"), &[]).await;
@@ -568,7 +585,8 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
             }
         }
         sqlx::query(
-            "INSERT INTO request (key, title, artists_json, album, duration_ms, isrc, folder, trial, trial_at, asked_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO request (key, title, artists_json, album, duration_ms, isrc, folder, trial, trial_at, trial_user, asked_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(key)
         .bind(s(&t, "title"))
@@ -579,6 +597,7 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
         .bind(if trial { "Trial" } else { "Songs" })
         .bind(trial)
         .bind(if trial { Some(now()) } else { None })
+        .bind(if trial { Some(user_id) } else { None })
         .bind(now())
         .execute(&st.db)
         .await?;
@@ -592,8 +611,12 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
             .await?;
     }
     if (star || playlist.is_some()) && !trial {
-        // kept: not on trial any more
-        sqlx::query("UPDATE request SET trial = 0, folder = CASE WHEN rel IS NULL THEN 'Songs' ELSE folder END WHERE key = ?")
+        // kept before or after it arrived: not arrived yet, it's filed in Songs; arrived, the trial check moves it there
+        sqlx::query("UPDATE request SET keep = 1 WHERE key = ? AND trial = 1 AND rel IS NOT NULL")
+            .bind(key)
+            .execute(&st.db)
+            .await?;
+        sqlx::query("UPDATE request SET trial = 0, folder = 'Songs' WHERE key = ? AND rel IS NULL")
             .bind(key)
             .execute(&st.db)
             .await?;
@@ -620,16 +643,27 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
     Ok(true)
 }
 
-/// Unheart a ⬇ song: cancel it if it hasn't arrived and nobody else wants it. Returns your copy's id, if it arrived.
+/// Unheart a ⬇ song. One you played (on trial) and hearted, but that isn't kept yet, goes back on trial (deleted
+/// after `trial_hours` like the rest); one you only hearted is cancelled if nobody else wants it.
+/// Returns your copy's id, if it has arrived.
 pub async fn unheart(st: &AppState, key: &str, user_id: &str) -> Result<Option<String>> {
     sqlx::query("DELETE FROM request_want WHERE key = ? AND user_id = ? AND playlist_id = '' AND star = 1")
         .bind(key)
         .bind(user_id)
         .execute(&st.db)
         .await?;
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT status, local_id FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
-    let Some((status, local)) = row else { return Ok(None) };
+    type Row = (String, Option<String>, Option<i64>, Option<i64>, Option<String>);
+    let row: Option<Row> = sqlx::query_as("SELECT status, local_id, trial_at, kept_at, rel FROM request WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&st.db)
+        .await?;
+    let Some((status, local, trial_at, kept_at, rel)) = row else { return Ok(None) };
+    let in_trial = rel.as_deref().is_none_or(|r| r.starts_with("Trial/"));
+    if trial_at.is_some() && kept_at.is_none() && in_trial {
+        // played before: back on trial (if it hasn't arrived yet, it lands in Trial again)
+        sqlx::query("UPDATE request SET trial = 1, keep = 0, folder = 'Trial' WHERE key = ?").bind(key).execute(&st.db).await?;
+        return Ok(local);
+    }
     let wanted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_want WHERE key = ?").bind(key).fetch_one(&st.db).await?;
     if local.is_none() && wanted == 0 && (status == "retry" || status == "notfound") {
         sqlx::query("DELETE FROM request WHERE key = ?").bind(key).execute(&st.db).await?;
