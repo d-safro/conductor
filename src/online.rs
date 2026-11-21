@@ -209,7 +209,7 @@ pub async fn covers_once(st: &AppState) -> Result<usize> {
 
 /// Every 6 hours (and soon after start): covers for albums that have none.
 pub async fn worker(st: Arc<AppState>) {
-    if !st.cfg.covers_fetch {
+    if !st.cfg.covers_fetch || st.cfg.read_only {
         return;
     }
     tokio::time::sleep(Duration::from_secs(if st.cfg.slskd_fast_test { 0 } else { 120 })).await;

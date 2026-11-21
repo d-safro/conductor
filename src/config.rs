@@ -12,6 +12,9 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Address for the apps (Subsonic API).
     pub listen: SocketAddr,
+    /// Never write to the music folders: no downloads filed, no trial songs moved or deleted, no covers saved.
+    /// For running beside another server (a trial run) on the same music.
+    pub read_only: bool,
     /// Music folders. Each one is a library.
     pub libraries: Vec<LibraryConfig>,
     /// Minutes between full scans (0: only at start and on request).
@@ -85,6 +88,7 @@ impl Default for Config {
         Self {
             data_dir: default_data_dir(),
             listen: "127.0.0.1:4533".parse().unwrap(),
+            read_only: false,
             libraries: vec![],
             scan_interval_min: 15,
             ffmpeg: None,
@@ -198,6 +202,15 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_TOKEN") {
             c.audiomuse_token = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_READ_ONLY") {
+            c.read_only = v == "1" || v == "true";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_COVERS") {
+            c.covers_fetch = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LYRICS_ONLINE") {
+            c.lyrics_online = v != "0" && v != "false";
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

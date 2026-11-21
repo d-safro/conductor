@@ -525,6 +525,10 @@ async fn adopt(st: &AppState) -> Result<()> {
 
 /// The download worker: woken when a song is asked for, and every 30 seconds.
 pub async fn worker(st: Arc<AppState>) {
+    if st.cfg.read_only {
+        info!("read-only: songs asked for, trial songs and Lidarr albums wait (nothing is downloaded or moved)");
+        return;
+    }
     let (Some(url), Some(key)) = (st.cfg.slskd_url.clone(), st.cfg.slskd_api_key.clone()) else {
         info!("downloads: no slskd_url / slskd_api_key set, so songs asked for wait until one is");
         return;

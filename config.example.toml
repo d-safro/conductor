@@ -7,6 +7,8 @@
 # data_dir = "/var/lib/maestro"
 
 listen = "127.0.0.1:4533"
+# Never write to the music folders (no downloads, trial moves or covers): for a trial run beside another server.
+read_only = false
 scan_interval_min = 15
 
 # Jam: the guest page listens here (put only this port on the internet), and guests open jam_public_url.

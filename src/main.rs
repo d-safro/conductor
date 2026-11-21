@@ -126,6 +126,9 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     if libs.is_empty() {
         warn!("no music folders configured (config.toml [[libraries]] or MAESTRO_MUSIC)");
     }
+    if cfg.read_only {
+        warn!("read-only: nothing is written to the music folders");
+    }
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     tokio::spawn(scan_loop(state.clone()));
