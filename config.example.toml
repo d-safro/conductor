@@ -12,6 +12,12 @@ scan_interval_min = 15
 # Jam: the guest page listens here (put only this port on the internet), and guests open jam_public_url.
 jam_listen = "127.0.0.1:4535"
 # jam_public_url = "https://music.example.com:8443"
+
+# Podcasts: where saved episodes go (not the music folder), how many of the newest to keep per show, and how
+# many days after you finish one it goes (0: never).
+# podcast_dir = "/mnt/media/data/podcasts"
+podcast_keep = 0
+podcast_clean_days = 7
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]

@@ -31,10 +31,15 @@ pub struct LookupReport {
     pub plays_already_there: usize,
     pub plays_unknown_user_or_song: usize,
     pub sync_values: usize,
+    pub podcasts: usize,
+    pub podcast_episodes: usize,
+    pub podcast_progress: usize,
 }
 
-/// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data).
-pub async fn music_lookup(ours: &Db, data: &Path) -> Result<LookupReport> {
+/// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data), and its
+/// podcasts (`state`: the folder with podcasts.json, e.g. spotify.py's state folder). Progress goes to every user
+/// (music-lookup kept one for everyone).
+pub async fn music_lookup(ours: &Db, data: &Path, state: Option<&Path>) -> Result<LookupReport> {
     let mut rep = LookupReport::default();
     let users: HashMap<String, String> =
         sqlx::query_as::<_, (String, String)>("SELECT lower(name), id FROM user").fetch_all(ours).await?.into_iter().collect();
@@ -89,6 +94,45 @@ pub async fn music_lookup(ours: &Db, data: &Path) -> Result<LookupReport> {
                 .await?;
                 rep.sync_values += 1;
             }
+        }
+    }
+    if let Some(text) = state.and_then(|s| std::fs::read_to_string(s.join("podcasts.json")).ok()) {
+        let d: serde_json::Value = serde_json::from_str(&text).context("podcasts.json")?;
+        let s = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or("").to_string();
+        let n = |v: &serde_json::Value, k: &str| v[k].as_f64().unwrap_or(0.0) as i64;
+        for c in d["channels"].as_object().into_iter().flatten().map(|(_, v)| v) {
+            sqlx::query("INSERT OR REPLACE INTO podcast (id, url, title, author, description, image, added_at, checked_at, error) VALUES (?,?,?,?,?,?,?,?,?)")
+                .bind(s(c, "id")).bind(s(c, "url")).bind(s(c, "title")).bind(s(c, "author")).bind(s(c, "description"))
+                .bind(s(c, "image")).bind(n(c, "added")).bind(n(c, "checked")).bind(s(c, "error"))
+                .execute(&mut *tx).await?;
+            rep.podcasts += 1;
+        }
+        for e in d["episodes"].as_object().into_iter().flatten().map(|(_, v)| v) {
+            sqlx::query(
+                "INSERT OR REPLACE INTO episode (id, podcast_id, guid, title, description, published_at, duration, url, size, content_type, image, file, pinned)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            )
+            .bind(s(e, "id")).bind(s(e, "channel")).bind(s(e, "guid")).bind(s(e, "title")).bind(s(e, "description"))
+            .bind(n(e, "published")).bind(n(e, "duration")).bind(s(e, "url")).bind(n(e, "size"))
+            .bind(Some(s(e, "type")).filter(|t| !t.is_empty()).unwrap_or_else(|| "audio/mpeg".into())).bind(s(e, "image"))
+            .bind(e["file"].as_str()).bind(e["pinned"].as_bool().unwrap_or(false))
+            .execute(&mut *tx).await?;
+            rep.podcast_episodes += 1;
+        }
+        for (eid, p) in d["progress"].as_object().into_iter().flatten() {
+            for uid in users.values() {
+                sqlx::query(
+                    "INSERT OR REPLACE INTO podcast_progress (user_id, episode_id, position_ms, done, at) VALUES (?,?,?,?,?)",
+                )
+                .bind(uid)
+                .bind(eid)
+                .bind(n(p, "pos"))
+                .bind(p["done"].as_bool().unwrap_or(false))
+                .bind(n(p, "at"))
+                .execute(&mut *tx)
+                .await?;
+            }
+            rep.podcast_progress += 1;
         }
     }
     tx.commit().await?;

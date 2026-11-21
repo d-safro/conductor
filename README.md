@@ -38,9 +38,13 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 - **Jam**: `jamStart/State/Poll/End` for the app; the guest page on its own listener (`jam_listen`, default
   127.0.0.1:4535: nothing else is served there), with rate limits and covers only from the queue or guests' searches.
   Set `jam_public_url` to the address guests open (e.g. through Tailscale Funnel).
+- **Podcasts**: the whole Subsonic podcast API; feeds checked every 2 hours; episodes stream through from the
+  podcast's server (with seeking) unless saved on the server (`downloadPodcastEpisode`, or `podcast_keep` newest
+  per show); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
+  bookmarks per user. Episode and show ids are the same as music-lookup's.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: podcasts, and
+Coming next: and
 downloading songs you don't have (slskd, Lidarr). See `docs/api/` for the extension list.
 
 ## Run it
@@ -63,8 +67,9 @@ Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prin
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
 password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
-Then `maestro import-music-lookup <music-lookup DATA folder>` adds music-lookup's listening log and Encore's
-sync values (plays already brought over from Navidrome aren't counted twice).
+Then `maestro import-music-lookup <music-lookup DATA folder> [<its state folder with podcasts.json>]` adds
+music-lookup's listening log, Encore's sync values and the podcasts (plays already brought over from Navidrome
+aren't counted twice).
 
 Docker: `docker build -f deploy/Dockerfile -t maestro .` (see `deploy/compose.example.yml`).
 

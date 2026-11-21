@@ -5,6 +5,7 @@ mod encore;
 mod items;
 pub(crate) mod media;
 mod native;
+pub mod podcasts;
 pub mod smart;
 mod userdata;
 
@@ -43,6 +44,8 @@ pub struct AppState {
     pub native_tokens: Mutex<HashMap<String, (String, i64)>>,
     /// devices, sign-in codes, Jams
     pub live: crate::live::Live,
+    /// wakes the podcast worker (something to download, a new show)
+    pub podcast_wake: tokio::sync::Notify,
 }
 
 impl AppState {
@@ -56,6 +59,7 @@ impl AppState {
             now_playing: Mutex::default(),
             native_tokens: Mutex::default(),
             live: Default::default(),
+            podcast_wake: Default::default(),
         }
     }
 }
@@ -292,6 +296,18 @@ async fn dispatch(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "jamState" => encore::jam_state(c).await,
         "jamPoll" => encore::jam_poll(c).await,
         "jamEnd" => encore::jam_end(c).await,
+        "getPodcasts" => podcasts::get_podcasts(c).await,
+        "getNewestPodcasts" => podcasts::newest(c).await,
+        "getPodcastEpisode" => podcasts::get_episode(c).await,
+        "createPodcastChannel" => podcasts::create(c).await,
+        "deletePodcastChannel" => podcasts::delete_show(c).await,
+        "refreshPodcasts" => podcasts::refresh_all(c).await,
+        "downloadPodcastEpisode" => podcasts::download_episode(c).await,
+        "deletePodcastEpisode" => podcasts::delete_episode(c).await,
+        "setPodcastProgress" => podcasts::set_podcast_progress(c).await,
+        "createBookmark" => podcasts::create_bookmark(c).await,
+        "deleteBookmark" => podcasts::delete_bookmark(c).await,
+        "getBookmarks" => podcasts::get_bookmarks(c).await,
         "getInternetRadioStations" => userdata::radio_list(c).await,
         "createInternetRadioStation" => userdata::radio_create(c).await,
         "updateInternetRadioStation" => userdata::radio_update(c).await,

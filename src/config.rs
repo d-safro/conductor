@@ -22,6 +22,12 @@ pub struct Config {
     pub jam_listen: String,
     /// The guest page's public address (e.g. https://music.example.com:8443). Without it, Jam can't start.
     pub jam_public_url: Option<String>,
+    /// Where podcast episodes saved on the server go (default: <data_dir>/podcasts). Not the music folder.
+    pub podcast_dir: Option<PathBuf>,
+    /// Also keep the newest N episodes of every show saved on the server (0: only the ones asked for).
+    pub podcast_keep: i64,
+    /// Played episodes saved on the server go after this many days (0: never).
+    pub podcast_clean_days: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -47,6 +53,9 @@ impl Default for Config {
             ffmpeg: None,
             jam_listen: "127.0.0.1:4535".into(),
             jam_public_url: None,
+            podcast_dir: None,
+            podcast_keep: 0,
+            podcast_clean_days: 7,
         }
     }
 }
@@ -94,6 +103,15 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_JAM_PUBLIC_URL") {
             c.jam_public_url = Some(v);
+        }
+        if let Some(v) = std::env::var_os("MAESTRO_PODCAST_DIR") {
+            c.podcast_dir = Some(v.into());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_PODCAST_KEEP") {
+            c.podcast_keep = v.parse().context("MAESTRO_PODCAST_KEEP")?;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_PODCAST_CLEAN_DAYS") {
+            c.podcast_clean_days = v.parse().context("MAESTRO_PODCAST_CLEAN_DAYS")?;
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

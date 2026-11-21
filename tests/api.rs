@@ -462,3 +462,103 @@ async fn encore_extensions() {
     assert_eq!(s.http.get(format!("{jbase}/jam/{tok}")).send().await.unwrap().status(), 410);
     assert_eq!(s.call("jamPoll", &[("token", &tok), ("ack", "0"), ("wait", "0")]).await["error"]["code"], 70);
 }
+
+#[tokio::test]
+async fn podcasts() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Arc::new(Server::start().await);
+    // a podcast's own server: a feed, two episodes, a picture
+    let dir = tempfile::tempdir().unwrap();
+    tone(&dir.path().join("ep1.mp3"), "Ep 1", "Host", "Show", 1, 4);
+    let ep1 = std::fs::read(dir.path().join("ep1.mp3")).unwrap();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbImage::from_pixel(80, 80, image::Rgb([200, 10, 10])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let png = png.into_inner();
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    let feed = format!(
+        r#"<?xml version="1.0"?><rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Test Show</title>
+        <itunes:author>Host</itunes:author><itunes:image href="{fbase}/cover.png"/>
+        <item><title>Newer</title><guid>b</guid><pubDate>Wed, 11 Nov 2026 08:00:00 +0000</pubDate><itunes:duration>4</itunes:duration>
+          <enclosure url="{fbase}/ep1.mp3" length="{}" type="audio/mpeg"/></item>
+        <item><title>Older</title><guid>a</guid><pubDate>Tue, 10 Nov 2026 08:00:00 +0000</pubDate><itunes:duration>4</itunes:duration>
+          <enclosure url="{fbase}/ep1.mp3?older" type="audio/mpeg"/></item></channel></rss>"#,
+        ep1.len()
+    );
+    let app = axum::Router::new()
+        .route(
+            "/feed.xml",
+            axum::routing::get(move || {
+                let f = feed.clone();
+                async move { ([("content-type", "application/rss+xml")], f) }
+            }),
+        )
+        .route(
+            "/cover.png",
+            axum::routing::get(move || {
+                let p = png.clone();
+                async move { ([("content-type", "image/png")], p) }
+            }),
+        )
+        .nest_service("/ep1.mp3", tower_http::services::ServeFile::new(dir.path().join("ep1.mp3")));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    tokio::spawn(maestro::api::podcasts::worker(s.st.clone()));
+
+    assert_eq!(s.call("createPodcastChannel", &[("url", "not a url")]).await["error"]["code"], 10);
+    let r = s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    let show = r["podcastChannel"]["id"].as_str().unwrap().to_string();
+    assert!(show.starts_with("pc-"));
+    assert_eq!(r["podcastChannel"]["episodeCount"], 2);
+    let r = s.ok("getPodcasts", &[]).await;
+    let eps = r["podcasts"]["channel"][0]["episode"].as_array().unwrap().clone();
+    assert_eq!(eps[0]["title"], "Newer");
+    assert_eq!(eps[0]["artist"], "Host");
+    assert_eq!(eps[0]["downloaded"], false);
+    let (newer, older) = (eps[0]["id"].as_str().unwrap().to_string(), eps[1]["id"].as_str().unwrap().to_string());
+    assert_eq!(s.ok("getNewestPodcasts", &[("count", "1")]).await["newestPodcasts"]["episode"][0]["id"], newer);
+
+    // not saved here: streamed through from the podcast's server, seeking included
+    let r = s.http.get(s.url("stream", &[("id", &older)])).header("Range", "bytes=10-19").send().await.unwrap();
+    assert_eq!(r.status(), 206);
+    assert_eq!(r.bytes().await.unwrap().len(), 10);
+    // saved on the server when asked for
+    s.ok("downloadPodcastEpisode", &[("id", &newer)]).await;
+    let mut saved = false;
+    for _ in 0..50 {
+        if s.ok("getPodcastEpisode", &[("id", &newer)]).await["podcastEpisode"]["downloaded"] == true {
+            saved = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(saved, "the episode wasn't downloaded");
+    let r = s.http.get(s.url("stream", &[("id", &newer)])).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.bytes().await.unwrap().len(), ep1.len());
+    // covers for the show and its episodes (they have none of their own)
+    let r = s.http.get(s.url("getCoverArt", &[("id", &show), ("size", "40")])).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(image::load_from_memory(&r.bytes().await.unwrap()).unwrap().width(), 40);
+    assert_eq!(s.http.get(s.url("getCoverArt", &[("id", &newer)])).send().await.unwrap().status(), 200);
+
+    // where you are, per user; bookmarks; played
+    s.ok("createBookmark", &[("id", &older), ("position", "1500")]).await;
+    let r = s.ok("getBookmarks", &[]).await;
+    assert_eq!(r["bookmarks"]["bookmark"][0]["position"], 1500);
+    assert_eq!(r["bookmarks"]["bookmark"][0]["entry"]["id"], older);
+    s.ok("setPodcastProgress", &[("id", &older), ("played", "true")]).await;
+    let e = s.ok("getPodcastEpisode", &[("id", &older)]).await;
+    assert_eq!(e["podcastEpisode"]["played"], true);
+    assert_eq!(e["podcastEpisode"]["position"], 0);
+    assert!(s.ok("getBookmarks", &[]).await["bookmarks"]["bookmark"].as_array().unwrap().is_empty());
+
+    // delete the saved file, then the show
+    s.ok("deletePodcastEpisode", &[("id", &newer)]).await;
+    assert_eq!(s.ok("getPodcastEpisode", &[("id", &newer)]).await["podcastEpisode"]["downloaded"], false);
+    s.ok("deletePodcastChannel", &[("id", &show)]).await;
+    assert!(s.ok("getPodcasts", &[]).await["podcasts"]["channel"].as_array().unwrap().is_empty());
+    assert_eq!(s.call("getPodcastEpisode", &[("id", &newer)]).await["error"]["code"], 70);
+}

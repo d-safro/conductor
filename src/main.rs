@@ -6,7 +6,8 @@
 //!   maestro [--config FILE] user passwd NAME
 //!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
-//!   maestro [--config FILE] import-music-lookup DATA     (its play log and Encore's sync values; after the above)
+//!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, podcasts from
+//!                                                         STATE/podcasts.json; run it after import-navidrome)
 
 use std::{
     io::{BufRead, Write},
@@ -82,8 +83,12 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        ["import-music-lookup", data] => {
-            let rep = maestro::import_nd::music_lookup(&pool, std::path::Path::new(data)).await?;
+        ["import-music-lookup", data, rest @ ..] => {
+            let state = rest.first().map(std::path::Path::new);
+            let rep = maestro::import_nd::music_lookup(&pool, std::path::Path::new(data), state).await?;
+            if rep.podcasts > 0 {
+                println!("Podcast episodes saved by music-lookup are in {data}/podcasts: set podcast_dir to that folder.");
+            }
             println!("{}", serde_json::to_string_pretty(&rep)?);
             Ok(())
         }
@@ -125,6 +130,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     tokio::spawn(scan_loop(state.clone()));
     maestro::jam::load(&state).await;
+    tokio::spawn(maestro::api::podcasts::worker(state.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();

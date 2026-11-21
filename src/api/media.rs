@@ -52,6 +52,9 @@ fn target(format: &str) -> Option<Transcode> {
 }
 
 pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
+    if let Some(id) = c.p.get("id").filter(|i| i.starts_with("pe-")) {
+        return super::podcasts::stream(c, id).await;
+    }
     let t = items::track(c, c.p.req("id")?).await?;
     let path = file_of(c, &t)?;
     let max = c.p.int("maxBitRate").unwrap_or(0).max(0);
@@ -185,6 +188,7 @@ pub async fn cover_for(st: &AppState, id: &str, size: Option<u32>) -> Result<Opt
         return Ok(Some(b));
     }
     let bytes = match id.strip_prefix("pl-") {
+        _ if super::podcasts::is_podcast_id(id) => super::podcasts::cover_bytes(st, id).await.unwrap_or(None),
         Some(rest) => playlist_image(st, rest.split('_').next().unwrap_or(rest)).await?,
         None => {
             let bare = ["mf-", "al-", "ar-"]
