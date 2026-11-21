@@ -63,6 +63,8 @@ Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prin
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
 password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
+Then `maestro import-music-lookup <music-lookup DATA folder>` adds music-lookup's listening log and Encore's
+sync values (plays already brought over from Navidrome aren't counted twice).
 
 Docker: `docker build -f deploy/Dockerfile -t maestro .` (see `deploy/compose.example.yml`).
 

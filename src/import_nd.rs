@@ -4,6 +4,9 @@
 //! that remember ids keep working: users (names and admin flag; passwords have to be set again), plays, ratings,
 //! stars, play history, playlists (with their smart rules and uploaded pictures), play queues and radio stations.
 //! The library itself is rescanned from the music folder. Running it again replaces what it brought over before.
+//!
+//! `import-music-lookup <DATA>` adds music-lookup's own records: the listening log (`listening/plays.jsonl`, what
+//! the stats are made from) and the values Encore keeps in step across devices (`encore/sync.json`).
 
 use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
 
@@ -21,6 +24,76 @@ use crate::{
     db::{self, Db},
     library::{self, ScanStatus, album_key, artist_key, track_key},
 };
+
+#[derive(Debug, Default, Serialize)]
+pub struct LookupReport {
+    pub plays_added: usize,
+    pub plays_already_there: usize,
+    pub plays_unknown_user_or_song: usize,
+    pub sync_values: usize,
+}
+
+/// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data).
+pub async fn music_lookup(ours: &Db, data: &Path) -> Result<LookupReport> {
+    let mut rep = LookupReport::default();
+    let users: HashMap<String, String> =
+        sqlx::query_as::<_, (String, String)>("SELECT lower(name), id FROM user").fetch_all(ours).await?.into_iter().collect();
+    let mut tx = ours.begin().await?;
+    if let Ok(text) = std::fs::read_to_string(data.join("listening/plays.jsonl")) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let (Some(t), Some(u), Some(id)) = (v["t"].as_f64(), v["u"].as_str(), v["id"].as_str()) else { continue };
+            let t = t as i64;
+            let known: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
+            let Some(uid) = users.get(&u.to_lowercase()).filter(|_| known > 0) else {
+                rep.plays_unknown_user_or_song += 1;
+                continue;
+            };
+            let dup: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM play WHERE user_id = ? AND track_id = ? AND played_at BETWEEN ? AND ?")
+                    .bind(uid)
+                    .bind(id)
+                    .bind(t - 30)
+                    .bind(t + 30)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if dup > 0 {
+                rep.plays_already_there += 1;
+                continue;
+            }
+            sqlx::query("INSERT INTO play (user_id, track_id, played_at, client) VALUES (?, ?, ?, 'music-lookup')")
+                .bind(uid)
+                .bind(id)
+                .bind(t)
+                .execute(&mut *tx)
+                .await?;
+            rep.plays_added += 1;
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(data.join("encore/sync.json")) {
+        let all: serde_json::Value = serde_json::from_str(&text).context("encore/sync.json")?;
+        for (u, vals) in all.as_object().into_iter().flatten() {
+            let Some(uid) = users.get(&u.to_lowercase()) else { continue };
+            for (key, v) in vals.as_object().into_iter().flatten() {
+                sqlx::query(
+                    "INSERT INTO sync_kv (user_id, key, value_json, at, by_device) VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(user_id, key) DO UPDATE SET value_json = excluded.value_json, at = excluded.at, by_device = excluded.by_device
+                     WHERE excluded.at >= sync_kv.at",
+                )
+                .bind(uid)
+                .bind(key)
+                .bind(v["value"].to_string())
+                .bind(v["at"].as_i64().unwrap_or(0))
+                .bind(v["by"].as_str().unwrap_or(""))
+                .execute(&mut *tx)
+                .await?;
+                rep.sync_values += 1;
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(rep)
+}
 
 #[derive(Debug, Default, Serialize)]
 pub struct ImportReport {

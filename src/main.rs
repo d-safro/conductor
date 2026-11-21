@@ -6,6 +6,7 @@
 //!   maestro [--config FILE] user passwd NAME
 //!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
+//!   maestro [--config FILE] import-music-lookup DATA     (its play log and Encore's sync values; after the above)
 
 use std::{
     io::{BufRead, Write},
@@ -79,6 +80,11 @@ async fn main() -> Result<()> {
             if !rep.users.is_empty() {
                 println!("Set a password for each imported user: maestro user passwd NAME");
             }
+            Ok(())
+        }
+        ["import-music-lookup", data] => {
+            let rep = maestro::import_nd::music_lookup(&pool, std::path::Path::new(data)).await?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
             Ok(())
         }
         _ => bail!("unknown command; see the top of src/main.rs"),
