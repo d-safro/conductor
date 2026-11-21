@@ -18,6 +18,14 @@ jam_listen = "127.0.0.1:4535"
 # podcast_dir = "/mnt/media/data/podcasts"
 podcast_keep = 0
 podcast_clean_days = 7
+
+# Songs you don't have (⬇, from Deezer) and downloading them through slskd. Filing needs write access to the music folder.
+catalog = true
+catalog_skip_clients = ["symfonium"]
+# slskd_url = "http://127.0.0.1:5030"
+# slskd_api_key = "…"                       # or MAESTRO_SLSKD_API_KEY
+# slskd_downloads = "/mnt/media/data/soulseek/complete"
+# import_library = "Music"
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]

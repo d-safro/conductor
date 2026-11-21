@@ -42,10 +42,18 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   podcast's server (with seeking) unless saved on the server (`downloadPodcastEpisode`, or `podcast_keep` newest
   per show); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
   bookmarks per user. Episode and show ids are the same as music-lookup's.
+- **Songs you don't have** (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
+  albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
+  have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or
+  add a ⬇ song to a playlist: it's searched on Soulseek through **slskd** (one search every 12 s; the same album
+  first, then FLAC over 320, right title/artist/length, no live/remix versions unless asked), downloaded, filed as
+  `Songs/<Artist>/<Artist> - <Title>.<ext>`, scanned, then hearted / added. Also `lookupSongs`, `getDiscoveries`,
+  `getSongDiscoveries`. Set `slskd_url`, `slskd_api_key` and `slskd_downloads`; filing needs **write access** to the
+  music folder. Apps listed in `catalog_skip_clients` (default: Symfonium) never get ⬇ items.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: and
-downloading songs you don't have (slskd, Lidarr). See `docs/api/` for the extension list.
+Coming next: songs on trial (played but not kept), Lidarr's wanted albums, Spotify sync, LRCLIB lyrics,
+artist info. See `docs/api/` for the extension list.
 
 ## Run it
 

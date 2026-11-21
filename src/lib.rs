@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod catalog;
 pub mod config;
 pub mod db;
 pub mod import_nd;

@@ -51,6 +51,10 @@ const PASS: &str = "s3cret pass";
 
 impl Server {
     async fn start() -> Self {
+        Self::start_with(|c| c.catalog = false).await
+    }
+
+    async fn start_with(tune: impl FnOnce(&mut Config)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("music");
         tone(&music.join("Alpha/First Album/01 One.flac"), "One", "Alpha", "First Album", 1, 3);
@@ -65,6 +69,8 @@ impl Server {
             jam_public_url: Some("https://jam.example.test".into()),
             ..Config::default()
         };
+        let mut cfg = cfg;
+        tune(&mut cfg);
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
         let pool = db::open(&cfg.data_dir.join("maestro.db")).await.unwrap();
         let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
@@ -561,4 +567,197 @@ async fn podcasts() {
     s.ok("deletePodcastChannel", &[("id", &show)]).await;
     assert!(s.ok("getPodcasts", &[]).await["podcasts"]["channel"].as_array().unwrap().is_empty());
     assert_eq!(s.call("getPodcastEpisode", &[("id", &newer)]).await["error"]["code"], 70);
+}
+
+/// Stand-ins for Deezer (a few songs, albums, artists) and slskd (one peer who has the song).
+async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String, String) {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    let dl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dz_base = format!("http://{}", dl.local_addr().unwrap());
+    let b = dz_base.clone();
+    let deezer = axum::Router::new().fallback(move |req: Request| {
+        let b = b.clone();
+        async move {
+            let path = req.uri().path().to_string();
+            let q = req.uri().query().unwrap_or("").to_lowercase();
+            let th = json!({ "id": 7, "name": "Talking Heads", "nb_fan": 1000, "nb_album": 1, "picture_big": format!("{b}/img.png") });
+            let alpha = json!({ "id": 8, "name": "Alpha", "nb_fan": 50 });
+            let al77 = json!({ "id": 50, "title": "Talking Heads: 77", "artist": th, "record_type": "album", "nb_tracks": 2, "release_date": "1977-09-16",
+                               "cover_big": format!("{b}/img.png"), "cover_xl": format!("{b}/img.png"), "fans": 900 });
+            let first = json!({ "id": 60, "title": "First Album", "artist": alpha, "record_type": "album", "nb_tracks": 3, "fans": 400 });
+            let second = json!({ "id": 61, "title": "Second Album", "artist": alpha, "record_type": "album", "nb_tracks": 9, "fans": 300, "release_date": "2023-01-01" });
+            let pk = json!({ "id": 900, "title": "Psycho Killer", "duration": 3, "isrc": "USSI10000001", "artist": th, "album": al77,
+                             "preview": format!("{b}/preview.mp3"), "track_position": 1, "disk_number": 1, "contributors": [] });
+            let uh = json!({ "id": 901, "title": "Uh-Oh, Love Comes to Town", "duration": 3, "artist": th, "album": al77, "track_position": 2, "disk_number": 1 });
+            let one = json!({ "id": 801, "title": "One", "duration": 3, "artist": alpha, "album": first, "track_position": 1 });
+            let half = json!({ "id": 803, "title": "Three and a Half", "duration": 3, "artist": alpha, "album": first, "track_position": 3 });
+            let body = match path.as_str() {
+                "/search" => json!({ "data": if q.contains("psycho") { vec![pk.clone(), one.clone()] } else { vec![] } }),
+                "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
+                "/search/album" => json!({ "data": if q.contains("talking") || q.contains("psycho") { vec![al77.clone()] } else { vec![] } }),
+                "/search/artist" if q.contains("alpha") => json!({ "data": [alpha] }),
+                "/search/artist" => json!({ "data": if q.contains("talking") { vec![th.clone()] } else { vec![] } }),
+                "/track/900" => pk,
+                "/track/901" => uh,
+                "/album/50" => al77,
+                "/album/50/tracks" => json!({ "data": [pk, uh] }),
+                "/album/60/tracks" => json!({ "data": [one, half] }),
+                "/artist/8/albums" => json!({ "data": [first, second] }),
+                "/artist/7" => th,
+                "/preview.mp3" => return ([("content-type", "audio/mpeg")], vec![0xffu8, 0xfb, 0x90, 0x00, 1, 2, 3]).into_response(),
+                "/img.png" => {
+                    let mut png = std::io::Cursor::new(Vec::new());
+                    image::RgbImage::from_pixel(8, 8, image::Rgb([1, 2, 3])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+                    return ([("content-type", "image/png")], png.into_inner()).into_response();
+                }
+                _ => json!({ "error": { "code": 800, "message": "no data" } }),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(dl, deezer).await.unwrap() });
+
+    let sl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sl_base = format!("http://{}", sl.local_addr().unwrap());
+    let remote = r"Music\Talking Heads\Talking Heads 77\04 Psycho Killer.flac".to_string();
+    let queued = Arc::new(std::sync::Mutex::new(false));
+    let slskd = axum::Router::new().fallback(move |req: Request| {
+        let (remote, queued, downloads, flac) = (remote.clone(), queued.clone(), downloads.clone(), flac.clone());
+        async move {
+            let (m, path) = (req.method().clone(), req.uri().path().to_string());
+            let body = match (m.as_str(), path.as_str()) {
+                (_, "/api/v0/application") => json!({ "server": { "isLoggedIn": true } }),
+                ("POST", "/api/v0/searches") => json!({}),
+                ("GET", p) if p.ends_with("/responses") => json!([{ "username": "peer", "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000,
+                    "files": [{ "filename": remote, "size": flac.len(), "bitRate": 0, "length": 3, "extension": "flac" },
+                              { "filename": r"Music\Talking Heads\Live\Psycho Killer (Live).flac", "size": 1, "length": 3 }] }]),
+                ("GET", p) if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+                ("POST", "/api/v0/transfers/downloads/peer") => {
+                    // the peer sends it at once
+                    let d = downloads.join("Talking Heads 77");
+                    std::fs::create_dir_all(&d).unwrap();
+                    std::fs::write(d.join("04 Psycho Killer.flac"), &flac).unwrap();
+                    *queued.lock().unwrap() = true;
+                    json!({})
+                }
+                ("GET", "/api/v0/transfers/downloads") => {
+                    if *queued.lock().unwrap() {
+                        json!([{ "username": "peer", "directories": [{ "files": [{ "id": "t1", "filename": remote, "state": "Completed, Succeeded" }] }] }])
+                    } else {
+                        json!([])
+                    }
+                }
+                _ => json!({}),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(sl, slskd).await.unwrap() });
+    (dz_base, sl_base)
+}
+
+#[tokio::test]
+async fn songs_you_dont_have() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    tone(&tmp.path().join("pk.flac"), "Psycho Killer", "Talking Heads", "Talking Heads: 77", 4, 3);
+    let flac = std::fs::read(tmp.path().join("pk.flac")).unwrap();
+    let (dz, sl) = fake_services(downloads.clone(), flac).await;
+    let s = Arc::new(
+        Server::start_with(|c| {
+            c.deezer_url = dz.clone();
+            c.slskd_url = Some(sl.clone());
+            c.slskd_api_key = Some("test".into());
+            c.slskd_downloads = Some(downloads.clone());
+            c.slskd_fast_test = true;
+        })
+        .await,
+    );
+    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+
+    // search: ⬇ items you don't have; your own "One" isn't offered again
+    let r = s.ok("search3", &[("query", "psycho")]).await;
+    let songs = r["searchResult3"]["song"].as_array().unwrap();
+    assert_eq!(songs.len(), 1, "{songs:?}");
+    assert_eq!(songs[0]["id"], "dz-t-900");
+    assert_eq!(songs[0]["title"], "⬇ Psycho Killer");
+    assert_eq!(songs[0]["lookupState"], 0);
+    assert!(r["searchResult3"]["album"].as_array().is_none_or(|a| a.is_empty())); // "psycho" isn't in the album's name
+    let r = s.ok("search3", &[("query", "talking heads")]).await;
+    assert_eq!(r["searchResult3"]["album"][0]["id"], "dz-a-50");
+    assert_eq!(r["searchResult3"]["album"][0]["name"], "⬇ Talking Heads: 77");
+    assert_eq!(r["searchResult3"]["artist"][0]["id"], "dz-r-7");
+    // Symfonium never gets ⬇ items
+    let plain: Value = s
+        .http
+        .get(s.url("search3", &[("query", "psycho")]).replace("c=test", "c=Symfonium"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(plain["subsonic-response"]["searchResult3"]["song"].as_array().is_none_or(|a| a.is_empty()));
+
+    // a whole ⬇ album, a ⬇ song, its preview and picture
+    let r = s.ok("getAlbum", &[("id", "dz-a-50")]).await;
+    assert_eq!(r["album"]["song"].as_array().unwrap().len(), 2);
+    assert_eq!(s.ok("getSong", &[("id", "dz-t-900")]).await["song"]["album"], "Talking Heads: 77");
+    let pv = s.http.get(s.url("stream", &[("id", "dz-t-900")])).send().await.unwrap();
+    assert_eq!(pv.headers()["content-type"], "audio/mpeg");
+    assert_eq!(pv.bytes().await.unwrap().len(), 7);
+    assert_eq!(s.http.get(s.url("getCoverArt", &[("id", "dz-a-50")])).send().await.unwrap().status(), 200);
+
+    // your album shows its missing song; your artist the album you don't have
+    let alpha = s.ok("search3", &[("query", "Alpha"), ("songCount", "0"), ("albumCount", "0")]).await["searchResult3"]["artist"]
+        [0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let art = s.ok("getArtist", &[("id", &alpha)]).await;
+    let names: Vec<&str> = art["artist"]["album"].as_array().unwrap().iter().map(|a| a["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["First Album", "⬇ Second Album"]);
+    let first = art["artist"]["album"][0]["id"].as_str().unwrap().to_string();
+    let al = s.ok("getAlbum", &[("id", &first)]).await;
+    let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["One", "⬇ Three and a Half", "Two"]);
+
+    // heart it: found on Soulseek (the studio copy, not the live one), downloaded, filed, scanned, hearted
+    s.ok("star", &[("id", "dz-t-900")]).await;
+    let mut ready = Value::Null;
+    for _ in 0..100 {
+        let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+        if r["lookupSongs"]["song"][0]["status"] == "ready" {
+            ready = r["lookupSongs"]["song"][0].clone();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let local = ready["songId"].as_str().expect("the song never arrived").to_string();
+    assert!(s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac").is_file());
+    let st = s.ok("getStarred2", &[]).await;
+    assert!(st["starred2"]["song"].as_array().unwrap().iter().any(|x| x["id"] == local));
+    assert_eq!(s.ok("getSong", &[("id", &local)]).await["song"]["title"], "Psycho Killer");
+    // now you have it: search doesn't offer it any more, and dz-t-900 plays your copy
+    assert!(
+        s.ok("search3", &[("query", "psycho")]).await["searchResult3"]["song"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["id"] != "dz-t-900")
+    );
+    let r = s.http.get(s.url("stream", &[("id", "dz-t-900")])).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "audio/flac");
+
+    // a ⬇ song added to a playlist shows there while it's on its way
+    let r = s.ok("createPlaylist", &[("name", "Wishlist"), ("songId", "dz-t-901")]).await;
+    let pid = r["playlist"]["id"].as_str().unwrap().to_string();
+    let pl = s.ok("getPlaylist", &[("id", &pid)]).await;
+    assert_eq!(pl["playlist"]["entry"][0]["id"], "dz-t-901");
+    assert_eq!(pl["playlist"]["entry"][0]["title"].as_str().unwrap().chars().next(), Some('⏳'));
 }

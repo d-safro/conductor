@@ -13,5 +13,5 @@ Each one gets its own spec file here before it's built.
 | `encore.stats` | `getListeningStats`, `getFolder` | done (same answers as music-lookup / Navidrome) |
 | `encore.smartPlaylists` | `createSmartPlaylist`, `updateSmartPlaylist`, `getSmartPlaylistRules` | done (same answers as music-lookup / Navidrome) |
 | `encore.playlistImages` | `setPlaylistImage`, `deletePlaylistImage` | done (same answers as music-lookup / Navidrome) |
-| `encore.catalog` | songs you don't have in `search3` / `getAlbum` / `getArtist`, `getDiscoveries`, `getSongDiscoveries`, `requestItem`, `getRequests` | planned |
+| `encore.catalog` | ⬇ items in `search3` / `getAlbum` / `getArtist`, `dz-…` ids everywhere, `lookupSongs`, `getDiscoveries`, `getSongDiscoveries` | done (same answers as music-lookup; trial songs not yet) |
 | `encore.sonic` | `getSonicSimilarTracks`, `findSonicPath`, AudioMuse-AI bridge | planned |

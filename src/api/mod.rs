@@ -1,6 +1,7 @@
 //! The Subsonic / OpenSubsonic API at `/rest/<method>[.view]`, JSON or XML, GET or POST (formPost).
 
 mod browse;
+mod catalog_api;
 mod encore;
 mod items;
 pub(crate) mod media;
@@ -46,11 +47,21 @@ pub struct AppState {
     pub live: crate::live::Live,
     /// wakes the podcast worker (something to download, a new show)
     pub podcast_wake: tokio::sync::Notify,
+    /// songs you don't have: Deezer, the library index for matching
+    pub catalog: crate::catalog::Catalog,
+    /// wakes the download worker (a song was asked for)
+    pub acquire_wake: tokio::sync::Notify,
+    /// one Soulseek search at a time
+    pub search_pace: tokio::sync::Mutex<()>,
 }
 
 impl AppState {
     pub fn new(db: Db, secrets: Secrets, cfg: Config, libs: Vec<(i64, LibraryConfig)>) -> Self {
+        let catalog = crate::catalog::Catalog::new(&cfg.deezer_url);
         Self {
+            catalog,
+            acquire_wake: Default::default(),
+            search_pace: Default::default(),
             db,
             secrets,
             cfg,
@@ -222,6 +233,16 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
 }
 
 async fn dispatch(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
+    if c.st.cfg.catalog
+        && let Some(r) = catalog_api::intercept(c, method).await
+    {
+        return r;
+    }
+    let r = dispatch_plain(c, method).await;
+    catalog_api::augment(c, method, r).await
+}
+
+async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
     match method {
         "ping" => empty(),
         "getLicense" => ok(json!({ "license": { "valid": true, "email": "", "licenseExpires": "2100-01-01T00:00:00Z" } })),

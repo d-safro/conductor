@@ -28,6 +28,20 @@ pub struct Config {
     pub podcast_keep: i64,
     /// Played episodes saved on the server go after this many days (0: never).
     pub podcast_clean_days: i64,
+    /// Songs you don't have (⬇) in searches, albums and artists (from Deezer).
+    pub catalog: bool,
+    /// Apps that never get ⬇ items (part of the client name, any case).
+    pub catalog_skip_clients: Vec<String>,
+    pub deezer_url: String,
+    /// slskd (Soulseek) for downloading songs asked for: its address and API key.
+    pub slskd_url: Option<String>,
+    pub slskd_api_key: Option<String>,
+    /// slskd's finished-downloads folder, as Maestro sees it (path mapping when they run on different systems).
+    pub slskd_downloads: Option<PathBuf>,
+    /// The music folder downloads are filed into (a library name; default: the first).
+    pub import_library: Option<String>,
+    #[serde(skip)]
+    pub slskd_fast_test: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +70,14 @@ impl Default for Config {
             podcast_dir: None,
             podcast_keep: 0,
             podcast_clean_days: 7,
+            catalog: true,
+            catalog_skip_clients: vec!["symfonium".into()],
+            deezer_url: "https://api.deezer.com".into(),
+            slskd_url: None,
+            slskd_api_key: None,
+            slskd_downloads: None,
+            import_library: None,
+            slskd_fast_test: false,
         }
     }
 }
@@ -112,6 +134,18 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_PODCAST_CLEAN_DAYS") {
             c.podcast_clean_days = v.parse().context("MAESTRO_PODCAST_CLEAN_DAYS")?;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_CATALOG") {
+            c.catalog = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_SLSKD_URL") {
+            c.slskd_url = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_SLSKD_API_KEY") {
+            c.slskd_api_key = Some(v);
+        }
+        if let Some(v) = std::env::var_os("MAESTRO_SLSKD_DOWNLOADS") {
+            c.slskd_downloads = Some(v.into());
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());
