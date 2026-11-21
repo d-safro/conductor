@@ -136,12 +136,14 @@ struct PlaylistRow {
     song_count: i64,
     duration_ms: i64,
     cover: Option<String>,
+    image_path: Option<String>,
 }
 
 const PLAYLIST_SELECT: &str = "SELECT p.id, p.owner_id, u.name AS owner_name, p.name, p.comment, p.public, p.created_at, p.updated_at,
     (SELECT COUNT(*) FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id AND t.missing_since IS NULL) AS song_count,
     (SELECT COALESCE(SUM(t.duration_ms), 0) FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id AND t.missing_since IS NULL) AS duration_ms,
-    (SELECT t.album_id FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id ORDER BY e.position LIMIT 1) AS cover
+    (SELECT t.album_id FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id ORDER BY e.position LIMIT 1) AS cover,
+    p.image_path
   FROM playlist p JOIN user u ON u.id = p.owner_id";
 
 fn playlist_json(p: &PlaylistRow) -> Value {
@@ -149,7 +151,10 @@ fn playlist_json(p: &PlaylistRow) -> Value {
         "id": p.id, "name": p.name, "comment": p.comment, "owner": p.owner_name, "public": p.public,
         "songCount": p.song_count, "duration": p.duration_ms / 1000, "created": iso(p.created_at), "changed": iso(p.updated_at),
     });
-    if let Some(c) = &p.cover {
+    // a playlist's own picture: the id changes with the playlist, so apps fetch a new picture after a change
+    if p.image_path.is_some() {
+        v["coverArt"] = format!("pl-{}_{:x}", p.id, p.updated_at).into();
+    } else if let Some(c) = &p.cover {
         v["coverArt"] = c.clone().into();
     }
     v

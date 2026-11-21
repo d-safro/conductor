@@ -212,17 +212,46 @@ pub fn sort_key(s: &str) -> String {
     l
 }
 
-pub fn artist_id(name: &str) -> String {
-    db::stable_id("artist", &name.to_lowercase())
+pub fn artist_key(name: &str) -> String {
+    name.to_lowercase()
 }
 
 /// One album per album artist + album name, whichever release each song came from (like ND_PID_ALBUM=albumartistid,album).
-pub fn album_id(album_artist: &str, album: &str) -> String {
-    db::stable_id("album", &format!("{}\u{1f}{}", album_artist.to_lowercase(), album.to_lowercase()))
+pub fn album_key(album_artist: &str, album: &str) -> String {
+    format!("{}\u{1f}{}", album_artist.to_lowercase(), album.to_lowercase())
 }
 
-pub fn track_id(library_id: i64, rel: &str) -> String {
-    db::stable_id("track", &format!("{library_id}:{rel}"))
+pub fn track_key(library_id: i64, rel: &str) -> String {
+    format!("{library_id}:{rel}")
+}
+
+/// Ids for songs, albums and artists: a hash of what identifies them, unless an id was carried over
+/// (from Navidrome) for that key, so apps that remember ids keep working.
+#[derive(Default)]
+pub struct Ids {
+    over: HashMap<(String, String), String>,
+}
+
+impl Ids {
+    pub async fn load(db: &Db) -> Result<Self> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT kind, key, id FROM id_override").fetch_all(db).await?;
+        Ok(Self { over: rows.into_iter().map(|(k, key, id)| ((k, key), id)).collect() })
+    }
+    fn get(&self, kind: &str, key: String) -> String {
+        match self.over.get(&(kind.to_string(), key.clone())) {
+            Some(id) => id.clone(),
+            None => db::stable_id(kind, &key),
+        }
+    }
+    pub fn track(&self, library_id: i64, rel: &str) -> String {
+        self.get("track", track_key(library_id, rel))
+    }
+    pub fn album(&self, album_artist: &str, album: &str) -> String {
+        self.get("album", album_key(album_artist, album))
+    }
+    pub fn artist(&self, name: &str) -> String {
+        self.get("artist", artist_key(name))
+    }
 }
 
 fn walk(root: &Path) -> Vec<FileStat> {
@@ -293,6 +322,7 @@ pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatu
 async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatus>, full: bool) -> Result<ScanReport> {
     let mut rep = ScanReport::default();
     status.count.store(0, Ordering::SeqCst);
+    let ids = Ids::load(db).await?;
     for (lib_id, lib) in libs {
         let online = is_online(lib);
         sqlx::query("UPDATE library SET online = ? WHERE id = ?").bind(online).bind(lib_id).execute(db).await?;
@@ -328,7 +358,7 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
         for (f, m) in &metas {
             status.count.fetch_add(1, Ordering::Relaxed);
             let suffix = Path::new(&f.rel).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let id = track_id(*lib_id, &f.rel);
+            let id = ids.track(*lib_id, &f.rel);
             if known.contains_key(&f.rel) {
                 rep.updated += 1
             } else {
@@ -351,8 +381,8 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
             )
             .bind(&id).bind(lib_id).bind(&f.rel).bind(f.size).bind(f.mtime).bind(&suffix).bind(content_type(&suffix))
             .bind(m.bitrate).bind(m.sample_rate).bind(m.bit_depth).bind(m.channels).bind(m.duration_ms)
-            .bind(&m.title).bind(sort_key(&m.title)).bind(artist_id(&m.artist)).bind(&m.artist)
-            .bind(album_id(&m.album_artist, &m.album)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
+            .bind(&m.title).bind(sort_key(&m.title)).bind(ids.artist(&m.artist)).bind(&m.artist)
+            .bind(ids.album(&m.album_artist, &m.album)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
             .bind(&m.genre).bind(&m.mbid).bind(m.has_picture).bind(m.has_lyrics).bind(now)
             .bind(&m.isrc).bind(m.rg_track_gain).bind(m.rg_track_peak).bind(m.rg_album_gain).bind(m.rg_album_peak)
             .execute(&mut *tx)
@@ -362,21 +392,21 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
                     "INSERT INTO artist (id, name, sort_name, mbid) VALUES (?,?,?,?)
                              ON CONFLICT(id) DO UPDATE SET mbid = COALESCE(excluded.mbid, artist.mbid)",
                 )
-                .bind(artist_id(name))
+                .bind(ids.artist(name))
                 .bind(name)
                 .bind(sort_key(name))
                 .bind(mbid)
                 .execute(&mut *tx)
                 .await?;
             }
-            let aid = album_id(&m.album_artist, &m.album);
+            let aid = ids.album(&m.album_artist, &m.album);
             sqlx::query(
                 "INSERT INTO album (id, name, sort_name, artist_id, artist_name, year, genre, mbid, compilation, created_at)
                  VALUES (?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(id) DO UPDATE SET year = COALESCE(excluded.year, album.year), genre = COALESCE(excluded.genre, album.genre),
                     mbid = COALESCE(excluded.mbid, album.mbid), compilation = MAX(album.compilation, excluded.compilation)",
             )
-            .bind(&aid).bind(&m.album).bind(sort_key(&m.album)).bind(artist_id(&m.album_artist)).bind(&m.album_artist)
+            .bind(&aid).bind(&m.album).bind(sort_key(&m.album)).bind(ids.artist(&m.album_artist)).bind(&m.album_artist)
             .bind(m.year).bind(&m.genre).bind(&m.album_mbid).bind(m.compilation).bind(now)
             .execute(&mut *tx)
             .await?;

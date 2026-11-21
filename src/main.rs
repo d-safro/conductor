@@ -5,6 +5,7 @@
 //!   encore-server [--config FILE] user add NAME [--admin]     password from ENCORE_PASSWORD or stdin
 //!   encore-server [--config FILE] user passwd NAME
 //!   encore-server [--config FILE] apikey NAME [LABEL]          prints a new API key
+//!   encore-server [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
 
 use std::{
     collections::HashMap,
@@ -70,6 +71,17 @@ async fn main() -> Result<()> {
         ["apikey", name, rest @ ..] => {
             let key = auth::create_api_key(&pool, name, rest.first().copied().unwrap_or("cli")).await?;
             println!("{key}");
+            Ok(())
+        }
+        ["import-navidrome", db_path, rest @ ..] => {
+            let artwork = rest.iter().position(|a| *a == "--artwork").and_then(|i| rest.get(i + 1)).map(PathBuf::from);
+            let rep =
+                encore_server::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref())
+                    .await?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
+            if !rep.users.is_empty() {
+                println!("Set a password for each imported user: encore-server user passwd NAME");
+            }
             Ok(())
         }
         _ => bail!("unknown command; see the top of src/main.rs"),

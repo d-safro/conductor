@@ -176,32 +176,10 @@ pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
     {
         return Ok(image_reply(b));
     }
-    // which song's folder / tags hold the picture
-    let track_id: Option<String> = match items::kind_of(c, &id).await? {
-        Some("track") => Some(id.clone()),
-        Some("album") => {
-            sqlx::query_scalar("SELECT cover_track_id FROM album WHERE id = ?").bind(&id).fetch_one(&c.st.db).await?
-        }
-        Some("artist") => sqlx::query_scalar(
-            "SELECT al.cover_track_id FROM album al WHERE al.artist_id = ? AND al.song_count > 0 ORDER BY al.year DESC LIMIT 1",
-        )
-        .bind(&id)
-        .fetch_optional(&c.st.db)
-        .await?
-        .flatten(),
-        _ => None,
+    let bytes = match id.strip_prefix("pl-") {
+        Some(rest) => playlist_image(c, rest.split('_').next().unwrap_or(rest)).await?,
+        None => song_image(c, &id).await?,
     };
-    let t = match track_id {
-        Some(tid) => items::track(c, &tid).await?,
-        None => return Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") }),
-    };
-    let file = file_of(c, &t)?;
-    let bytes = tokio::task::spawn_blocking(move || {
-        let from_folder = file.parent().and_then(folder_image).and_then(|p| std::fs::read(p).ok());
-        from_folder.or_else(|| embedded_image(&file))
-    })
-    .await
-    .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
     let Some(bytes) = bytes else {
         return Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") });
     };
@@ -222,6 +200,44 @@ pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
         let _ = tokio::fs::write(&p, &resized).await;
     }
     Ok(image_reply(resized))
+}
+
+/// A playlist's own picture (uploaded, or brought over from Navidrome).
+async fn playlist_image(c: &Ctx, pid: &str) -> Result<Option<Vec<u8>>, ApiError> {
+    let path: Option<String> =
+        sqlx::query_scalar("SELECT image_path FROM playlist WHERE id = ?").bind(pid).fetch_optional(&c.st.db).await?.flatten();
+    Ok(match path {
+        Some(p) => tokio::fs::read(p).await.ok(),
+        None => None,
+    })
+}
+
+/// The picture for a song, album or artist: an image file in the song's folder, else one inside the file.
+async fn song_image(c: &Ctx, id: &str) -> Result<Option<Vec<u8>>, ApiError> {
+    let id = id.to_string();
+    let track_id: Option<String> = match items::kind_of(c, &id).await? {
+        Some("track") => Some(id.clone()),
+        Some("album") => {
+            sqlx::query_scalar("SELECT cover_track_id FROM album WHERE id = ?").bind(&id).fetch_one(&c.st.db).await?
+        }
+        Some("artist") => sqlx::query_scalar(
+            "SELECT al.cover_track_id FROM album al WHERE al.artist_id = ? AND al.song_count > 0 ORDER BY al.year DESC LIMIT 1",
+        )
+        .bind(&id)
+        .fetch_optional(&c.st.db)
+        .await?
+        .flatten(),
+        _ => None,
+    };
+    let Some(tid) = track_id else { return Ok(None) };
+    let t = items::track(c, &tid).await?;
+    let file = file_of(c, &t)?;
+    tokio::task::spawn_blocking(move || {
+        let from_folder = file.parent().and_then(folder_image).and_then(|p| std::fs::read(p).ok());
+        from_folder.or_else(|| embedded_image(&file))
+    })
+    .await
+    .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
 }
 
 fn image_reply(b: Vec<u8>) -> Reply {

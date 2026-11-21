@@ -89,5 +89,7 @@ mod tests {
             assert_eq!(super::parse_iso(&super::iso(t)), Some(t));
         }
         assert_eq!(super::iso(0), "1970-01-01T00:00:00Z");
+        // Navidrome's format
+        assert_eq!(super::parse_iso("2026-11-12 19:17:06.918415513+00:00"), super::parse_iso("2026-11-12T19:17:06Z"));
     }
 }

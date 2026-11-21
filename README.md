@@ -29,7 +29,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
 Coming next: the Encore extensions (devices, sync, sign-in pairing, Jam, stats, smart playlists, playlist pictures),
-a temporary stand-in for the few Navidrome-only calls Encore 1.7.9 makes, migration from Navidrome, podcasts, and
+a temporary stand-in for the few Navidrome-only calls Encore 1.7.9 makes, podcasts, and
 downloading songs you don't have (slskd, Lidarr). See `docs/api/` for the extension list.
 
 ## Run it
@@ -46,6 +46,12 @@ ENCORE_PASSWORD='…' ./target/release/encore-server --config config.toml user a
 Or with the environment only: `ENCORE_MUSIC=/path/to/music ENCORE_ADMIN_USER=me ENCORE_ADMIN_PASSWORD=… encore-server`.
 
 Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key).
+
+**Moving over from Navidrome:** stop Navidrome, copy its data folder, then
+`encore-server import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
+Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
+their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
+password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
 
 Docker: `docker build -f deploy/Dockerfile -t encore-server .` (see `deploy/compose.example.yml`).
 
