@@ -76,8 +76,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next:
-artist info. See `docs/api/` for the extension list.
+Coming next: artist and album info, upgrades to the same-album copy. See `docs/api/` for the extension list.
 
 ## Run it
 
