@@ -86,6 +86,13 @@ async fn main() -> Result<()> {
         ["import-music-lookup", data, rest @ ..] => {
             let state = rest.first().map(std::path::Path::new);
             let rep = maestro::import_nd::music_lookup(&pool, std::path::Path::new(data), state).await?;
+            if let Some(dir) = state {
+                let (login, mapped) = maestro::spotify::import_from(&pool, dir, libs.first().map(|l| l.0)).await?;
+                println!(
+                    "Spotify: login {}, {mapped} songs matched to their files",
+                    if login { "brought over" } else { "not found" }
+                );
+            }
             if rep.podcasts > 0 {
                 println!("Podcast episodes saved by music-lookup are in {data}/podcasts: set podcast_dir to that folder.");
             }
@@ -137,6 +144,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(maestro::catalog::acquire::worker(state.clone()));
     tokio::spawn(maestro::online::worker(state.clone()));
     tokio::spawn(maestro::listenbrainz::worker(state.clone()));
+    tokio::spawn(maestro::spotify::worker(state.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();

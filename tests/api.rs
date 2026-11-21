@@ -610,6 +610,7 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                 "/search/artist" => json!({ "data": if q.contains("talking") { vec![th.clone()] } else { vec![] } }),
                 "/track/900" => pk,
                 "/track/901" => uh,
+                "/track/isrc:USSI10000001" => pk.clone(),
                 "/album/50" => al77,
                 "/album/50/tracks" => json!({ "data": [pk, uh] }),
                 "/album/60/tracks" => json!({ "data": [one, half] }),
@@ -1319,4 +1320,94 @@ async fn listenbrainz_discovery_and_plays() {
         "this week's list",
     )
     .await;
+}
+
+#[tokio::test]
+async fn spotify_sync() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    if !have_ffmpeg() {
+        return;
+    }
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sp = format!("http://{}", l.local_addr().unwrap());
+    let app = axum::Router::new().fallback(move |req: Request| async move {
+        let path = req.uri().path().to_string();
+        if path == "/api/token" {
+            let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+            let form: Vec<(String, String)> = form_urlencoded::parse(&b).into_owned().collect();
+            // the saved one first, then the new one Spotify handed out
+            let tok = form.iter().find(|(k, _)| k == "refresh_token").map(|(_, v)| v.as_str()).unwrap_or("");
+            assert!((tok == "old-refresh" || tok == "new-refresh") && form.contains(&("client_id".into(), "cid".into())));
+            return axum::Json(json!({ "access_token": "acc", "refresh_token": "new-refresh", "expires_in": 3600 })).into_response();
+        }
+        assert_eq!(req.headers()["authorization"], "Bearer acc");
+        let t = |id: &str, name: &str, artist: &str, isrc: Option<&str>| {
+            json!({ "id": id, "name": name, "type": "track", "artists": [{ "name": artist }], "duration_ms": 3000, "external_ids": { "isrc": isrc } })
+        };
+        let body = match path.as_str() {
+            "/v1/me/tracks" => json!({ "items": [{ "track": t("sp-pk", "Psycho Killer", "Talking Heads", Some("USSI10000001")) },
+                                                 { "track": t("sp-one", "One", "Alpha", None) }], "next": null }),
+            "/v1/me/playlists" => json!({ "items": [{ "id": "car", "name": "Car" }, { "id": "x", "name": "Not chosen" }], "next": null }),
+            "/v1/playlists/car/items" => json!({ "items": [{ "item": t("sp-two", "Zwei (renamed on Spotify)", "Alpha", None) }], "next": null }),
+            _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+        };
+        axum::Json(body).into_response()
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let (s, _tmp) = trial_server(|c| {
+        c.spotify_api_url = format!("{sp}/v1");
+        c.spotify_accounts_url = sp.clone();
+    })
+    .await;
+    // spotify.py's files: login, choices, and which file each Spotify song became
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("token.json"), r#"{"client_id": "cid", "refresh_token": "old-refresh", "access_token": "x"}"#)
+        .unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"mode": "songs", "liked": true, "playlists": ["Car"]}"#).unwrap();
+    std::fs::write(dir.path().join("songs.json"), r#"{"sp-two": {"rel": "Alpha/First Album/02 Two.flac", "status": "done"}}"#)
+        .unwrap();
+    let lib = s.st.libs[0].0;
+    assert_eq!(maestro::spotify::import_from(&s.st.db, dir.path(), Some(lib)).await.unwrap(), (true, 1));
+
+    let (lists, have, asked) = maestro::spotify::sync_once(&s.st).await.unwrap();
+    assert_eq!((lists, have, asked), (2, 2, 1)); // One by title, Two by its file; Psycho Killer asked for (by ISRC)
+    let tok: String =
+        sqlx::query_scalar("SELECT value FROM setting WHERE key = 'spotify_token'").fetch_one(&s.st.db).await.unwrap();
+    assert!(tok.contains("new-refresh"), "a new refresh token is kept");
+    let pls = s.ok("getPlaylists", &[]).await;
+    let id_of = |name: &str| {
+        pls["playlists"]["playlist"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .map(|p| p["id"].as_str().unwrap().to_string())
+    };
+    let (liked, car) = (id_of("Liked Songs").unwrap(), id_of("Car").unwrap());
+    assert!(id_of("Not chosen").is_none());
+    assert_eq!(s.ok("getPlaylist", &[("id", &car)]).await["playlist"]["entry"][0]["title"], "Two");
+    // the missing song arrives: it joins Liked Songs and is hearted
+    wait_for(
+        async || {
+            s.ok("getPlaylist", &[("id", &liked)]).await["playlist"]["entry"]
+                .as_array()
+                .is_some_and(|e| e.iter().any(|x| x["title"] == "Psycho Killer" && x["starred"].is_string()))
+        },
+        "the liked song to arrive",
+    )
+    .await;
+    assert!(s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac").is_file());
+    let starred = s.ok("getStarred2", &[]).await;
+    assert!(starred["starred2"]["song"].as_array().unwrap().iter().any(|x| x["title"] == "One"));
+    // a second sync: now everything is here, nothing asked for, Spotify's order
+    let (_, have, asked) = maestro::spotify::sync_once(&s.st).await.unwrap();
+    assert_eq!((have, asked), (3, 0));
+    let order: Vec<String> = s.ok("getPlaylist", &[("id", &liked)]).await["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["title"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(order, ["Psycho Killer", "One"]);
 }

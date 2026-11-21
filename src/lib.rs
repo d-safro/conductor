@@ -12,3 +12,4 @@ pub mod library;
 pub mod listenbrainz;
 pub mod live;
 pub mod online;
+pub mod spotify;

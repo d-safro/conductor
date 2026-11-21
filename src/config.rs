@@ -74,6 +74,12 @@ pub struct Config {
     pub listenbrainz_url: String,
     /// Which ListenBrainz playlists to turn into discovery playlists ([] = none).
     pub discovery: Vec<String>,
+    /// Spotify sync (spotify.py's "songs" mode): your Liked Songs and chosen playlists become playlists here; songs
+    /// you don't have are asked for. The login and choices come from `import-music-lookup` (spotify/ folder).
+    pub spotify_sync: bool,
+    pub spotify_interval_hours: u64,
+    pub spotify_api_url: String,
+    pub spotify_accounts_url: String,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -130,6 +136,10 @@ impl Default for Config {
             listenbrainz_token: None,
             listenbrainz_for: None,
             listenbrainz_url: "https://api.listenbrainz.org".into(),
+            spotify_sync: true,
+            spotify_interval_hours: 6,
+            spotify_api_url: "https://api.spotify.com/v1".into(),
+            spotify_accounts_url: "https://accounts.spotify.com".into(),
             discovery: vec!["weekly-exploration".into(), "weekly-jams".into(), "daily-jams".into()],
             slskd_fast_test: false,
         }

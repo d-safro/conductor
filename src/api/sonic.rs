@@ -144,7 +144,12 @@ async fn entries(c: &Ctx, found: Vec<(String, Option<f64>)>, skip: &[&str]) -> V
 pub async fn similar(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("id")?.to_string();
     let count = c.p.int("count").unwrap_or(50).clamp(1, 500);
-    let v = am_get(c, "similar_tracks", &[("item_id", id.clone()), ("n", count.to_string()), ("eliminate_duplicates", "true".into())]).await?;
+    let v = am_get(
+        c,
+        "similar_tracks",
+        &[("item_id", id.clone()), ("n", count.to_string()), ("eliminate_duplicates", "true".into())],
+    )
+    .await?;
     let list = entries(c, songs_in(&v), &[&id]).await;
     if list.is_empty() {
         return Err(not_available());

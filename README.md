@@ -68,11 +68,15 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   for you (`listenbrainz_user`; Weekly Exploration, Weekly Jams, Daily Jams — `discovery`) become playlists: songs
   you have go straight in, the rest are downloaded into `Discovery/` and join as they arrive; when the next list
   comes, songs you didn't keep (heart, 4+, another playlist) are deleted and kept ones move to `Songs/`. (Explo's job.)
+- **Spotify sync** (spotify-sync + `music-download songs`): every 6 hours your Spotify Liked Songs and chosen playlists
+  become playlists here ("Synced from Spotify"), in Spotify's order, Liked Songs hearted; songs you don't have are
+  matched on Deezer (ISRC first) and asked for. The login and choices come from spotify.py's folder via
+  `import-music-lookup`.
 - **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: Spotify sync, a Windows installer,
+Coming next: a Windows service and installer,
 artist info. See `docs/api/` for the extension list.
 
 ## Run it
