@@ -2,6 +2,9 @@
 //! between two sounds, and the read-only recommendation calls Encore makes at `/rest/audiomuse/<endpoint>`.
 //! AudioMuse knows songs by the ids the server gave them (Navidrome's, kept by the import), so its answers map
 //! straight onto the library. When it isn't set up or doesn't answer, these say "not available" and apps fall back.
+//!
+//! AudioMuse's API (as documented for its Jellyfin plugin): similar_tracks?item_id=&n=&eliminate_duplicates= → a list
+//! of {item_id, title, author, distance}; find_path?start_song_id=&end_song_id=&max_steps= → {path: [...], total_distance}.
 
 use axum::{
     body::{Body, to_bytes},
@@ -141,7 +144,7 @@ async fn entries(c: &Ctx, found: Vec<(String, Option<f64>)>, skip: &[&str]) -> V
 pub async fn similar(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("id")?.to_string();
     let count = c.p.int("count").unwrap_or(50).clamp(1, 500);
-    let v = am_get(c, "similar_tracks", &[("item_id", id.clone()), ("n", count.to_string())]).await?;
+    let v = am_get(c, "similar_tracks", &[("item_id", id.clone()), ("n", count.to_string()), ("eliminate_duplicates", "true".into())]).await?;
     let list = entries(c, songs_in(&v), &[&id]).await;
     if list.is_empty() {
         return Err(not_available());

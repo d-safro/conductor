@@ -14,4 +14,4 @@ Each one gets its own spec file here before it's built.
 | `encore.smartPlaylists` | `createSmartPlaylist`, `updateSmartPlaylist`, `getSmartPlaylistRules` | done (same answers as music-lookup / Navidrome) |
 | `encore.playlistImages` | `setPlaylistImage`, `deletePlaylistImage` | done (same answers as music-lookup / Navidrome) |
 | `encore.catalog` | ⬇ items in `search3` / `getAlbum` / `getArtist`, `dz-…` ids everywhere, `lookupSongs`, `getDiscoveries`, `getSongDiscoveries` | done (same answers as music-lookup, trial songs included) |
-| `encore.sonic` | `getSonicSimilarTracks`, `findSonicPath`, `/rest/audiomuse/<endpoint>` (allow-list) | done (AudioMuse's answer fields to be checked against the running AudioMuse) |
+| `encore.sonic` | `getSonicSimilarTracks`, `findSonicPath`, `/rest/audiomuse/<endpoint>` (allow-list) | done (AudioMuse's parameters and answers as documented for its Jellyfin plugin; Encore's own AudioMuse calls pass through unchanged) |
