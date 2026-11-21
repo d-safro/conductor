@@ -54,6 +54,12 @@ pub struct Config {
     pub lidarr_albums_per_run: i64,
     /// Smallest share of an album's track names that must match a folder's file names (0..1).
     pub lidarr_match_ratio: f64,
+    /// Lyrics from LRCLIB for songs that have none (no .lrc, nothing in the tags).
+    pub lyrics_online: bool,
+    pub lrclib_url: String,
+    /// Save a cover.jpg (from iTunes, then Deezer) into album folders that have no picture.
+    pub covers_fetch: bool,
+    pub itunes_url: String,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -99,6 +105,10 @@ impl Default for Config {
             lidarr_interval_min: 5,
             lidarr_albums_per_run: 20,
             lidarr_match_ratio: 0.8,
+            lyrics_online: true,
+            lrclib_url: "https://lrclib.net".into(),
+            covers_fetch: true,
+            itunes_url: "https://itunes.apple.com".into(),
             slskd_fast_test: false,
         }
     }

@@ -23,7 +23,9 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   playlists (all), play queue, `getUser`, internet radio (all), `getScanStatus`, `startScan`, `stream`
   (direct with HTTP Range, or transcoded to mp3/opus/ogg/aac with `maxBitRate`, `format`, `timeOffset`),
   `download`, `getCoverArt` (folder images, then embedded; resized and cached), `getLyrics`, `getLyricsBySongId`
-  (`.lrc` files next to the song, or embedded lyrics; synced when timed).
+  (`.lrc` files next to the song, embedded lyrics, else **LRCLIB** online, remembered; synced when timed).
+- **Covers into album folders**: every 6 hours, album folders (`Albums/Artist/Album`, holding just that album) with no
+  picture get a `cover.jpg` from iTunes, then Deezer; nothing is ever overwritten (`covers_fetch`).
 - **Login**: Subsonic token (`t` + `s`), password (`p`, also `enc:`), and OpenSubsonic API keys (`apiKey`).
   Passwords are stored encrypted with a key in `secret.key` beside the database, never in it.
 - **Smart playlists** in Navidrome's rule format (`all`/`any`, is, contains, gt/lt, inTheRange, inTheLast,
@@ -61,7 +63,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   Set `lidarr_url`, `lidarr_api_key`, and `lidarr_downloads` when Lidarr sees the downloads folder at another path.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: Spotify sync, LRCLIB lyrics,
+Coming next: Spotify sync,
 artist info. See `docs/api/` for the extension list.
 
 ## Run it

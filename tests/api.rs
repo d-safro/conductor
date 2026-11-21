@@ -54,6 +54,11 @@ impl Server {
         Self::start_with(|c| c.catalog = false).await
     }
 
+    fn no_network(c: &mut Config) {
+        c.lyrics_online = false;
+        c.covers_fetch = false;
+    }
+
     async fn start_with(tune: impl FnOnce(&mut Config)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("music");
@@ -70,6 +75,7 @@ impl Server {
             ..Config::default()
         };
         let mut cfg = cfg;
+        Self::no_network(&mut cfg);
         tune(&mut cfg);
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
         let pool = db::open(&cfg.data_dir.join("maestro.db")).await.unwrap();
@@ -992,4 +998,82 @@ async fn lidarr_wanted_albums() {
     let user: String =
         sqlx::query_scalar("SELECT slsk_user FROM lidarr_grab WHERE album_id = 42").fetch_one(&s.st.db).await.unwrap();
     assert_eq!(user, "good"); // the whole album, not half of it
+}
+
+#[tokio::test]
+async fn lyrics_and_covers_online() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    if !have_ffmpeg() {
+        return;
+    }
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let (b2, h2) = (base.clone(), hits.clone());
+    let mut jpeg = std::io::Cursor::new(Vec::new());
+    image::RgbImage::from_fn(400, 400, |x, y| image::Rgb([(x * 7 % 251) as u8, (y * 13 % 241) as u8, ((x * y) % 239) as u8]))
+        .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+        .unwrap();
+    let jpeg = jpeg.into_inner();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let (b, hits, jpeg) = (b2.clone(), h2.clone(), jpeg.clone());
+        async move {
+            let q = req.uri().query().unwrap_or("").to_string();
+            match req.uri().path() {
+                "/api/get" => {
+                    hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if q.contains("track_name=Two") {
+                        axum::Json(json!({ "syncedLyrics": "[00:01.00]two, online\n[00:02.50]second line", "plainLyrics": "two, online" })).into_response()
+                    } else {
+                        (axum::http::StatusCode::NOT_FOUND, "none").into_response()
+                    }
+                }
+                "/search" => axum::Json(json!({ "results": [{ "artistName": "Gamma", "collectionName": "Third",
+                    "artworkUrl100": format!("{b}/art/100x100bb.jpg") }] })).into_response(),
+                p if p.starts_with("/art/") => {
+                    assert!(p.contains("1200x1200bb"), "asks for the big picture");
+                    ([("content-type", "image/jpeg")], jpeg).into_response()
+                }
+                _ => axum::Json(json!({ "data": [] })).into_response(),
+            }
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.lyrics_online = true;
+        c.lrclib_url = base.clone();
+        c.itunes_url = base.clone();
+        c.deezer_url = base.clone();
+        c.slskd_fast_test = true;
+    })
+    .await;
+    tone(&s.music.join("Albums/Gamma/Third/01 Gamma Song.flac"), "Gamma Song", "Gamma", "Third", 1, 2);
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+
+    // a song with no lyrics of its own: LRCLIB's, synced, asked for once
+    let two = s.ok("search3", &[("query", "Two")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    for _ in 0..2 {
+        let r = s.ok("getLyricsBySongId", &[("id", &two)]).await;
+        let l = &r["lyricsList"]["structuredLyrics"][0];
+        assert_eq!(l["synced"], true);
+        assert_eq!(l["line"][1]["value"], "second line");
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // a miss is remembered too
+    let three = s.ok("search3", &[("query", "Three")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    for _ in 0..2 {
+        assert!(
+            s.ok("getLyricsBySongId", &[("id", &three)]).await["lyricsList"]["structuredLyrics"].as_array().unwrap().is_empty()
+        );
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // a cover for the album folder that has none; Artist/Album folders (one level less) are left alone
+    let saved = maestro::online::covers_once(&s.st).await.unwrap();
+    assert_eq!(saved, 1);
+    assert!(s.music.join("Albums/Gamma/Third/cover.jpg").is_file());
+    assert!(!s.music.join("The Beta Band/Second/cover.jpg").exists());
+    assert_eq!(maestro::online::covers_once(&s.st).await.unwrap(), 0); // never twice
 }

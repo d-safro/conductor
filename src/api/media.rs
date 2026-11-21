@@ -324,7 +324,7 @@ fn parse_stamp(tag: &str) -> Option<i64> {
 
 async fn lyrics_text(c: &Ctx, t: &items::TrackRow) -> Result<Option<String>, ApiError> {
     let file = file_of(c, t)?;
-    tokio::task::spawn_blocking(move || {
+    let own = tokio::task::spawn_blocking(move || {
         if let Ok(s) = std::fs::read_to_string(file.with_extension("lrc"))
             && !s.trim().is_empty()
         {
@@ -334,7 +334,12 @@ async fn lyrics_text(c: &Ctx, t: &items::TrackRow) -> Result<Option<String>, Api
         tf.tags().iter().find_map(|t| t.get_string(&ItemKey::Lyrics).map(str::to_string)).filter(|s| !s.trim().is_empty())
     })
     .await
-    .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
+    .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    if own.is_some() {
+        return Ok(own);
+    }
+    // none of its own: LRCLIB (remembered)
+    Ok(crate::online::lyrics(&c.st, &t.id, &t.title, &t.artist_name, &t.album_name, t.duration_ms / 1000).await)
 }
 
 pub async fn lyrics_by_song(c: &Ctx) -> Result<Reply, ApiError> {
@@ -364,9 +369,9 @@ pub async fn lyrics(c: &Ctx) -> Result<Reply, ApiError> {
     let title = c.p.get("title").unwrap_or("");
     let found = items::tracks_where(
         c,
-        "t.title = ? COLLATE NOCASE AND (? = '' OR t.artist_name = ? COLLATE NOCASE) AND t.has_lyrics = 1",
+        "t.title = ? COLLATE NOCASE AND (? = '' OR t.artist_name = ? COLLATE NOCASE)",
         &[title, artist, artist],
-        "LIMIT 1",
+        "ORDER BY t.has_lyrics DESC LIMIT 1",
     )
     .await?;
     let Some(t) = found.into_iter().next() else {
