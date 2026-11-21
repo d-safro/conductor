@@ -1140,3 +1140,78 @@ async fn audiomuse_bridge() {
     let s2 = Server::start().await;
     assert_eq!(s2.call("getSonicSimilarTracks", &[("id", "x")]).await["error"]["code"], 70);
 }
+
+#[tokio::test]
+async fn admin_page() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
+    let page = http.get(format!("{}/admin", s.base)).send().await.unwrap().text().await.unwrap();
+    assert!(page.contains("<title>Maestro admin</title>"));
+    let api = |p: &str| format!("{}/admin/api/{p}", s.base);
+    assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
+    // sign-in needs the header (other sites can't send it), and the right password
+    let no_header = http.post(api("login")).json(&serde_json::json!({"username": USER, "password": PASS})).send().await.unwrap();
+    assert_eq!(no_header.status(), 403);
+    let wrong = http
+        .post(api("login"))
+        .header("X-Maestro", "1")
+        .json(&serde_json::json!({"username": USER, "password": "x"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 401);
+    let ok = http
+        .post(api("login"))
+        .header("X-Maestro", "1")
+        .json(&serde_json::json!({"username": USER, "password": PASS}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), 200);
+    assert!(ok.headers()["set-cookie"].to_str().unwrap().contains("HttpOnly; SameSite=Strict"));
+    let st: Value = http.get(api("status")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["songs"], 3);
+    assert_eq!(st["libraries"][0]["connected"], true);
+    // changes need the header too
+    assert_eq!(
+        http.post(api("users")).json(&serde_json::json!({"name": "guest", "password": "secret1"})).send().await.unwrap().status(),
+        403
+    );
+    let r = http
+        .post(api("users"))
+        .header("X-Maestro", "1")
+        .json(&serde_json::json!({"name": "guest", "password": "secret1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let users: Value = http.get(api("users")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(users.as_array().unwrap().len(), 2);
+    let k: Value = http.post(api("users/guest/apikey")).header("X-Maestro", "1").send().await.unwrap().json().await.unwrap();
+    let ping: Value = s
+        .http
+        .get(format!("{}/rest/ping?f=json&apiKey={}", s.base, k["key"].as_str().unwrap()))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ping["subsonic-response"]["status"], "ok");
+    // a non-admin can't sign in here
+    let guest = reqwest::Client::builder().cookie_store(true).build().unwrap();
+    let r = guest
+        .post(api("login"))
+        .header("X-Maestro", "1")
+        .json(&serde_json::json!({"username": "guest", "password": "secret1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(http.post(api("scan")).header("X-Maestro", "1").send().await.unwrap().status(), 200);
+    http.post(api("logout")).header("X-Maestro", "1").send().await.unwrap();
+    assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
+}

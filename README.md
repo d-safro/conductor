@@ -64,6 +64,8 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 - **AudioMuse-AI** (optional; set `audiomuse_url` / `audiomuse_token`): `getSonicSimilarTracks` and `findSonicPath`
   from AudioMuse's analysis, and Encore's read-only recommendation calls at `/rest/audiomuse/<endpoint>` (an
   allow-list, logins never passed on). Without it these say "not available" and apps fall back.
+- **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), Lidarr albums,
+  users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
 Coming next: Spotify sync,

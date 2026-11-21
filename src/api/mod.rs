@@ -92,6 +92,7 @@ pub fn router(state: Shared) -> Router {
         .route("/rest/{method}", any(handle))
         .route("/health", get(health))
         .merge(native::routes())
+        .merge(crate::admin::routes())
         .route("/", get(|| async { "Maestro. Point a Subsonic app at this address." }))
         .with_state(state)
 }

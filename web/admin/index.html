@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestro admin</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --ok:#1d7a46; --warn:#a85b00; --bad:#b3261e;
+          font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --ok:#5fc98a; --warn:#f0a85a; --bad:#ff8a80; color-scheme: dark; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:16px; padding:12px max(16px, env(safe-area-inset-left)); border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; }
+  nav button { background:none; border:0; padding:6px 12px; border-radius:6px; color:var(--muted); font:inherit; cursor:pointer; }
+  nav button[aria-current="page"] { background:var(--bg); color:var(--fg); font-weight:600; }
+  header .who { margin-left:auto; color:var(--muted); font-size:13px; }
+  main { max-width:1000px; margin:0 auto; padding:20px max(16px, env(safe-area-inset-left)); }
+  section[hidden] { display:none; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; margin-bottom:20px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .tile b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--muted); font-size:13px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; overflow-x:auto; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:currentColor; } .pill.warn { color:var(--warn); border-color:currentColor; } .pill.bad { color:var(--bad); border-color:currentColor; }
+  button.act, form button { font:inherit; font-size:13px; padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--fg); cursor:pointer; }
+  button.act.primary, form button { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  input { font:inherit; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  form.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #login { max-width:320px; margin:12vh auto; }
+  #login .card { display:flex; flex-direction:column; gap:10px; }
+  .muted { color:var(--muted); } .err { color:var(--bad); min-height:1.5em; }
+  code { font-size:13px; word-break:break-all; }
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <form class="card" id="loginForm">
+    <h2>Maestro admin</h2>
+    <label>Username <input id="u" autocomplete="username" required></label>
+    <label>Password <input id="p" type="password" autocomplete="current-password" required></label>
+    <button>Sign in</button>
+    <div class="err" id="loginErr" role="alert"></div>
+  </form>
+</div>
+<div id="app" hidden>
+  <header>
+    <h1>Maestro</h1>
+    <nav id="tabs">
+      <button data-tab="status" aria-current="page">Status</button>
+      <button data-tab="downloads">Downloads</button>
+      <button data-tab="lidarr">Lidarr albums</button>
+      <button data-tab="users">Users</button>
+    </nav>
+    <span class="who" id="who"></span>
+    <button class="act" id="logout">Sign out</button>
+  </header>
+  <main>
+    <section id="status">
+      <div class="grid" id="tiles"></div>
+      <div class="card"><h2>Music folders</h2><table id="libs"></table>
+        <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p></div>
+      <div class="card"><h2>Connected services</h2><div id="services"></div></div>
+    </section>
+    <section id="downloads" hidden>
+      <div class="card"><h2>Songs asked for</h2><p class="muted">Hearted ⬇ songs, songs added to playlists, and songs on trial.</p><table id="reqs"></table></div>
+    </section>
+    <section id="lidarr" hidden>
+      <div class="card"><h2>Albums Lidarr wants</h2><table id="grabs"></table></div>
+    </section>
+    <section id="users" hidden>
+      <div class="card"><h2>Users</h2><table id="userList"></table></div>
+      <div class="card"><h2>Add a user</h2>
+        <form class="row" id="addUser"><input id="nu" placeholder="Name" required><input id="np" type="password" placeholder="Password (6+)" required>
+          <label><input type="checkbox" id="na"> admin</label><button>Add</button></form>
+        <div class="err" id="userErr" role="alert"></div><div id="keyOut"></div></div>
+    </section>
+  </main>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+async function api(path, opts = {}) {
+  const r = await fetch('/admin/api/' + path, { credentials: 'same-origin', ...opts,
+    headers: { 'X-Maestro': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+  if (r.status === 401) { show(false); throw new Error('sign in'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function show(signedIn) { $('login').hidden = signedIn; $('app').hidden = !signedIn; }
+const when = (t) => t ? new Date(t * 1000).toLocaleString() : '–';
+const pill = (s) => {
+  const cls = { done: 'ok', ready: 'ok', queued: 'warn', retry: 'warn', downloading: 'warn', importing: 'warn', notfound: 'bad' }[s] || '';
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
+};
+async function loadStatus() {
+  const s = await api('status');
+  $('who').textContent = `${s.you} · Maestro ${s.version}`;
+  const r = s.requests || {};
+  const tiles = [['Songs', s.songs], ['Albums', s.albums], ['Artists', s.artists], ['Playlists', s.playlists], ['Podcasts', s.podcasts],
+    ['Missing files', s.missing], ['Waiting to download', (r.retry || 0) + (r.queued || 0)], ['On trial', s.onTrial], ['Lidarr albums open', s.lidarr]];
+  $('tiles').innerHTML = tiles.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+  $('libs').innerHTML = '<tr><th>Name</th><th>Folder</th><th>State</th></tr>' + s.libraries.map((l) =>
+    `<tr><td>${esc(l.name)}</td><td><code>${esc(l.path)}</code></td><td>${l.connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>'}</td></tr>`).join('');
+  $('scanNote').textContent = s.scanning ? 'Scanning…' : `Last scan: ${when(s.lastScan)}`;
+  $('services').innerHTML = Object.entries(s.services).map(([k, v]) => `<span class="pill ${v ? 'ok' : ''}">${esc(k)}: ${v ? 'on' : 'off'}</span>`).join(' ');
+}
+async function loadReqs() {
+  const rows = await api('requests');
+  $('reqs').innerHTML = '<tr><th>Song</th><th>State</th><th>Searches</th><th>Asked</th><th></th></tr>' + rows.map((x) => {
+    const artist = (JSON.parse(x.artists_json || '[]')[0]) || '';
+    const st = x.local_id ? 'ready' : x.status;
+    const acts = x.local_id ? '' : `<button class="act" data-retry="${esc(x.key)}">Retry</button> <button class="act" data-cancel="${esc(x.key)}">Cancel</button>`;
+    return `<tr><td>${esc(artist)} – ${esc(x.title)}${x.trial ? ' <span class="pill">trial</span>' : ''}</td><td>${pill(st)}</td><td class="num">${x.searches}</td><td>${when(x.asked_at)}</td><td>${acts}</td></tr>`;
+  }).join('') || '<tr><td class="muted">Nothing asked for yet.</td></tr>';
+}
+async function loadGrabs() {
+  const rows = await api('lidarr');
+  $('grabs').innerHTML = '<tr><th>Album</th><th>State</th><th>From</th><th>Searches</th><th></th></tr>' + rows.map((g) =>
+    `<tr><td>${esc(g.artist)} – ${esc(g.title)}${g.error ? `<br><span class="muted">${esc(g.error)}</span>` : ''}</td><td>${pill(g.status)}</td><td>${esc(g.user || '')}</td>
+     <td class="num">${g.searches}</td><td>${g.status === 'done' ? '' : `<button class="act" data-lretry="${g.id}">Retry</button>`}</td></tr>`).join('')
+    || '<tr><td class="muted">Nothing from Lidarr yet (or Lidarr isn\'t set up).</td></tr>';
+}
+async function loadUsers() {
+  const rows = await api('users');
+  $('userList').innerHTML = '<tr><th>Name</th><th>Role</th><th></th></tr>' + rows.map((u) =>
+    `<tr><td>${esc(u.name)}</td><td>${u.admin ? 'admin' : 'user'}</td><td><button class="act" data-pw="${esc(u.name)}">Set password</button> <button class="act" data-key="${esc(u.name)}">New API key</button></td></tr>`).join('');
+}
+const loaders = { status: loadStatus, downloads: loadReqs, lidarr: loadGrabs, users: loadUsers };
+let current = 'status';
+function go(tab) {
+  current = tab;
+  document.querySelectorAll('#tabs button').forEach((b) => b.toggleAttribute('aria-current', b.dataset.tab === tab) || (b.dataset.tab === tab && b.setAttribute('aria-current', 'page')));
+  document.querySelectorAll('main section').forEach((s) => (s.hidden = s.id !== tab));
+  loaders[tab]().catch(() => {});
+}
+$('tabs').addEventListener('click', (e) => e.target.dataset.tab && go(e.target.dataset.tab));
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('loginErr').textContent = '';
+  try { await api('login', { method: 'POST', body: JSON.stringify({ username: $('u').value, password: $('p').value }) }); show(true); go('status'); }
+  catch (x) { $('loginErr').textContent = x.message; }
+});
+$('logout').addEventListener('click', async () => { await api('logout', { method: 'POST' }).catch(() => {}); show(false); });
+$('scan').addEventListener('click', async () => { await api('scan', { method: 'POST' }); $('scanNote').textContent = 'Scanning…'; setTimeout(loadStatus, 3000); });
+document.addEventListener('click', async (e) => {
+  const d = e.target.dataset || {};
+  try {
+    if (d.retry) { await api(`requests/${encodeURIComponent(d.retry)}/retry`, { method: 'POST' }); loadReqs(); }
+    if (d.cancel) { await api(`requests/${encodeURIComponent(d.cancel)}`, { method: 'DELETE' }); loadReqs(); }
+    if (d.lretry) { await api(`lidarr/${d.lretry}/retry`, { method: 'POST' }); loadGrabs(); }
+    if (d.key) { const k = await api(`users/${encodeURIComponent(d.key)}/apikey`, { method: 'POST' }); $('keyOut').innerHTML = `New API key for ${esc(d.key)} (shown once): <code>${esc(k.key)}</code>`; }
+  } catch (x) { $('userErr').textContent = x.message; }
+});
+document.addEventListener('click', async (e) => {
+  const name = e.target.dataset && e.target.dataset.pw;
+  if (!name) return;
+  const row = e.target.closest('td');
+  row.innerHTML = `<form class="row" data-for="${esc(name)}"><input type="password" placeholder="New password" required minlength="6"><button>Save</button></form>`;
+  row.querySelector('input').focus();
+});
+document.addEventListener('submit', async (e) => {
+  const f = e.target;
+  if (!f.dataset.for) return;
+  e.preventDefault();
+  try { await api(`users/${encodeURIComponent(f.dataset.for)}/password`, { method: 'POST', body: JSON.stringify({ password: f.querySelector('input').value }) }); loadUsers(); }
+  catch (x) { $('userErr').textContent = x.message; }
+});
+$('addUser').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('userErr').textContent = '';
+  try { await api('users', { method: 'POST', body: JSON.stringify({ name: $('nu').value, password: $('np').value, admin: $('na').checked }) }); e.target.reset(); loadUsers(); }
+  catch (x) { $('userErr').textContent = x.message; }
+});
+api('status').then(() => { show(true); go('status'); }).catch(() => show(false));
+setInterval(() => { if (!$('app').hidden && current !== 'users') loaders[current]().catch(() => {}); }, 15000);
+</script>
+</body>
+</html>
