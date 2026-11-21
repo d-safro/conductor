@@ -61,6 +61,9 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   tracks, `lidarr_match_ratio` of the track names, the artist in the path) is downloaded, renamed
   "<Artist> - <Album>" and handed to Lidarr (`DownloadedAlbumsScan`). A user whose copy fails isn't tried again.
   Set `lidarr_url`, `lidarr_api_key`, and `lidarr_downloads` when Lidarr sees the downloads folder at another path.
+- **AudioMuse-AI** (optional; set `audiomuse_url` / `audiomuse_token`): `getSonicSimilarTracks` and `findSonicPath`
+  from AudioMuse's analysis, and Encore's read-only recommendation calls at `/rest/audiomuse/<endpoint>` (an
+  allow-list, logins never passed on). Without it these say "not available" and apps fall back.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
 Coming next: Spotify sync,

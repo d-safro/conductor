@@ -60,6 +60,9 @@ pub struct Config {
     /// Save a cover.jpg (from iTunes, then Deezer) into album folders that have no picture.
     pub covers_fetch: bool,
     pub itunes_url: String,
+    /// AudioMuse-AI (optional): sound-alike songs, paths between sounds, Encore's recommendation calls.
+    pub audiomuse_url: Option<String>,
+    pub audiomuse_token: Option<String>,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -109,6 +112,8 @@ impl Default for Config {
             lrclib_url: "https://lrclib.net".into(),
             covers_fetch: true,
             itunes_url: "https://itunes.apple.com".into(),
+            audiomuse_url: None,
+            audiomuse_token: None,
             slskd_fast_test: false,
         }
     }
@@ -187,6 +192,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_LIDARR_DOWNLOADS") {
             c.lidarr_downloads = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_URL") {
+            c.audiomuse_url = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_TOKEN") {
+            c.audiomuse_token = Some(v);
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

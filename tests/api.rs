@@ -98,7 +98,11 @@ impl Server {
         let mut q = form_urlencoded::Serializer::new(String::new());
         q.extend_pairs([("u", USER), ("t", token.as_str()), ("s", salt), ("v", "1.16.1"), ("c", "test"), ("f", "json")]);
         q.extend_pairs(params.iter().copied());
-        format!("{}/rest/{method}.view?{}", self.base, q.finish())
+        if method.contains('/') {
+            format!("{}/rest/{method}?{}", self.base, q.finish())
+        } else {
+            format!("{}/rest/{method}.view?{}", self.base, q.finish())
+        }
     }
 
     async fn call(&self, method: &str, params: &[(&str, &str)]) -> Value {
@@ -1076,4 +1080,63 @@ async fn lyrics_and_covers_online() {
     assert!(s.music.join("Albums/Gamma/Third/cover.jpg").is_file());
     assert!(!s.music.join("The Beta Band/Second/cover.jpg").exists());
     assert_eq!(maestro::online::covers_once(&s.st).await.unwrap(), 0); // never twice
+}
+
+#[tokio::test]
+async fn audiomuse_bridge() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    if !have_ffmpeg() {
+        return;
+    }
+    let ids = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let i2 = ids.clone();
+    let am = axum::Router::new().fallback(move |req: Request| {
+        let ids = i2.clone();
+        async move {
+            assert_eq!(req.headers()["authorization"], "Bearer am-token");
+            let q = req.uri().query().unwrap_or("").to_string();
+            assert!(!q.contains("apiKey") && !q.contains("u="), "logins aren't passed on: {q}");
+            let ids = ids.lock().unwrap().clone();
+            let body = match req.uri().path() {
+                "/api/similar_tracks" => {
+                    json!([{ "item_id": ids[1], "title": "Two", "distance": 0.1 }, { "item_id": "unknown", "distance": 0.2 },
+                                                { "item_id": ids[2], "distance": 0.3 }])
+                }
+                "/api/find_path" => json!({ "path": [{ "item_id": ids[0] }, { "item_id": ids[2] }], "total_distance": 1.0 }),
+                "/api/clap/top_queries" => json!({ "queries": ["rainy piano"] }),
+                _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, am).await.unwrap() });
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.audiomuse_url = Some(base.clone());
+        c.audiomuse_token = Some("am-token".into());
+    })
+    .await;
+    let all = s.ok("search3", &[("query", "\"\""), ("songCount", "10")]).await;
+    let mut v: Vec<String> =
+        all["searchResult3"]["song"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect();
+    v.sort();
+    *ids.lock().unwrap() = v.clone();
+    let r = s.ok("getSonicSimilarTracks", &[("id", &v[0]), ("count", "5")]).await;
+    let m = r["sonicMatch"].as_array().unwrap();
+    assert_eq!(m.len(), 2, "unknown ids are left out");
+    assert_eq!(m[0]["entry"]["id"], v[1]);
+    assert!((m[0]["similarity"].as_f64().unwrap() - 0.9).abs() < 1e-9);
+    let r = s.ok("findSonicPath", &[("startSongId", &v[0]), ("endSongId", &v[2])]).await;
+    assert_eq!(r["sonicPath"][1]["entry"]["id"], v[2]);
+    // the passthrough: allowed calls with a login, nothing else
+    let r: Value = s.http.get(s.url("audiomuse/clap/top_queries", &[])).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["queries"][0], "rainy piano");
+    assert_eq!(s.http.get(s.url("audiomuse/admin/delete_everything", &[])).send().await.unwrap().status(), 404);
+    assert_eq!(s.http.get(format!("{}/rest/audiomuse/clap/top_queries?u=x&p=y", s.base)).send().await.unwrap().status(), 401);
+    // not set up: "not available", so apps fall back
+    let s2 = Server::start().await;
+    assert_eq!(s2.call("getSonicSimilarTracks", &[("id", "x")]).await["error"]["code"], 70);
 }

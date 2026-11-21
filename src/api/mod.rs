@@ -8,6 +8,7 @@ pub(crate) mod media;
 mod native;
 pub mod podcasts;
 pub mod smart;
+mod sonic;
 mod userdata;
 
 use std::{collections::HashMap, sync::Arc};
@@ -87,6 +88,7 @@ pub type Shared = Arc<AppState>;
 
 pub fn router(state: Shared) -> Router {
     Router::new()
+        .route("/rest/audiomuse/{*endpoint}", any(sonic::passthrough))
         .route("/rest/{method}", any(handle))
         .route("/health", get(health))
         .merge(native::routes())
@@ -258,6 +260,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.jam", "versions": [1] },
             { "name": "encore.smartPlaylists", "versions": [1] },
             { "name": "encore.playlistImages", "versions": [1] },
+            { "name": "encore.sonic", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -302,6 +305,8 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getPlayQueue" => userdata::get_play_queue(c).await,
         "savePlayQueue" => userdata::save_play_queue(c).await,
         "getUser" => userdata::get_user(c).await,
+        "getSonicSimilarTracks" => sonic::similar(c).await,
+        "findSonicPath" => sonic::path(c).await,
         "deviceHello" => encore::device_hello(c).await,
         "deviceState" => encore::device_state(c).await,
         "deviceList" => encore::device_list(c).await,
