@@ -18,6 +18,10 @@ pub struct Config {
     pub scan_interval_min: u64,
     /// ffmpeg for transcoding; found on PATH when not set.
     pub ffmpeg: Option<PathBuf>,
+    /// Address of the Jam guest page (the only thing to put on the internet). Empty string: no Jam listener.
+    pub jam_listen: String,
+    /// The guest page's public address (e.g. https://music.example.com:8443). Without it, Jam can't start.
+    pub jam_public_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -41,6 +45,8 @@ impl Default for Config {
             libraries: vec![],
             scan_interval_min: 15,
             ffmpeg: None,
+            jam_listen: "127.0.0.1:4535".into(),
+            jam_public_url: None,
         }
     }
 }
@@ -82,6 +88,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_SCAN_INTERVAL_MIN") {
             c.scan_interval_min = v.parse().context("MAESTRO_SCAN_INTERVAL_MIN")?;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_JAM_LISTEN") {
+            c.jam_listen = v;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_JAM_PUBLIC_URL") {
+            c.jam_public_url = Some(v);
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

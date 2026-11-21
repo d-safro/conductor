@@ -8,6 +8,10 @@
 
 listen = "127.0.0.1:4533"
 scan_interval_min = 15
+
+# Jam: the guest page listens here (put only this port on the internet), and guests open jam_public_url.
+jam_listen = "127.0.0.1:4535"
+# jam_public_url = "https://music.example.com:8443"
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]

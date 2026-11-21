@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0e0f13">
+<!--ENDED-->
+<title>Jam</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2218 18 72 72%22><defs><linearGradient id=%22bg%22 gradientUnits=%22userSpaceOnUse%22 x1=%220%22 y1=%220%22 x2=%22108%22 y2=%22108%22><stop offset=%220%22 stop-color=%22#1B1E2E%22/><stop offset=%221%22 stop-color=%22#0D0E15%22/></linearGradient><linearGradient id=%22g%22 gradientUnits=%22userSpaceOnUse%22 x1=%2224.5%22 y1=%2224.5%22 x2=%2283.5%22 y2=%2283.5%22><stop offset=%220%22 stop-color=%22#DCE3FF%22/><stop offset=%221%22 stop-color=%22#7C90FF%22/></linearGradient><clipPath id=%22r%22><rect x=%2218%22 y=%2218%22 width=%2272%22 height=%2272%22 rx=%2217%22/></clipPath></defs><g clip-path=%22url(#r)%22><rect width=%22108%22 height=%22108%22 fill=%22url(#bg)%22/><circle cx=%2254%22 cy=%2254%22 r=%2229.5%22 fill=%22url(#g)%22/><g fill=%22none%22 stroke=%22#0D0E15%22 stroke-opacity=%22.22%22 stroke-width=%221%22><circle cx=%2254%22 cy=%2254%22 r=%2226.5%22/><circle cx=%2254%22 cy=%2254%22 r=%2223.5%22/><circle cx=%2254%22 cy=%2254%22 r=%2220.5%22/></g><circle cx=%2254%22 cy=%2254%22 r=%2217.5%22 fill=%22#0D0E15%22/><path d=%22M44.51 58.55 C49.46 58.01 56.48 55.30 59.00 51.35 C60.80 48.47 59.00 45.67 55.76 45.86 C51.80 46.12 48.91 50.80 49.10 55.30 C49.27 59.80 52.52 62.33 56.30 62.15 C59.17 61.97 61.70 60.35 63.49 58.01%22 fill=%22none%22 stroke=%22url(#g)%22 stroke-width=%223.9%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></g></svg>">
+<style>
+  :root { --bg:#0e0f13; --card:#17191f; --card2:#1f222a; --text:#eceef3; --dim:#9aa0ad; --accent:#b4c5ff; --accent-ink:#0e1a3a; --warn:#ffb4a9; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif; }
+  body { padding:16px 16px calc(32px + env(safe-area-inset-bottom)); max-width:560px; margin:0 auto; }
+  h1 { font-size:22px; margin:4px 0 2px; letter-spacing:-.3px; }
+  .sub { color:var(--dim); font-size:13px; }
+  .card { background:var(--card); border-radius:18px; padding:14px; margin-top:14px; }
+  .now { display:flex; gap:14px; align-items:center; }
+  .now img, .row img { background:var(--card2); object-fit:cover; flex:none; }
+  .now img { width:84px; height:84px; border-radius:12px; }
+  .row img { width:44px; height:44px; border-radius:8px; }
+  .t { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .a { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .grow { flex:1; min-width:0; }
+  .bar { height:4px; background:var(--card2); border-radius:2px; margin-top:10px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); }
+  button { font:inherit; color:var(--text); background:var(--card2); border:0; border-radius:999px; padding:8px 14px; cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-ink); font-weight:600; }
+  button.icon { width:36px; height:36px; padding:0; display:inline-flex; align-items:center; justify-content:center; font-size:16px; }
+  button:disabled { opacity:.4; }
+  input { width:100%; font:inherit; color:var(--text); background:var(--card); border:1px solid #2a2e38; border-radius:999px; padding:12px 16px; outline:none; }
+  input:focus { border-color:var(--accent); }
+  h2 { font-size:15px; margin:22px 4px 6px; color:var(--dim); font-weight:600; }
+  .row { display:flex; gap:12px; align-items:center; padding:8px 4px; border-radius:12px; }
+  .row + .row { border-top:1px solid #1d2027; }
+  .tag { font-size:11px; color:var(--accent); }
+  .acts { display:flex; gap:4px; flex:none; }
+  .banner { background:#3a2a1f; color:var(--warn); border-radius:12px; padding:10px 14px; margin-top:12px; font-size:13px; }
+  .toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom)); transform:translateX(-50%); background:#2b2f3a; padding:10px 16px; border-radius:12px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; }
+  .toast.show { opacity:1; }
+  .empty { color:var(--dim); text-align:center; padding:28px 0; }
+  .hide { display:none !important; }
+  dialog { background:var(--card); color:var(--text); border:0; border-radius:20px; padding:20px; width:min(92vw,380px); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+</style>
+</head>
+<body>
+<div id="ended" class="empty hide"><h1>This Jam has ended</h1><p class="sub">Ask for a new link.</p></div>
+<main id="app">
+  <h1 id="title">Jam</h1>
+  <div class="sub" id="who">Add songs to the queue</div>
+  <div id="offline" class="banner hide">The host's phone isn't connected right now. What you add will play when it's back.</div>
+
+  <div class="card">
+    <div class="now">
+      <img id="np-img" alt="">
+      <div class="grow">
+        <div class="t" id="np-title">Nothing playing</div>
+        <div class="a" id="np-artist"></div>
+        <div class="bar"><i id="np-bar"></i></div>
+      </div>
+      <button class="icon" id="skip" title="Skip">⏭</button>
+    </div>
+  </div>
+
+  <h2>Add a song</h2>
+  <input id="q" type="search" placeholder="Search songs or artists" autocomplete="off" enterkeyhint="search">
+  <div id="results"></div>
+
+  <div id="pending-wrap" class="hide">
+    <h2>Getting these first</h2>
+    <div id="pending"></div>
+  </div>
+
+  <h2 id="next-title">Up next</h2>
+  <div id="queue"></div>
+</main>
+
+<dialog id="namebox">
+  <h1 style="font-size:19px">What's your name?</h1>
+  <p class="sub">So everyone sees who added what.</p>
+  <input id="name" maxlength="30" placeholder="Your name" autocomplete="nickname">
+  <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="primary" id="name-ok">Join</button></div>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const token = location.pathname.split('/')[2] || '';
+  const base = '/jam/' + token;
+  const $ = (id) => document.getElementById(id);
+  if (document.querySelector('meta[name="jam-ended"]')) { $('app').classList.add('hide'); $('ended').classList.remove('hide'); return; }
+
+  const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+                  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  let gid = store.get('jamGuest');
+  if (!gid) { gid = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('jamGuest', gid); }
+  let me = store.get('jamName');
+  let state = null, lastQueueKey = '';
+
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
+  function cover(id, size) { return id ? base + '/cover/' + encodeURIComponent(id) + '?s=' + (size || 120) : 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; }
+  function fmt(s) { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  async function post(kind, body) {
+    try {
+      const r = await fetch(base + '/' + kind, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ by: me || 'A guest' }, body)) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(j.error || 'That didn\'t work'); return null; }
+      setTimeout(poll, 700);
+      return j;
+    } catch (e) { toast('No connection'); return null; }
+  }
+
+  function songRow(s, actions) {
+    const row = el('div', 'row');
+    const img = el('img'); img.loading = 'lazy'; img.alt = ''; img.src = cover(s.cover); img.onerror = () => { img.src = cover(''); };
+    const mid = el('div', 'grow');
+    mid.append(el('div', 't', s.title || 'Unknown'));
+    const sub = [s.artist, s.duration ? fmt(s.duration) : ''].filter(Boolean).join(' · ');
+    mid.append(el('div', 'a', sub));
+    if (s.by) mid.append(el('div', 'tag', 'Added by ' + s.by));
+    if (s.lookup) mid.append(el('div', 'tag', 'Not in the library yet: downloads first'));
+    const acts = el('div', 'acts'); actions.forEach((b) => acts.append(b));
+    row.append(img, mid, acts);
+    return row;
+  }
+  function btn(label, title, fn, cls) { const b = el('button', cls || 'icon', label); b.title = title; b.onclick = async () => { b.disabled = true; await fn(); b.disabled = false; }; return b; }
+
+  function render() {
+    const s = state || {}, st = s.state || {};
+    $('title').textContent = s.host ? s.host + "'s Jam" : 'Jam';
+    $('who').textContent = (s.guests ? s.guests + (s.guests === 1 ? ' person' : ' people') + ' here · ' : '') + 'Add songs, reorder, or skip';
+    $('offline').classList.toggle('hide', !!s.online);
+    const now = st.now;
+    $('np-title').textContent = now ? now.title : (st.radio ? st.radio : 'Nothing playing');
+    $('np-artist').textContent = now ? [now.artist, now.by ? 'added by ' + now.by : ''].filter(Boolean).join(' · ') : (st.radio ? 'Internet radio' : '');
+    const img = $('np-img'); const src = cover(now && now.cover, 300); if (img.getAttribute('src') !== src) img.src = src;
+    $('skip').disabled = !now;
+
+    const pend = s.pending || [];
+    $('pending-wrap').classList.toggle('hide', !pend.length);
+    const pw = $('pending'); pw.textContent = '';
+    pend.forEach((p) => pw.append(songRow({ title: p.title, artist: p.artist, by: p.by }, [el('span', 'a', 'Downloading…')])));
+
+    const q = st.queue || [];
+    const key = JSON.stringify(q.map((x) => [x.i, x.id, x.by]));
+    if (key === lastQueueKey) return;
+    lastQueueKey = key;
+    $('next-title').textContent = st.total > (st.index || 0) + 1 ? 'Up next · ' + (st.total - (st.index || 0) - 1) : 'Up next';
+    const qw = $('queue'); qw.textContent = '';
+    if (!q.length) { qw.append(el('div', 'empty', 'Nothing queued. Search above to add something.')); return; }
+    const first = q[0].i, last = q[q.length - 1].i;
+    q.forEach((x) => qw.append(songRow(x, [
+      btn('↑', 'Move up', () => post('move', { id: x.id, from: x.i, to: x.i - 1 }), x.i === first ? 'icon hide' : 'icon'),
+      btn('↓', 'Move down', () => post('move', { id: x.id, from: x.i, to: x.i + 1 }), x.i === last ? 'icon hide' : 'icon'),
+      btn('✕', 'Remove', () => post('remove', { id: x.id, index: x.i })),
+    ])));
+  }
+
+  function tick() {
+    const st = (state && state.state) || {}, now = st.now;
+    if (!now || !now.duration) { $('np-bar').style.width = '0'; return; }
+    let pos = (st.positionMs || 0) / 1000;
+    if (st.playing && st.sentAt) pos += Math.max(0, (Date.now() - st.sentAt) / 1000);
+    $('np-bar').style.width = Math.min(100, (pos / now.duration) * 100) + '%';
+  }
+
+  let polling = false;
+  async function poll() {
+    if (polling) return; polling = true;
+    try {
+      const r = await fetch(base + '/state?g=' + encodeURIComponent(gid) + '&n=' + encodeURIComponent(me || ''), { cache: 'no-store' });
+      if (r.status === 410) { $('app').classList.add('hide'); $('ended').classList.remove('hide'); return; }
+      if (r.ok) { state = await r.json(); render(); }
+    } catch (e) {} finally { polling = false; }
+  }
+
+  let searchTimer, searchSeq = 0;
+  $('q').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(search, 400); });
+  $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(searchTimer); search(); e.target.blur(); } });
+  async function search() {
+    const q = $('q').value.trim(), seq = ++searchSeq, out = $('results');
+    if (q.length < 2) { out.textContent = ''; return; }
+    try {
+      const r = await fetch(base + '/search?q=' + encodeURIComponent(q), { cache: 'no-store' });
+      const j = await r.json();
+      if (seq !== searchSeq) return;
+      out.textContent = '';
+      if (!r.ok) { out.append(el('div', 'empty', j.error || 'Search failed')); return; }
+      if (!(j.songs || []).length) { out.append(el('div', 'empty', 'Nothing found')); return; }
+      j.songs.forEach((s) => {
+        const add = btn('Add', 'Add to the queue', async () => {
+          const res = await post('add', { id: s.id, title: s.title, artist: s.artist });
+          if (res) { toast(res.pending ? 'Downloading "' + s.title + '" first, then it joins the queue' : 'Added "' + s.title + '"'); add.textContent = '✓'; }
+        }, 'primary');
+        out.append(songRow(s, [add]));
+      });
+    } catch (e) { if (seq === searchSeq) { out.textContent = ''; out.append(el('div', 'empty', 'No connection')); } }
+  }
+
+  $('skip').onclick = async () => { const now = state && state.state && state.state.now; if (now && await post('skip', { id: now.id })) toast('Skipped'); };
+
+  function askName() {
+    const d = $('namebox');
+    if (!d.showModal) { me = 'A guest'; return; }
+    d.showModal();
+    const done = () => { me = $('name').value.trim().slice(0, 30) || 'A guest'; store.set('jamName', me); d.close(); poll(); };
+    $('name-ok').onclick = done;
+    $('name').onkeydown = (e) => { if (e.key === 'Enter') done(); };
+    d.oncancel = (e) => e.preventDefault();
+  }
+  if (!me) askName();
+
+  poll();
+  setInterval(() => { if (!document.hidden) poll(); }, 2500);
+  setInterval(tick, 500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+})();
+</script>
+</body>
+</html>

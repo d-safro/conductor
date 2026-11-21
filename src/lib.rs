@@ -5,4 +5,6 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod import_nd;
+pub mod jam;
 pub mod library;
+pub mod live;

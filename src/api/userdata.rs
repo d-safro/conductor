@@ -66,6 +66,9 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
             continue;
         }
         let at = times.get(i).and_then(|v| v.parse::<i64>().ok()).map(|ms| ms / 1000).unwrap_or_else(now);
+        if super::encore::is_duplicate_play(c, &t.id, at).await? {
+            continue; // apps sometimes report a play twice
+        }
         sqlx::query("INSERT INTO play (user_id, track_id, played_at, client) VALUES (?, ?, ?, ?)")
             .bind(&c.user.id)
             .bind(&t.id)

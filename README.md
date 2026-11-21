@@ -31,9 +31,16 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   can't be edited by hand (`readonly`).
 - **Navidrome stand-in** for what Encore 1.7.9 uses from Navidrome's own API: `POST /auth/login`,
   `/api/playlist` (smart rules), `/api/playlist/{id}/image` (playlist pictures, served as `pl-<id>_…` covers).
+- **Encore's own calls** (advertised as `encore.*` OpenSubsonic extensions, same answers as music-lookup gave):
+  devices and remote control (`deviceHello/State/List/Command/Poll/Bye`, long-polls), sync between devices
+  (`syncGet/syncSet`, newest wins, kept in the database), signing in from your phone (`pairStart/Poll/Approve`),
+  listening stats (`getListeningStats`: week / month / year / all, local time) and real folders (`getFolder`).
+- **Jam**: `jamStart/State/Poll/End` for the app; the guest page on its own listener (`jam_listen`, default
+  127.0.0.1:4535: nothing else is served there), with rate limits and covers only from the queue or guests' searches.
+  Set `jam_public_url` to the address guests open (e.g. through Tailscale Funnel).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: the Encore extensions (devices, sync, sign-in pairing, Jam, stats), podcasts, and
+Coming next: podcasts, and
 downloading songs you don't have (slskd, Lidarr). See `docs/api/` for the extension list.
 
 ## Run it

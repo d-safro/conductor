@@ -1,0 +1,309 @@
+//! Jam: friends add songs to your queue from a web page. The guest side has its own listener (`jam_listen`,
+//! default 127.0.0.1:4535) that serves nothing but `/jam/...`; only that port should be put on the internet
+//! (e.g. Tailscale Funnel → `jam_public_url`). The app's side is in `api::encore` (jamStart / jamState / jamPoll / jamEnd).
+//!
+//!   GET  /jam/<token>                 the page          GET /jam/<token>/state?g=<guest>&n=<name>
+//!   GET  /jam/<token>/search?q=       songs to add      GET /jam/<token>/cover/<id>?s=<size>
+//!   POST /jam/<token>/add | move | remove | skip        (JSON body, becomes a command the app picks up)
+
+use std::{net::SocketAddr, sync::Arc};
+
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::{
+    api::{AppState, Shared, media},
+    db::{self, now_ms},
+};
+
+const PAGE: &str = include_str!("../web/jam/index.html");
+const LIFETIME_MS: i64 = 12 * 3600 * 1000;
+const CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; \
+                   img-src 'self' https://*.dzcdn.net data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+pub fn router(st: Shared) -> Router {
+    Router::new()
+        .route("/jam/{token}", get(page))
+        .route("/jam/{token}/state", get(state))
+        .route("/jam/{token}/search", get(search))
+        .route("/jam/{token}/cover/{id}", get(cover))
+        .route("/jam/{token}/{action}", post(action))
+        .fallback(|| async { (StatusCode::NOT_FOUND, "Not found") })
+        .layer(axum::middleware::map_response(|mut r: Response| async move {
+            let h = r.headers_mut();
+            h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+            h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+            r
+        }))
+        .with_state(st)
+}
+
+/// Jams survive a restart (the app sends its queue again); guests and commands don't.
+pub async fn load(st: &AppState) {
+    let rows: Vec<(String, String, String, i64)> =
+        sqlx::query_as("SELECT token, owner_id, host_name, seen_at FROM jam").fetch_all(&st.db).await.unwrap_or_default();
+    let mut g = st.live.lock();
+    for (token, owner_id, host_name, seen) in rows {
+        if now_ms() - seen < LIFETIME_MS {
+            g.jams.insert(token.clone(), crate::live::Jam { token, owner_id, host_name, seen_ms: seen, ..Default::default() });
+        }
+    }
+}
+
+pub async fn save(st: &AppState) {
+    let rows: Vec<(String, String, String, i64)> = {
+        let mut g = st.live.lock();
+        let n = now_ms();
+        g.jams.retain(|_, j| n - j.seen_ms < LIFETIME_MS);
+        g.jams.values().map(|j| (j.token.clone(), j.owner_id.clone(), j.host_name.clone(), j.seen_ms)).collect()
+    };
+    let Ok(mut tx) = st.db.begin().await else { return };
+    let _ = sqlx::query("DELETE FROM jam").execute(&mut *tx).await;
+    for (t, o, h, s) in rows {
+        let _ = sqlx::query("INSERT INTO jam (token, owner_id, host_name, created_at, seen_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(t)
+            .bind(o)
+            .bind(h)
+            .bind(db::now())
+            .bind(s)
+            .execute(&mut *tx)
+            .await;
+    }
+    let _ = tx.commit().await;
+}
+
+fn token_ok(t: &str) -> bool {
+    (20..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn id_ok(t: &str) -> bool {
+    (1..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn err(code: StatusCode, msg: &str) -> Response {
+    (code, [(header::CACHE_CONTROL, "no-store")], Json(json!({ "error": msg }))).into_response()
+}
+
+/// Is there such a Jam? (and touch nothing else)
+fn exists(st: &AppState, token: &str) -> bool {
+    token_ok(token) && st.live.lock().jams.contains_key(token)
+}
+
+fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
+    h.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| peer.ip().to_string())
+}
+
+/// At most `n` requests a minute from one address to one Jam.
+fn limited(st: &AppState, token: &str, ip: &str, n: usize) -> bool {
+    let now = now_ms();
+    let mut g = st.live.lock();
+    let Some(j) = g.jams.get_mut(token) else { return false };
+    let hits = j.hits.entry(ip.to_string()).or_default();
+    hits.retain(|t| now - t < 60_000);
+    hits.push(now);
+    let over = hits.len() > n;
+    if j.hits.len() > 500 {
+        j.hits.retain(|_, v| v.last().is_some_and(|t| now - t < 60_000));
+    }
+    over
+}
+
+async fn page(State(st): State<Shared>, Path(token): Path<String>) -> Response {
+    if !token_ok(&token) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+    let headers = [
+        (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        (header::CACHE_CONTROL, "no-store"),
+        (header::CONTENT_SECURITY_POLICY, CSP),
+    ];
+    if exists(&st, &token) {
+        (StatusCode::OK, headers, PAGE).into_response()
+    } else {
+        (StatusCode::GONE, headers, PAGE.replace("<!--ENDED-->", r#"<meta name="jam-ended" content="1">"#)).into_response()
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct StateQ {
+    g: String,
+    n: String,
+}
+
+async fn state(State(st): State<Shared>, Path(token): Path<String>, Query(q): Query<StateQ>) -> Response {
+    let now = now_ms();
+    let mut g = st.live.lock();
+    let Some(j) = g.jams.get_mut(&token).filter(|_| token_ok(&token)) else { return err(StatusCode::GONE, "This Jam has ended") };
+    if !q.g.is_empty() {
+        j.guests.insert(q.g.chars().take(40).collect(), (q.n.chars().take(30).collect(), now));
+    }
+    if j.guests.len() > 1000 {
+        j.guests.retain(|_, (_, t)| now - *t < 120_000);
+    }
+    (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(j.public(now))).into_response()
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SearchQ {
+    q: String,
+}
+
+async fn search(
+    State(st): State<Shared>,
+    Path(token): Path<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    h: HeaderMap,
+    Query(q): Query<SearchQ>,
+) -> Response {
+    if !exists(&st, &token) {
+        return err(StatusCode::GONE, "This Jam has ended");
+    }
+    if limited(&st, &token, &client_ip(&h, peer), 40) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Slow down a little");
+    }
+    let text: String = q.q.trim().chars().take(100).collect();
+    if text.chars().count() < 2 {
+        return Json(json!({ "songs": [] })).into_response();
+    }
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| format!("%{}%", w.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")))
+        .collect();
+    let cond = words
+        .iter()
+        .map(|_| "(t.title || ' ' || t.artist_name || ' ' || t.album_name) LIKE ? ESCAPE '\\'")
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "SELECT t.id, t.title, t.artist_name, t.album_name, t.album_id, t.duration_ms FROM track t
+         WHERE t.missing_since IS NULL AND {cond} ORDER BY t.sort_title LIMIT 20"
+    );
+    let mut qq = sqlx::query_as::<_, (String, String, String, String, String, i64)>(&sql);
+    for w in &words {
+        qq = qq.bind(w);
+    }
+    let rows = qq.fetch_all(&st.db).await.unwrap_or_default();
+    let songs: Vec<Value> = rows
+        .iter()
+        .map(|(id, title, artist, album, cover, d)| {
+            json!({ "id": id, "title": title, "artist": artist, "album": album, "cover": cover, "duration": d / 1000, "lookup": false })
+        })
+        .collect();
+    if let Some(j) = st.live.lock().jams.get_mut(&token) {
+        j.covers.extend(rows.into_iter().map(|r| r.4));
+    }
+    (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(json!({ "songs": songs }))).into_response()
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct CoverQ {
+    s: Option<String>,
+}
+
+async fn cover(State(st): State<Shared>, Path((token, id)): Path<(String, String)>, Query(q): Query<CoverQ>) -> Response {
+    let allowed = token_ok(&token) && st.live.lock().jams.get(&token).is_some_and(|j| j.covers.contains(&id));
+    if !allowed || id.len() > 80 || !id.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let size = q.s.and_then(|s| s.parse::<u32>().ok()).filter(|s| *s <= 600).unwrap_or(300);
+    match media::cover_for(&st, &id, Some(size)).await {
+        Ok(Some(b)) => {
+            (StatusCode::OK, [(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "private, max-age=86400")], b)
+                .into_response()
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn action(
+    State(st): State<Shared>,
+    Path((token, kind)): Path<(String, String)>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    h: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !["add", "move", "remove", "skip"].contains(&kind.as_str()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !exists(&st, &token) {
+        return err(StatusCode::GONE, "This Jam has ended");
+    }
+    if limited(&st, &token, &client_ip(&h, peer), 60) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Slow down a little");
+    }
+    if body.len() > 8192 {
+        return err(StatusCode::PAYLOAD_TOO_LARGE, "Too big");
+    }
+    let Ok(Value::Object(b)) = serde_json::from_slice::<Value>(if body.is_empty() { b"{}" } else { &body }) else {
+        return err(StatusCode::BAD_REQUEST, "Bad request");
+    };
+    let by: String =
+        b.get("by").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("A guest").chars().take(30).collect();
+    let sid = b.get("id").map(|v| match v {
+        Value::String(s) => s.clone(),
+        o => o.to_string(),
+    });
+    let cmd = match kind.as_str() {
+        "add" => {
+            let Some(id) = sid.filter(|s| id_ok(s)) else { return err(StatusCode::BAD_REQUEST, "Unknown song") };
+            let known: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track WHERE id = ? AND missing_since IS NULL")
+                .bind(&id)
+                .fetch_one(&st.db)
+                .await
+                .unwrap_or(0);
+            if known == 0 {
+                return err(StatusCode::BAD_REQUEST, "Unknown song");
+            }
+            json!({ "type": "add", "id": id, "by": by })
+        }
+        "move" | "remove" => {
+            let num = |k: &str| b.get(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+            let Some(a) = num("from").or_else(|| num("index")) else { return err(StatusCode::BAD_REQUEST, "Bad request") };
+            let to = num("to").unwrap_or(a);
+            let Some(id) = sid.filter(|s| id_ok(s)) else { return err(StatusCode::BAD_REQUEST, "Bad request") };
+            if !(0..100_000).contains(&a) || !(0..100_000).contains(&to) {
+                return err(StatusCode::BAD_REQUEST, "Bad request");
+            }
+            json!({ "type": kind, "id": id, "from": a, "to": to, "by": by })
+        }
+        _ => {
+            let mut g = st.live.lock();
+            let Some(j) = g.jams.get_mut(&token) else { return err(StatusCode::GONE, "This Jam has ended") };
+            if now_ms() - j.last_skip_ms < 2000 {
+                return Json(json!({ "ok": true })).into_response(); // two people tapping at once: one skip
+            }
+            j.last_skip_ms = now_ms();
+            json!({ "type": "skip", "id": sid.unwrap_or_default().chars().take(64).collect::<String>(), "by": by })
+        }
+    };
+    {
+        let mut g = st.live.lock();
+        let Some(j) = g.jams.get_mut(&token) else { return err(StatusCode::GONE, "This Jam has ended") };
+        j.push(cmd);
+    }
+    st.live.bump();
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// Serve the guest listener until the program stops.
+pub async fn serve(st: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!(%addr, "Jam guest page listening");
+    axum::serve(listener, router(st).into_make_service_with_connect_info::<SocketAddr>()).await?;
+    Ok(())
+}

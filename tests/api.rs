@@ -62,6 +62,7 @@ impl Server {
         let cfg = Config {
             data_dir: dir.path().join("data"),
             libraries: vec![LibraryConfig { name: "Music".into(), path: music.clone(), sentinel: None, scan_threads: None }],
+            jam_public_url: Some("https://jam.example.test".into()),
             ..Config::default()
         };
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
@@ -333,4 +334,131 @@ async fn subsonic_end_to_end() {
     let rep = library::scan(&s.st.db, &s.st.libs, &s.st.scan, true).await.unwrap();
     assert_eq!(rep.added, 0);
     assert_eq!(s.ok("getSong", &[("id", &one)]).await["song"]["title"], "One");
+}
+
+#[tokio::test]
+async fn encore_extensions() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Arc::new(Server::start().await);
+    let exts = s.ok("getOpenSubsonicExtensions", &[]).await;
+    assert!(exts["openSubsonicExtensions"].as_array().unwrap().iter().any(|e| e["name"] == "encore.devices"));
+
+    // devices: two of them, a command goes from one to the other through a long-poll
+    let (a, b) = ("desktop-aaaa1111", "phone-bbbb2222");
+    let r = s.ok("deviceHello", &[("id", a), ("name", "Laptop"), ("kind", "computer")]).await;
+    assert_eq!(r["devices"]["device"][0]["name"], "Laptop");
+    s.ok("deviceHello", &[("id", b), ("name", "Pixel"), ("kind", "phone")]).await;
+    assert_eq!(s.ok("deviceList", &[]).await["devices"]["device"].as_array().unwrap().len(), 2);
+    let s2 = s.clone();
+    let poll = tokio::spawn(async move { s2.ok("devicePoll", &[("id", b), ("ack", "0"), ("since", "0"), ("wait", "10")]).await });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let t0 = std::time::Instant::now();
+    let r = s.ok("deviceCommand", &[("id", a), ("target", b), ("command", r#"{"type":"pause"}"#)]).await;
+    assert_eq!(r["deviceCommand"]["seq"], 1);
+    let got = poll.await.unwrap();
+    assert!(t0.elapsed().as_secs() < 3, "the long-poll didn't wake up");
+    assert_eq!(got["devicePoll"]["commands"][0]["type"], "pause");
+    assert_eq!(got["devicePoll"]["commands"][0]["sender"], a);
+    s.ok("deviceState", &[("id", a), ("state", r#"{"playing":true,"songId":"x"}"#)]).await;
+    let r = s.ok("devicePoll", &[("id", b), ("ack", "1"), ("since", "0"), ("wait", "0")]).await;
+    let laptop = r["devicePoll"]["devices"].as_array().unwrap().iter().find(|d| d["id"] == a).unwrap().clone();
+    assert_eq!(laptop["state"]["playing"], true);
+    assert!(laptop["state"]["at"].as_i64().unwrap() > 0);
+    assert_eq!(
+        s.call("deviceCommand", &[("id", a), ("target", "nobody-123456"), ("command", r#"{"type":"x"}"#)]).await["error"]["code"],
+        70
+    );
+    s.ok("deviceBye", &[("id", a)]).await;
+    assert_eq!(s.ok("deviceList", &[]).await["devices"]["device"].as_array().unwrap().len(), 1);
+
+    // sync: newest wins
+    let r = s.ok("syncSet", &[("key", "pins"), ("value", "[1,2]"), ("at", "2000"), ("id", a)]).await;
+    assert_eq!(r["sync"]["changed"], true);
+    let r = s.ok("syncSet", &[("key", "pins"), ("value", "[9]"), ("at", "1000"), ("id", b)]).await;
+    assert_eq!(r["sync"]["changed"], false);
+    assert_eq!(r["sync"]["value"]["value"], serde_json::json!([1, 2]));
+    let r = s.ok("syncGet", &[]).await;
+    assert_eq!(r["sync"]["values"]["pins"]["by"], a);
+    assert_eq!(s.call("syncSet", &[("key", "bad key!"), ("value", "1")]).await["error"]["code"], 10);
+
+    // sign in with your phone: the new device has no login yet
+    let open = |m: &str, q: &str| format!("{}/rest/{m}?f=json&c=test{q}", s.base);
+    let start: Value = s.http.get(open("pairStart", "&name=Laptop")).send().await.unwrap().json().await.unwrap();
+    let pair = &start["subsonic-response"]["pair"];
+    let (code, token) = (pair["code"].as_str().unwrap().to_string(), pair["token"].as_str().unwrap().to_string());
+    assert_eq!(code.len(), 6);
+    let w: Value = s.http.get(open("pairPoll", &format!("&token={token}&wait=0"))).send().await.unwrap().json().await.unwrap();
+    assert_eq!(w["subsonic-response"]["pair"]["status"], "waiting");
+    let wrong = serde_json::json!({"server": "https://x", "user": "someone-else", "pass": "p"}).to_string();
+    assert_eq!(s.call("pairApprove", &[("code", &code), ("login", &wrong)]).await["error"]["code"], 10);
+    let login = serde_json::json!({"server": "https://music.example", "user": USER, "pass": PASS}).to_string();
+    assert_eq!(s.ok("pairApprove", &[("code", &code), ("login", &login)]).await["pair"]["name"], "Laptop");
+    let done: Value = s.http.get(open("pairPoll", &format!("&token={token}&wait=0"))).send().await.unwrap().json().await.unwrap();
+    assert_eq!(done["subsonic-response"]["pair"]["status"], "done");
+    assert_eq!(done["subsonic-response"]["pair"]["login"]["user"], USER);
+    let again: Value =
+        s.http.get(open("pairPoll", &format!("&token={token}&wait=0"))).send().await.unwrap().json().await.unwrap();
+    assert_eq!(again["subsonic-response"]["error"]["code"], 70);
+
+    // listening stats and real folders
+    let album = s.ok("search3", &[("query", "One")]).await;
+    let one = album["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let now_ms = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()).to_string();
+    s.ok("scrobble", &[("id", &one), ("time", &now_ms)]).await;
+    s.ok("scrobble", &[("id", &one), ("time", &now_ms)]).await; // the same play reported twice
+    let r = s.ok("getListeningStats", &[("period", "week")]).await;
+    let st = &r["listeningStats"];
+    assert_eq!(st["plays"], 1);
+    assert_eq!(st["song"][0]["id"], one);
+    assert_eq!(st["artist"][0]["name"], "Alpha");
+    assert_eq!(st["newArtists"], 1);
+    assert_eq!(st["hour"].as_array().unwrap().len(), 24);
+    assert_eq!(s.ok("getListeningStats", &[("period", "all")]).await["listeningStats"]["plays"], 1);
+    let r = s.ok("getFolder", &[("path", "")]).await;
+    let dirs: Vec<&str> = r["folder"]["dir"].as_array().unwrap().iter().map(|d| d["name"].as_str().unwrap()).collect();
+    assert_eq!(dirs, ["Alpha", "The Beta Band"]);
+    let r = s.ok("getFolder", &[("path", "Alpha/First Album")]).await;
+    assert_eq!(r["folder"]["song"].as_array().unwrap().len(), 2);
+    assert_eq!(r["folder"]["song"][0]["title"], "One");
+
+    // Jam: the guest page on its own listener
+    let jl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let jbase = format!("http://{}", jl.local_addr().unwrap());
+    let app = maestro::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move { axum::serve(jl, app).await.unwrap() });
+    let r = s.ok("jamStart", &[("name", "Tester")]).await;
+    let tok = r["jam"]["token"].as_str().unwrap().to_string();
+    assert_eq!(r["jam"]["url"], format!("https://jam.example.test/jam/{tok}"));
+    let page = s.http.get(format!("{jbase}/jam/{tok}")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.headers()["content-security-policy"].to_str().unwrap().contains("default-src 'none'"));
+    let st: Value = s.http.get(format!("{jbase}/jam/{tok}/state?g=guest1&n=Bob")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["guests"], 1);
+    assert_eq!(st["host"], "Tester");
+    let found: Value = s.http.get(format!("{jbase}/jam/{tok}/search?q=thr")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(found["songs"][0]["title"], "Three");
+    let cover = found["songs"][0]["cover"].as_str().unwrap().to_string();
+    assert_eq!(s.http.get(format!("{jbase}/jam/{tok}/cover/{cover}")).send().await.unwrap().status(), 404); // that album has no picture
+    let r =
+        s.http.post(format!("{jbase}/jam/{tok}/add")).json(&serde_json::json!({"id": one, "by": "Bob"})).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let bad = s.http.post(format!("{jbase}/jam/{tok}/add")).json(&serde_json::json!({"id": "nope"})).send().await.unwrap();
+    assert_eq!(bad.status(), 400);
+    let r = s.ok("jamPoll", &[("token", &tok), ("ack", "0"), ("wait", "1")]).await;
+    assert_eq!(r["jam"]["commands"][0]["type"], "add");
+    assert_eq!(r["jam"]["commands"][0]["by"], "Bob");
+    assert_eq!(r["jam"]["guests"], 1);
+    // a cover in the queue the app sent may be loaded by guests; others may not
+    let alpha_album = s.ok("getSong", &[("id", &one)]).await["song"]["albumId"].as_str().unwrap().to_string();
+    let state = serde_json::json!({"now": {"id": one, "cover": alpha_album}, "queue": []}).to_string();
+    s.ok("jamState", &[("token", &tok), ("state", &state)]).await;
+    assert_eq!(s.http.get(format!("{jbase}/jam/{tok}/cover/{alpha_album}?s=120")).send().await.unwrap().status(), 200);
+    assert_eq!(s.http.get(format!("{jbase}/jam/{tok}/cover/someother")).send().await.unwrap().status(), 404);
+    assert_eq!(s.http.get(format!("{jbase}/rest/ping")).send().await.unwrap().status(), 404); // nothing else on this port
+    s.ok("jamEnd", &[("token", &tok)]).await;
+    assert_eq!(s.http.get(format!("{jbase}/jam/{tok}")).send().await.unwrap().status(), 410);
+    assert_eq!(s.call("jamPoll", &[("token", &tok), ("ack", "0"), ("wait", "0")]).await["error"]["code"], 70);
 }

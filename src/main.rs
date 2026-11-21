@@ -118,6 +118,16 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     tokio::spawn(scan_loop(state.clone()));
+    maestro::jam::load(&state).await;
+    if !state.cfg.jam_listen.is_empty() {
+        let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = maestro::jam::serve(st, jam_addr).await {
+                warn!("Jam guest page: {e:#}");
+            }
+        });
+    }
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;

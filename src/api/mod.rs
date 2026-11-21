@@ -1,8 +1,9 @@
 //! The Subsonic / OpenSubsonic API at `/rest/<method>[.view]`, JSON or XML, GET or POST (formPost).
 
 mod browse;
+mod encore;
 mod items;
-mod media;
+pub(crate) mod media;
 mod native;
 pub mod smart;
 mod userdata;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub now_playing: Mutex<HashMap<(String, String), NowPlaying>>,
     /// sign-in tokens for the Navidrome stand-in: token → (user id, expires)
     pub native_tokens: Mutex<HashMap<String, (String, i64)>>,
+    /// devices, sign-in codes, Jams
+    pub live: crate::live::Live,
 }
 
 impl AppState {
@@ -52,6 +55,7 @@ impl AppState {
             scan: Arc::new(ScanStatus::default()),
             now_playing: Mutex::default(),
             native_tokens: Mutex::default(),
+            live: Default::default(),
         }
     }
 }
@@ -186,6 +190,14 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         Some("json") => Fmt::Json,
         _ => Fmt::Xml,
     };
+    if method == "pairStart" || method == "pairPoll" {
+        let r = if method == "pairStart" {
+            encore::pair_start(&st, p.get("name")).await
+        } else {
+            encore::pair_poll(&st, p.get("token").unwrap_or(""), p.int("wait").unwrap_or(20).clamp(0, 25) as u64).await
+        };
+        return render(fmt, r.map(|v| Reply::Ok(json!({ "pair": v }))));
+    }
     let creds = Credentials { u: p.get("u"), p: p.get("p"), t: p.get("t"), s: p.get("s"), api_key: p.get("apiKey") };
     let user = match auth::login(&st.db, &st.secrets, creds).await {
         Ok(u) => u,
@@ -214,6 +226,13 @@ async fn dispatch(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "apiKeyAuthentication", "versions": [1] },
             { "name": "songLyrics", "versions": [1] },
             { "name": "transcodeOffset", "versions": [1] },
+            { "name": "encore.devices", "versions": [1] },
+            { "name": "encore.sync", "versions": [1] },
+            { "name": "encore.pairing", "versions": [1] },
+            { "name": "encore.stats", "versions": [1] },
+            { "name": "encore.jam", "versions": [1] },
+            { "name": "encore.smartPlaylists", "versions": [1] },
+            { "name": "encore.playlistImages", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -258,6 +277,21 @@ async fn dispatch(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getPlayQueue" => userdata::get_play_queue(c).await,
         "savePlayQueue" => userdata::save_play_queue(c).await,
         "getUser" => userdata::get_user(c).await,
+        "deviceHello" => encore::device_hello(c).await,
+        "deviceState" => encore::device_state(c).await,
+        "deviceList" => encore::device_list(c).await,
+        "deviceCommand" => encore::device_command(c).await,
+        "devicePoll" => encore::device_poll(c).await,
+        "deviceBye" => encore::device_bye(c).await,
+        "syncGet" => encore::sync_get(c).await,
+        "syncSet" => encore::sync_set(c).await,
+        "pairApprove" => encore::pair_approve(c).await,
+        "getListeningStats" => encore::listening_stats(c).await,
+        "getFolder" => encore::folder(c).await,
+        "jamStart" => encore::jam_start(c).await,
+        "jamState" => encore::jam_state(c).await,
+        "jamPoll" => encore::jam_poll(c).await,
+        "jamEnd" => encore::jam_end(c).await,
         "getInternetRadioStations" => userdata::radio_list(c).await,
         "createInternetRadioStation" => userdata::radio_create(c).await,
         "updateInternetRadioStation" => userdata::radio_update(c).await,

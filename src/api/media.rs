@@ -15,7 +15,7 @@ use tokio_util::io::ReaderStream;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-use super::{ApiError, Ctx, Reply, items, ok, raw};
+use super::{ApiError, AppState, Ctx, Reply, items, ok, raw};
 use crate::{config::LibraryConfig, library};
 
 fn library_of(c: &Ctx, id: i64) -> Option<&LibraryConfig> {
@@ -168,22 +168,35 @@ fn sniff(b: &[u8]) -> &'static str {
 }
 
 pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
-    let id = c.p.req("id")?.to_string();
     let size = c.p.int("size").filter(|s| *s > 0).map(|s| s.min(2000) as u32);
-    let cache = size.map(|s| c.st.cfg.cache_dir().join("covers").join(format!("{id}_{s}.jpg")));
+    match cover_for(&c.st, c.p.req("id")?, size).await? {
+        Some(b) => Ok(image_reply(b)),
+        None => Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") }),
+    }
+}
+
+/// A cover picture for any id (song, album, artist, `pl-<playlist>`), at most `size` pixels on a side.
+/// Navidrome-style ids (`al-<id>_<hash>`, `mf-…`, `ar-…`) work too, for apps that remember them.
+pub async fn cover_for(st: &AppState, id: &str, size: Option<u32>) -> Result<Option<Vec<u8>>, ApiError> {
+    let cache = size.map(|s| st.cfg.cache_dir().join("covers").join(format!("{}_{s}.jpg", id.replace(['/', '\\', '.'], "_"))));
     if let Some(p) = &cache
         && let Ok(b) = tokio::fs::read(p).await
     {
-        return Ok(image_reply(b));
+        return Ok(Some(b));
     }
     let bytes = match id.strip_prefix("pl-") {
-        Some(rest) => playlist_image(c, rest.split('_').next().unwrap_or(rest)).await?,
-        None => song_image(c, &id).await?,
+        Some(rest) => playlist_image(st, rest.split('_').next().unwrap_or(rest)).await?,
+        None => {
+            let bare = ["mf-", "al-", "ar-"]
+                .iter()
+                .find_map(|p| id.strip_prefix(p))
+                .map(|r| r.split('_').next().unwrap_or(r))
+                .unwrap_or(id);
+            song_image(st, bare).await?
+        }
     };
-    let Some(bytes) = bytes else {
-        return Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") });
-    };
-    let Some(size) = size else { return Ok(image_reply(bytes)) };
+    let Some(bytes) = bytes else { return Ok(None) };
+    let Some(size) = size else { return Ok(Some(bytes)) };
     let resized = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let img = image::load_from_memory(&bytes)?;
         let img = if img.width() > size || img.height() > size { img.thumbnail(size, size) } else { img };
@@ -199,13 +212,13 @@ pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
         }
         let _ = tokio::fs::write(&p, &resized).await;
     }
-    Ok(image_reply(resized))
+    Ok(Some(resized))
 }
 
 /// A playlist's own picture (uploaded, or brought over from Navidrome).
-async fn playlist_image(c: &Ctx, pid: &str) -> Result<Option<Vec<u8>>, ApiError> {
+async fn playlist_image(st: &AppState, pid: &str) -> Result<Option<Vec<u8>>, ApiError> {
     let path: Option<String> =
-        sqlx::query_scalar("SELECT image_path FROM playlist WHERE id = ?").bind(pid).fetch_optional(&c.st.db).await?.flatten();
+        sqlx::query_scalar("SELECT image_path FROM playlist WHERE id = ?").bind(pid).fetch_optional(&st.db).await?.flatten();
     Ok(match path {
         Some(p) => tokio::fs::read(p).await.ok(),
         None => None,
@@ -213,25 +226,28 @@ async fn playlist_image(c: &Ctx, pid: &str) -> Result<Option<Vec<u8>>, ApiError>
 }
 
 /// The picture for a song, album or artist: an image file in the song's folder, else one inside the file.
-async fn song_image(c: &Ctx, id: &str) -> Result<Option<Vec<u8>>, ApiError> {
-    let id = id.to_string();
-    let track_id: Option<String> = match items::kind_of(c, &id).await? {
-        Some("track") => Some(id.clone()),
-        Some("album") => {
-            sqlx::query_scalar("SELECT cover_track_id FROM album WHERE id = ?").bind(&id).fetch_one(&c.st.db).await?
+async fn song_image(st: &AppState, id: &str) -> Result<Option<Vec<u8>>, ApiError> {
+    const WHICH: [&str; 3] = [
+        "SELECT library_id, rel_path FROM track WHERE id = ?",
+        "SELECT t.library_id, t.rel_path FROM album al JOIN track t ON t.id = al.cover_track_id WHERE al.id = ?",
+        "SELECT t.library_id, t.rel_path FROM album al JOIN track t ON t.id = al.cover_track_id
+          WHERE al.artist_id = ? AND al.song_count > 0 ORDER BY al.year DESC LIMIT 1",
+    ];
+    let mut found = None;
+    for q in WHICH {
+        if let Some(r) = sqlx::query_as::<_, (i64, String)>(q).bind(id).fetch_optional(&st.db).await? {
+            found = Some(r);
+            break;
         }
-        Some("artist") => sqlx::query_scalar(
-            "SELECT al.cover_track_id FROM album al WHERE al.artist_id = ? AND al.song_count > 0 ORDER BY al.year DESC LIMIT 1",
-        )
-        .bind(&id)
-        .fetch_optional(&c.st.db)
-        .await?
-        .flatten(),
-        _ => None,
-    };
-    let Some(tid) = track_id else { return Ok(None) };
-    let t = items::track(c, &tid).await?;
-    let file = file_of(c, &t)?;
+    }
+    let Some((lib, rel)) = found else { return Ok(None) };
+    let file = library::track_path(&st.libs, lib, &rel).ok_or_else(|| ApiError::not_found("File"))?;
+    if !file.is_file() {
+        return match st.libs.iter().find(|(l, _)| *l == lib) {
+            Some((_, l)) if !library::is_online(l) => Err(ApiError::offline()),
+            _ => Ok(None),
+        };
+    }
     tokio::task::spawn_blocking(move || {
         let from_folder = file.parent().and_then(folder_image).and_then(|p| std::fs::read(p).ok());
         from_folder.or_else(|| embedded_image(&file))

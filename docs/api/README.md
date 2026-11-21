@@ -6,12 +6,12 @@ Each one gets its own spec file here before it's built.
 
 | Extension | Calls | Status |
 |---|---|---|
-| `encore.devices` | `deviceHello`, `deviceState`, `deviceList`, `deviceCommand`, `devicePoll`, `deviceBye` | planned |
-| `encore.sync` | `syncGet`, `syncSet` | planned |
-| `encore.pairing` | `pairStart`, `pairPoll`, `pairApprove` | planned |
-| `encore.jam` | `jamStart`, `jamState`, `jamPoll`, `jamEnd` (guests on a separate listener) | planned |
-| `encore.stats` | `getListeningStats`, `getFolder` | planned |
-| `encore.smartPlaylists` | `createSmartPlaylist`, `updateSmartPlaylist`, `getSmartPlaylistRules` | planned |
-| `encore.playlistImages` | `setPlaylistImage`, `deletePlaylistImage` | planned |
+| `encore.devices` | `deviceHello`, `deviceState`, `deviceList`, `deviceCommand`, `devicePoll`, `deviceBye` | done (same answers as music-lookup / Navidrome) |
+| `encore.sync` | `syncGet`, `syncSet` | done (same answers as music-lookup / Navidrome) |
+| `encore.pairing` | `pairStart`, `pairPoll`, `pairApprove` | done (same answers as music-lookup / Navidrome) |
+| `encore.jam` | `jamStart`, `jamState`, `jamPoll`, `jamEnd` (guests on a separate listener) | done (same answers as music-lookup / Navidrome) |
+| `encore.stats` | `getListeningStats`, `getFolder` | done (same answers as music-lookup / Navidrome) |
+| `encore.smartPlaylists` | `createSmartPlaylist`, `updateSmartPlaylist`, `getSmartPlaylistRules` | done (same answers as music-lookup / Navidrome) |
+| `encore.playlistImages` | `setPlaylistImage`, `deletePlaylistImage` | done (same answers as music-lookup / Navidrome) |
 | `encore.catalog` | songs you don't have in `search3` / `getAlbum` / `getArtist`, `getDiscoveries`, `getSongDiscoveries`, `requestItem`, `getRequests` | planned |
 | `encore.sonic` | `getSonicSimilarTracks`, `findSonicPath`, AudioMuse-AI bridge | planned |
