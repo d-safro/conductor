@@ -21,7 +21,7 @@ fn tone(path: &Path, title: &str, artist: &str, album: &str, track: u32, secs: u
         .args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("sine=frequency={}:duration={secs}", 220 * track)])
         .args(["-metadata", &format!("title={title}"), "-metadata", &format!("artist={artist}")])
         .args(["-metadata", &format!("album={album}"), "-metadata", &format!("track={track}"), "-metadata", "date=2021"])
-        .args(["-metadata", "genre=Test"])
+        .args(["-metadata", "genre=Test", "-metadata", "REPLAYGAIN_TRACK_GAIN=-6.50 dB", "-metadata", "ISRC=USABC2100001"])
         .arg(path)
         .status()
         .unwrap()
@@ -147,6 +147,8 @@ async fn subsonic_end_to_end() {
     assert_eq!(songs.len(), 2);
     assert_eq!(songs[0]["title"], "One");
     assert_eq!(songs[0]["year"], 2021);
+    assert_eq!(songs[0]["replayGain"]["trackGain"], -6.5);
+    assert_eq!(songs[0]["isrc"][0], "USABC2100001");
     assert_eq!(r["album"]["songCount"], 2);
     let one = songs[0]["id"].as_str().unwrap().to_string();
     let two = songs[1]["id"].as_str().unwrap().to_string();

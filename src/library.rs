@@ -122,11 +122,22 @@ pub struct Meta {
     pub channels: i64,
     pub has_picture: bool,
     pub has_lyrics: bool,
+    pub isrc: Option<String>,
+    pub rg_track_gain: Option<f64>,
+    pub rg_track_peak: Option<f64>,
+    pub rg_album_gain: Option<f64>,
+    pub rg_album_peak: Option<f64>,
 }
 
 fn year_of(s: &str) -> Option<i64> {
     let d: String = s.chars().take_while(|c| c.is_ascii_digit()).take(4).collect();
     if d.len() == 4 { d.parse().ok() } else { None }
+}
+
+/// "-6.52 dB" or "0.98" → the number.
+fn db_value(s: &str) -> Option<f64> {
+    let t = s.trim().trim_end_matches(|c: char| c.is_alphabetic() || c.is_whitespace());
+    t.replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 fn first_num(s: &str) -> Option<i64> {
@@ -163,6 +174,11 @@ pub fn read_meta(path: &Path) -> Meta {
             .or_else(|| get(ItemKey::OriginalReleaseDate))
             .and_then(|s| year_of(&s));
         m.genre = get(ItemKey::Genre);
+        m.isrc = get(ItemKey::Isrc);
+        m.rg_track_gain = get(ItemKey::ReplayGainTrackGain).and_then(|s| db_value(&s));
+        m.rg_track_peak = get(ItemKey::ReplayGainTrackPeak).and_then(|s| db_value(&s));
+        m.rg_album_gain = get(ItemKey::ReplayGainAlbumGain).and_then(|s| db_value(&s));
+        m.rg_album_peak = get(ItemKey::ReplayGainAlbumPeak).and_then(|s| db_value(&s));
         m.mbid = get(ItemKey::MusicBrainzRecordingId);
         m.album_mbid = get(ItemKey::MusicBrainzReleaseId);
         m.artist_mbid = get(ItemKey::MusicBrainzArtistId);
@@ -321,21 +337,24 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
             sqlx::query(
                 "INSERT INTO track (id, library_id, rel_path, size, mtime, suffix, content_type, bitrate, sample_rate, bit_depth, channels,
                     duration_ms, title, sort_title, artist_id, artist_name, album_id, album_name, disc, number, year, genre, mbid,
-                    has_picture, has_lyrics, created_at, missing_since)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+                    has_picture, has_lyrics, created_at, isrc, rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, missing_since)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
                  ON CONFLICT(id) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, suffix=excluded.suffix,
                     content_type=excluded.content_type, bitrate=excluded.bitrate, sample_rate=excluded.sample_rate,
                     bit_depth=excluded.bit_depth, channels=excluded.channels, duration_ms=excluded.duration_ms, title=excluded.title,
                     sort_title=excluded.sort_title, artist_id=excluded.artist_id, artist_name=excluded.artist_name,
                     album_id=excluded.album_id, album_name=excluded.album_name, disc=excluded.disc, number=excluded.number,
                     year=excluded.year, genre=excluded.genre, mbid=excluded.mbid, has_picture=excluded.has_picture,
-                    has_lyrics=excluded.has_lyrics, missing_since=NULL",
+                    has_lyrics=excluded.has_lyrics, isrc=excluded.isrc, rg_track_gain=excluded.rg_track_gain,
+                    rg_track_peak=excluded.rg_track_peak, rg_album_gain=excluded.rg_album_gain,
+                    rg_album_peak=excluded.rg_album_peak, missing_since=NULL",
             )
             .bind(&id).bind(lib_id).bind(&f.rel).bind(f.size).bind(f.mtime).bind(&suffix).bind(content_type(&suffix))
             .bind(m.bitrate).bind(m.sample_rate).bind(m.bit_depth).bind(m.channels).bind(m.duration_ms)
             .bind(&m.title).bind(sort_key(&m.title)).bind(artist_id(&m.artist)).bind(&m.artist)
             .bind(album_id(&m.album_artist, &m.album)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
             .bind(&m.genre).bind(&m.mbid).bind(m.has_picture).bind(m.has_lyrics).bind(now)
+            .bind(&m.isrc).bind(m.rg_track_gain).bind(m.rg_track_peak).bind(m.rg_album_gain).bind(m.rg_album_peak)
             .execute(&mut *tx)
             .await?;
             for (name, mbid) in [(&m.artist, &m.artist_mbid), (&m.album_artist, &m.album_artist_mbid)] {

@@ -45,6 +45,11 @@ pub struct TrackRow {
     pub genre: Option<String>,
     pub mbid: Option<String>,
     pub created_at: i64,
+    pub isrc: Option<String>,
+    pub rg_track_gain: Option<f64>,
+    pub rg_track_peak: Option<f64>,
+    pub rg_album_gain: Option<f64>,
+    pub rg_album_peak: Option<f64>,
     pub album_artist_id: String,
     pub album_artist_name: String,
     pub play_count: Option<i64>,
@@ -133,6 +138,23 @@ pub fn song_json(t: &TrackRow) -> Value {
     }
     if let Some(g) = &t.genre {
         put(&mut v, "genre", g.clone());
+    }
+    let mut rg = serde_json::Map::new();
+    for (k, x) in [
+        ("trackGain", t.rg_track_gain),
+        ("trackPeak", t.rg_track_peak),
+        ("albumGain", t.rg_album_gain),
+        ("albumPeak", t.rg_album_peak),
+    ] {
+        if let Some(x) = x {
+            rg.insert(k.into(), x.into());
+        }
+    }
+    if !rg.is_empty() {
+        put(&mut v, "replayGain", Value::Object(rg));
+    }
+    if let Some(i) = &t.isrc {
+        put(&mut v, "isrc", vec![i.clone()]);
     }
     if let Some(b) = t.bit_depth {
         put(&mut v, "bitDepth", b);
