@@ -8,7 +8,6 @@
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
 
 use std::{
-    collections::HashMap,
     io::{BufRead, Write},
     path::PathBuf,
     sync::Arc,
@@ -16,7 +15,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use maestro::{
@@ -118,14 +116,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         warn!("no music folders configured (config.toml [[libraries]] or MAESTRO_MUSIC)");
     }
     let addr = cfg.listen;
-    let state = Arc::new(AppState {
-        db: pool,
-        secrets,
-        cfg,
-        libs,
-        scan: Arc::new(library::ScanStatus::default()),
-        now_playing: Mutex::new(HashMap::new()),
-    });
+    let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     tokio::spawn(scan_loop(state.clone()));
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());

@@ -1,6 +1,6 @@
 //! End-to-end: make a tiny music folder with ffmpeg, start the server in-process, talk Subsonic to it.
 
-use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
+use std::{path::Path, process::Command, sync::Arc};
 
 use maestro::{
     api::{self, AppState},
@@ -9,7 +9,6 @@ use maestro::{
     db, library,
 };
 use serde_json::Value;
-use tokio::sync::Mutex;
 
 fn have_ffmpeg() -> bool {
     Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success())
@@ -70,10 +69,9 @@ impl Server {
         let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
         auth::create_user(&pool, &secrets, USER, PASS, true).await.unwrap();
         let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();
-        let scan = Arc::new(library::ScanStatus::default());
-        let rep = library::scan(&pool, &libs, &scan, false).await.unwrap();
+        let st = Arc::new(AppState::new(pool, secrets, cfg, libs));
+        let rep = library::scan(&st.db, &st.libs, &st.scan, false).await.unwrap();
         assert_eq!(rep.added, 3);
-        let st = Arc::new(AppState { db: pool, secrets, cfg, libs, scan, now_playing: Mutex::new(HashMap::new()) });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = api::router(st.clone());
@@ -195,6 +193,86 @@ async fn subsonic_end_to_end() {
     assert_eq!(r["playlist"]["comment"], "hi");
     assert_eq!(s.ok("getPlaylists", &[]).await["playlists"]["playlist"].as_array().unwrap().len(), 1);
     s.ok("deletePlaylist", &[("id", &pid)]).await;
+
+    // Navidrome stand-in (Encore 1.7.9): sign in, smart playlists, playlist pictures
+    let nd = |path: &str| format!("{}{path}", s.base);
+    let bad =
+        s.http.post(nd("/auth/login")).json(&serde_json::json!({"username": USER, "password": "nope"})).send().await.unwrap();
+    assert_eq!(bad.status(), 401);
+    let login: Value = s
+        .http
+        .post(nd("/auth/login"))
+        .json(&serde_json::json!({"username": USER, "password": PASS}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let auth = format!("Bearer {}", login["token"].as_str().unwrap());
+    assert_eq!(s.http.get(nd("/api/playlist")).header("x-nd-authorization", "Bearer wrong").send().await.unwrap().status(), 401);
+    s.ok("star", &[("id", &two)]).await;
+    let created: Value = s.http.post(nd("/api/playlist")).header("x-nd-authorization", &auth)
+        .json(&serde_json::json!({"name": "Hearted", "comment": "", "public": false, "rules": {"all": [{"is": {"loved": true}}], "sort": "title", "limit": 10}}))
+        .send().await.unwrap().json().await.unwrap();
+    let sp = created["id"].as_str().unwrap().to_string();
+    let r = s.ok("getPlaylist", &[("id", &sp)]).await;
+    assert_eq!(r["playlist"]["readonly"], true);
+    let ids: Vec<&str> = r["playlist"]["entry"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [two.as_str()]);
+    assert_eq!(s.call("updatePlaylist", &[("playlistId", &sp), ("songIdToAdd", &one)]).await["error"]["code"], 50);
+    // Encore edits: GET, then PUT the same object with new rules
+    let mut cur: Value = s
+        .http
+        .get(nd(&format!("/api/playlist/{sp}")))
+        .header("x-nd-authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cur["rules"]["limit"], 10);
+    cur["rules"] = serde_json::json!({"all": [{"contains": {"title": "o"}}, {"gt": {"duration": 1}}], "sort": "title"});
+    let put = s.http.put(nd(&format!("/api/playlist/{sp}"))).header("x-nd-authorization", &auth).json(&cur).send().await.unwrap();
+    assert_eq!(put.status(), 200);
+    let r = s.ok("getPlaylist", &[("id", &sp)]).await;
+    let titles: Vec<&str> = r["playlist"]["entry"].as_array().unwrap().iter().map(|e| e["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["One", "Two"]);
+    let bad_rules = s
+        .http
+        .post(nd("/api/playlist"))
+        .header("x-nd-authorization", &auth)
+        .json(&serde_json::json!({"name": "x", "rules": {"all": [{"is": {"nofield": 1}}]}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_rules.status(), 400);
+    // a picture: upload, it becomes the cover, take it off again
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbImage::from_pixel(64, 64, image::Rgb([0, 128, 255])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let form =
+        reqwest::multipart::Form::new().part("image", reqwest::multipart::Part::bytes(png.into_inner()).file_name("cover.png"));
+    let up = s
+        .http
+        .post(nd(&format!("/api/playlist/{sp}/image")))
+        .header("x-nd-authorization", &auth)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(up.status(), 200);
+    let cover = s.ok("getPlaylist", &[("id", &sp)]).await["playlist"]["coverArt"].as_str().unwrap().to_string();
+    assert!(cover.starts_with(&format!("pl-{sp}_")), "{cover}");
+    let img = s.http.get(s.url("getCoverArt", &[("id", &cover)])).send().await.unwrap();
+    assert_eq!(img.status(), 200);
+    assert_eq!(img.headers()["content-type"], "image/png");
+    let del = s.http.delete(nd(&format!("/api/playlist/{sp}/image"))).header("x-nd-authorization", &auth).send().await.unwrap();
+    assert_eq!(del.status(), 200);
+    assert!(!s.ok("getPlaylist", &[("id", &sp)]).await["playlist"]["coverArt"].as_str().unwrap().starts_with("pl-"));
+    let del = s.http.delete(nd(&format!("/api/playlist/{sp}"))).header("x-nd-authorization", &auth).send().await.unwrap();
+    assert_eq!(del.status(), 200);
+    s.ok("unstar", &[("id", &two)]).await;
 
     // play queue
     s.ok("savePlayQueue", &[("id", &one), ("id", &two), ("current", &two), ("position", "1500")]).await;

@@ -264,11 +264,28 @@ pub async fn run(
         rep.radio_stations += 1;
     }
     tx.commit().await?;
+    // when each song and album was added, set after the rescan below (which would otherwise use file times)
+    let added_songs: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, created_at FROM media_file").fetch_all(&nd).await?;
+    let added_albums: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, created_at FROM album").fetch_all(&nd).await?;
     nd.close().await;
 
     info!("ids carried over; scanning the music folders with them");
     let status = Arc::new(ScanStatus::default());
     library::scan(ours, libs, &status, true).await?;
+    let mut tx = ours.begin().await?;
+    for (table, rows) in [("track", &added_songs), ("album", &added_albums)] {
+        for (id, at) in rows {
+            if let Some(t) = nd_time(at.clone()) {
+                sqlx::query(&format!("UPDATE {table} SET created_at = ? WHERE id = ?"))
+                    .bind(t)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+    }
+    tx.commit().await?;
     rep.songs_matched_after_scan =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM track t JOIN id_override o ON o.kind = 'track' AND o.id = t.id")
             .fetch_one(ours)

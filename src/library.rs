@@ -383,7 +383,7 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
             .bind(m.bitrate).bind(m.sample_rate).bind(m.bit_depth).bind(m.channels).bind(m.duration_ms)
             .bind(&m.title).bind(sort_key(&m.title)).bind(ids.artist(&m.artist)).bind(&m.artist)
             .bind(ids.album(&m.album_artist, &m.album)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
-            .bind(&m.genre).bind(&m.mbid).bind(m.has_picture).bind(m.has_lyrics).bind(now)
+            .bind(&m.genre).bind(&m.mbid).bind(m.has_picture).bind(m.has_lyrics).bind(f.mtime.clamp(0, now))
             .bind(&m.isrc).bind(m.rg_track_gain).bind(m.rg_track_peak).bind(m.rg_album_gain).bind(m.rg_album_peak)
             .execute(&mut *tx)
             .await?;
@@ -403,11 +403,11 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
             sqlx::query(
                 "INSERT INTO album (id, name, sort_name, artist_id, artist_name, year, genre, mbid, compilation, created_at)
                  VALUES (?,?,?,?,?,?,?,?,?,?)
-                 ON CONFLICT(id) DO UPDATE SET year = COALESCE(excluded.year, album.year), genre = COALESCE(excluded.genre, album.genre),
+                 ON CONFLICT(id) DO UPDATE SET created_at = MIN(album.created_at, excluded.created_at), year = COALESCE(excluded.year, album.year), genre = COALESCE(excluded.genre, album.genre),
                     mbid = COALESCE(excluded.mbid, album.mbid), compilation = MAX(album.compilation, excluded.compilation)",
             )
             .bind(&aid).bind(&m.album).bind(sort_key(&m.album)).bind(ids.artist(&m.album_artist)).bind(&m.album_artist)
-            .bind(m.year).bind(&m.genre).bind(&m.album_mbid).bind(m.compilation).bind(now)
+            .bind(m.year).bind(&m.genre).bind(&m.album_mbid).bind(m.compilation).bind(f.mtime.clamp(0, now))
             .execute(&mut *tx)
             .await?;
         }

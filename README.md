@@ -26,10 +26,14 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   (`.lrc` files next to the song, or embedded lyrics; synced when timed).
 - **Login**: Subsonic token (`t` + `s`), password (`p`, also `enc:`), and OpenSubsonic API keys (`apiKey`).
   Passwords are stored encrypted with a key in `secret.key` beside the database, never in it.
+- **Smart playlists** in Navidrome's rule format (`all`/`any`, is, contains, gt/lt, inTheRange, inTheLast,
+  before/after, inPlaylist…; sort, order, limit). They refill themselves when read (at most once a minute) and
+  can't be edited by hand (`readonly`).
+- **Navidrome stand-in** for what Encore 1.7.9 uses from Navidrome's own API: `POST /auth/login`,
+  `/api/playlist` (smart rules), `/api/playlist/{id}/image` (playlist pictures, served as `pl-<id>_…` covers).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: the Encore extensions (devices, sync, sign-in pairing, Jam, stats, smart playlists, playlist pictures),
-a temporary stand-in for the few Navidrome-only calls Encore 1.7.9 makes, podcasts, and
+Coming next: the Encore extensions (devices, sync, sign-in pairing, Jam, stats), podcasts, and
 downloading songs you don't have (slskd, Lidarr). See `docs/api/` for the extension list.
 
 ## Run it

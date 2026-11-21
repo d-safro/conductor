@@ -89,6 +89,13 @@ pub async fn user_by_name(db: &Db, name: &str) -> Result<Option<User>> {
     Ok(sqlx::query_as("SELECT id, name, password_enc, is_admin FROM user WHERE name = ?").bind(name).fetch_optional(db).await?)
 }
 
+/// The user, if this is their password (for sign-ins that send the password itself).
+pub async fn verify_password(db: &Db, s: &Secrets, name: &str, password: &str) -> Result<Option<User>> {
+    let Some(u) = user_by_name(db, name).await? else { return Ok(None) };
+    let real = s.decrypt(&u.password_enc)?;
+    Ok(if constant_eq(&real, password) { Some(u) } else { None })
+}
+
 pub async fn user_count(db: &Db) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM user").fetch_one(db).await?)
 }

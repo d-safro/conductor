@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use super::{ApiError, Ctx, NowPlaying, Reply, empty, items, ok};
+use super::{ApiError, Ctx, NowPlaying, Reply, empty, items, ok, smart};
 use crate::db::{self, iso, now};
 
 async fn annotate(c: &Ctx, kind: &str, id: &str, set: &str, bind: Option<i64>) -> Result<(), ApiError> {
@@ -137,19 +137,20 @@ struct PlaylistRow {
     duration_ms: i64,
     cover: Option<String>,
     image_path: Option<String>,
+    smart: bool,
 }
 
 const PLAYLIST_SELECT: &str = "SELECT p.id, p.owner_id, u.name AS owner_name, p.name, p.comment, p.public, p.created_at, p.updated_at,
     (SELECT COUNT(*) FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id AND t.missing_since IS NULL) AS song_count,
     (SELECT COALESCE(SUM(t.duration_ms), 0) FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id AND t.missing_since IS NULL) AS duration_ms,
     (SELECT t.album_id FROM playlist_entry e JOIN track t ON t.id = e.track_id WHERE e.playlist_id = p.id ORDER BY e.position LIMIT 1) AS cover,
-    p.image_path
+    p.image_path, p.rules_json IS NOT NULL AS smart
   FROM playlist p JOIN user u ON u.id = p.owner_id";
 
 fn playlist_json(p: &PlaylistRow) -> Value {
     let mut v = json!({
         "id": p.id, "name": p.name, "comment": p.comment, "owner": p.owner_name, "public": p.public,
-        "songCount": p.song_count, "duration": p.duration_ms / 1000, "created": iso(p.created_at), "changed": iso(p.updated_at),
+        "songCount": p.song_count, "readonly": p.smart, "duration": p.duration_ms / 1000, "created": iso(p.created_at), "changed": iso(p.updated_at),
     });
     // a playlist's own picture: the id changes with the playlist, so apps fetch a new picture after a change
     if p.image_path.is_some() {
@@ -180,7 +181,31 @@ fn owns(c: &Ctx, p: &PlaylistRow) -> Result<(), ApiError> {
     }
 }
 
+/// Smart playlists this user can see, re-filled if they're stale.
+async fn refresh_smart(c: &Ctx) -> Result<(), ApiError> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM playlist WHERE rules_json IS NOT NULL AND (owner_id = ? OR public = 1)")
+            .bind(&c.user.id)
+            .fetch_all(&c.st.db)
+            .await?;
+    for id in ids {
+        if let Err(e) = smart::refresh(&c.st, &id, smart::MAX_AGE).await {
+            tracing::warn!(playlist = %id, "smart playlist rules: {e:#}");
+        }
+    }
+    Ok(())
+}
+
+fn not_smart(p: &PlaylistRow) -> Result<(), ApiError> {
+    if p.smart {
+        Err(ApiError::new(50, "This playlist fills itself from its rules; its songs can't be changed by hand"))
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn playlists(c: &Ctx) -> Result<Reply, ApiError> {
+    refresh_smart(c).await?;
     let rows: Vec<PlaylistRow> =
         sqlx::query_as(&format!("{PLAYLIST_SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE"))
             .bind(&c.user.id)
@@ -190,7 +215,11 @@ pub async fn playlists(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 pub async fn playlist(c: &Ctx) -> Result<Reply, ApiError> {
-    let p = load_playlist(c, c.p.req("id")?).await?;
+    let id = c.p.req("id")?;
+    if let Err(e) = smart::refresh(&c.st, id, smart::MAX_AGE).await {
+        tracing::warn!(playlist = %id, "smart playlist rules: {e:#}");
+    }
+    let p = load_playlist(c, id).await?;
     let songs =
         items::tracks_where(c, "t.id IN (SELECT track_id FROM playlist_entry WHERE playlist_id = ?)", &[&p.id], "").await?;
     let order: Vec<String> = sqlx::query_scalar("SELECT track_id FROM playlist_entry WHERE playlist_id = ? ORDER BY position")
@@ -225,6 +254,7 @@ pub async fn create_playlist(c: &Ctx) -> Result<Reply, ApiError> {
     let pid = if let Some(existing) = c.p.get("playlistId") {
         let p = load_playlist(c, existing).await?;
         owns(c, &p)?;
+        not_smart(&p)?;
         if let Some(n) = c.p.get("name") {
             sqlx::query("UPDATE playlist SET name = ? WHERE id = ?").bind(n).bind(&p.id).execute(&c.st.db).await?;
         }
@@ -265,6 +295,7 @@ pub async fn update_playlist(c: &Ctx) -> Result<Reply, ApiError> {
     let remove: Vec<usize> = c.p.all("songIndexToRemove").iter().filter_map(|v| v.parse().ok()).collect();
     let add: Vec<&str> = c.p.all("songIdToAdd");
     if !remove.is_empty() || !add.is_empty() {
+        not_smart(&p)?;
         let mut ids: Vec<String> =
             sqlx::query_scalar("SELECT track_id FROM playlist_entry WHERE playlist_id = ? ORDER BY position")
                 .bind(&p.id)

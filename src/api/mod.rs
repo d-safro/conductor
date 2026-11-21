@@ -3,6 +3,8 @@
 mod browse;
 mod items;
 mod media;
+mod native;
+pub mod smart;
 mod userdata;
 
 use std::{collections::HashMap, sync::Arc};
@@ -36,6 +38,22 @@ pub struct AppState {
     pub scan: Arc<ScanStatus>,
     /// user id → what each player reported last (scrobble submission=false, reportPlayback)
     pub now_playing: Mutex<HashMap<(String, String), NowPlaying>>,
+    /// sign-in tokens for the Navidrome stand-in: token → (user id, expires)
+    pub native_tokens: Mutex<HashMap<String, (String, i64)>>,
+}
+
+impl AppState {
+    pub fn new(db: Db, secrets: Secrets, cfg: Config, libs: Vec<(i64, LibraryConfig)>) -> Self {
+        Self {
+            db,
+            secrets,
+            cfg,
+            libs,
+            scan: Arc::new(ScanStatus::default()),
+            now_playing: Mutex::default(),
+            native_tokens: Mutex::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +70,7 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/rest/{method}", any(handle))
         .route("/health", get(health))
+        .merge(native::routes())
         .route("/", get(|| async { "Maestro. Point a Subsonic app at this address." }))
         .with_state(state)
 }
