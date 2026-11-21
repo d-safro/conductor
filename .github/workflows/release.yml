@@ -1,0 +1,35 @@
+# Builds release files when a tag like v0.1.0 is pushed: maestro.exe (+ install.ps1, uninstall.ps1, config example)
+# as a zip for Windows, and a static Linux binary. Tests run on both first.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: choco install ffmpeg -y --no-progress
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/maestro.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1, config.example.toml, LICENSE dist/
+          Compress-Archive -Path dist/* -DestinationPath maestro-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: maestro-windows-x86_64, path: maestro-windows-x86_64.zip }
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-musl }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg musl-tools
+      - run: cargo test --release
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - uses: actions/upload-artifact@v4
+        with: { name: maestro-linux-x86_64, path: target/x86_64-unknown-linux-musl/release/maestro }

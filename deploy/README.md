@@ -27,4 +27,8 @@ On the Windows PC: put `maestro.exe` and `ffmpeg.exe` (from ffmpeg.org builds) i
 next to them (see `config.example.toml`; paths like `D:\\Music`), and run `maestro.exe --config config.toml`.
 Data goes to `%ProgramData%\maestro` unless `data_dir` says otherwise. If slskd / Lidarr run in Docker Desktop, set
 `slskd_downloads` to the folder as Windows sees it and `lidarr_downloads` to the folder as Lidarr sees it.
-A Windows service and an installer are on the roadmap; for now use Task Scheduler ("at log on") or NSSM.
+**As a service** (starts with Windows, log in `<data_dir>\maestro.log`): from the release zip, in PowerShell as
+administrator, `powershell -ExecutionPolicy Bypass -File install.ps1 -Music "D:\Music"` (add `-OpenFirewall` for the
+local network). Or by hand: `maestro.exe --config C:\ProgramData\maestro\config.toml service install`, then
+`service start` / `service stop` / `service uninstall`. `uninstall.ps1` removes it (data kept unless `-RemoveData`).
+Release zips are built by `.github/workflows/release.yml` on a `v*` tag (Windows tests run on a GitHub runner there).

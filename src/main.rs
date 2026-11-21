@@ -6,6 +6,7 @@
 //!   maestro [--config FILE] user passwd NAME
 //!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
+//!   maestro [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
 //!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, podcasts from
 //!                                                         STATE/podcasts.json; run it after import-navidrome)
 
@@ -26,19 +27,47 @@ use maestro::{
     db, library,
 };
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,sqlx=warn,lofty=error".into()),
-        )
-        .init();
+#[cfg(windows)]
+mod winsvc;
+
+/// Stops the server when it completes (Ctrl+C, or the Windows service being stopped).
+pub type Shutdown = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+pub fn init_logs(file: Option<std::fs::File>) {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,sqlx=warn,lofty=error".into());
+    match file {
+        Some(f) => {
+            tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(std::sync::Mutex::new(f)).init()
+        }
+        None => tracing_subscriber::fmt().with_env_filter(filter).init(),
+    }
+}
+
+fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut config_path = None;
     if let Some(i) = args.iter().position(|a| a == "--config") {
         config_path = Some(PathBuf::from(args.get(i + 1).context("--config needs a file")?));
         args.drain(i..=i + 1);
     }
+    if args.first().map(String::as_str) == Some("service") {
+        #[cfg(windows)]
+        return winsvc::command(&args[1..], config_path);
+        #[cfg(not(windows))]
+        bail!("`maestro service` is for Windows; on Linux use Docker or a systemd unit (see deploy/README.md)");
+    }
+    init_logs(None);
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run(
+        args,
+        config_path,
+        Box::pin(async {
+            let _ = tokio::signal::ctrl_c().await;
+        }),
+    ))
+}
+
+pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let cfg = Config::load(config_path)?;
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let pool = db::open(&cfg.data_dir.join("maestro.db")).await?;
@@ -47,7 +76,7 @@ async fn main() -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
 
     match a.as_slice() {
-        [] | ["serve"] => serve(cfg, pool, secrets, libs).await,
+        [] | ["serve"] => serve(cfg, pool, secrets, libs, shutdown).await,
         ["scan", rest @ ..] => {
             let status = Arc::new(library::ScanStatus::default());
             let rep = library::scan(&pool, &libs, &status, rest.contains(&"--full")).await?;
@@ -118,7 +147,7 @@ fn read_password() -> Result<String> {
     Ok(s)
 }
 
-async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>) -> Result<()> {
+async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>, shutdown: Shutdown) -> Result<()> {
     if auth::user_count(&pool).await? == 0 {
         match (std::env::var("MAESTRO_ADMIN_USER"), std::env::var("MAESTRO_ADMIN_PASSWORD")) {
             (Ok(u), Ok(p)) if !u.is_empty() && !p.is_empty() => {
@@ -158,11 +187,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     info!(%addr, "Maestro listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    axum::serve(listener, app).with_graceful_shutdown(shutdown).await?;
     Ok(())
 }
 
