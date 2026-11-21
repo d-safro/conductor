@@ -1,0 +1,19 @@
+# Encore Server settings. Copy to config.toml (or point ENCORE_CONFIG / --config at it).
+# Every setting can also come from the environment: ENCORE_DATA_DIR, ENCORE_LISTEN, ENCORE_MUSIC,
+# ENCORE_SENTINEL, ENCORE_SCAN_THREADS, ENCORE_SCAN_INTERVAL_MIN, ENCORE_FFMPEG.
+
+# Database, password key and caches. Keep this on the internal disk, not on the music drive.
+# Default: ~/.local/share/encore-server (Linux), %ProgramData%\encore-server (Windows).
+# data_dir = "/var/lib/encore-server"
+
+listen = "127.0.0.1:4533"
+scan_interval_min = 15
+# ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
+
+[[libraries]]
+name = "Music"
+path = "/mnt/media/data/media/music"
+# A file that must be in the folder for it to count as connected. Without one, any content counts.
+# sentinel = ".library-id"
+# Files read at once while scanning: 1-2 for a spinning USB drive, 8 for an SSD.
+scan_threads = 2

@@ -1,0 +1,287 @@
+//! Browsing and searching: artists, albums, songs, lists, genres, starred, scan status.
+
+use std::{collections::BTreeMap, sync::atomic::Ordering};
+
+use serde_json::{Value, json};
+
+use super::{
+    ApiError, Ctx, Reply,
+    items::{self, album_json, artist_json, song_json},
+    ok,
+};
+use crate::{db::iso, library};
+
+fn clamp(v: Option<i64>, default: i64, max: i64) -> i64 {
+    v.unwrap_or(default).clamp(0, max)
+}
+
+pub async fn music_folders(c: &Ctx) -> Result<Reply, ApiError> {
+    let f: Vec<Value> = c.st.libs.iter().map(|(id, l)| json!({ "id": id, "name": l.name })).collect();
+    ok(json!({ "musicFolders": { "musicFolder": f } }))
+}
+
+fn index_letter(sort: &str) -> String {
+    match sort.chars().next() {
+        Some(ch) if ch.is_alphabetic() => ch.to_uppercase().collect(),
+        _ => "#".into(),
+    }
+}
+
+pub async fn artists(c: &Ctx, old_style: bool) -> Result<Reply, ApiError> {
+    let rows = items::artists_where(c, "ar.album_count > 0", &[], "ORDER BY ar.sort_name").await?;
+    let mut groups: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for a in &rows {
+        groups.entry(index_letter(&a.sort_name)).or_default().push(artist_json(a));
+    }
+    let index: Vec<Value> = groups.into_iter().map(|(name, artist)| json!({ "name": name, "artist": artist })).collect();
+    if old_style {
+        let last = c.st.scan.last_scan.load(Ordering::Relaxed) * 1000;
+        ok(json!({ "indexes": { "lastModified": last, "ignoredArticles": "The An A", "index": index } }))
+    } else {
+        ok(json!({ "artists": { "ignoredArticles": "The An A", "index": index } }))
+    }
+}
+
+pub async fn artist(c: &Ctx) -> Result<Reply, ApiError> {
+    let id = c.p.req("id")?;
+    let a =
+        items::artists_where(c, "ar.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Artist"))?;
+    let albums = items::albums_where(c, "al.artist_id = ?", &[id], "ORDER BY al.year, al.sort_name").await?;
+    let mut v = artist_json(&a);
+    v["album"] = albums.iter().map(album_json).collect();
+    ok(json!({ "artist": v }))
+}
+
+pub async fn album(c: &Ctx) -> Result<Reply, ApiError> {
+    let id = c.p.req("id")?;
+    let a =
+        items::albums_where(c, "al.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Album"))?;
+    let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number, t.sort_title").await?;
+    let mut v = album_json(&a);
+    v["song"] = songs.iter().map(song_json).collect();
+    ok(json!({ "album": v }))
+}
+
+pub async fn song(c: &Ctx) -> Result<Reply, ApiError> {
+    let t = items::track(c, c.p.req("id")?).await?;
+    ok(json!({ "song": song_json(&t) }))
+}
+
+/// Folder-style browsing on top of artists and albums (for older apps).
+pub async fn directory(c: &Ctx) -> Result<Reply, ApiError> {
+    let id = c.p.req("id")?;
+    match items::kind_of(c, id).await? {
+        Some("artist") => {
+            let a = items::artists_where(c, "ar.id = ?", &[id], "").await?.remove(0);
+            let albums = items::albums_where(c, "al.artist_id = ?", &[id], "ORDER BY al.year, al.sort_name").await?;
+            ok(json!({ "directory": { "id": a.id, "name": a.name, "child": albums.iter().map(album_json).collect::<Vec<_>>() } }))
+        }
+        Some("album") => {
+            let a = items::albums_where(c, "al.id = ?", &[id], "").await?.remove(0);
+            let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number").await?;
+            ok(json!({ "directory": { "id": a.id, "name": a.name, "parent": a.artist_id,
+                "child": songs.iter().map(song_json).collect::<Vec<_>>() } }))
+        }
+        _ => Err(ApiError::not_found("Directory")),
+    }
+}
+
+pub async fn album_list(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
+    let ty = c.p.req("type")?;
+    let size = clamp(c.p.int("size"), 10, 500);
+    let offset = c.p.int("offset").unwrap_or(0).max(0);
+    let page = format!("LIMIT {size} OFFSET {offset}");
+    let (from, to) = (c.p.int("fromYear").unwrap_or(0), c.p.int("toYear").unwrap_or(9999));
+    let years = (from.to_string(), to.to_string());
+    let rows = match ty {
+        "random" => items::albums_where(c, "1", &[], &format!("ORDER BY RANDOM() {page}")).await?,
+        "newest" => items::albums_where(c, "1", &[], &format!("ORDER BY al.created_at DESC, al.id {page}")).await?,
+        "frequent" => items::albums_where(c, "an.play_count > 0", &[], &format!("ORDER BY an.play_count DESC {page}")).await?,
+        "recent" => {
+            items::albums_where(c, "an.last_played IS NOT NULL", &[], &format!("ORDER BY an.last_played DESC {page}")).await?
+        }
+        "starred" => {
+            items::albums_where(c, "an.starred_at IS NOT NULL", &[], &format!("ORDER BY an.starred_at DESC {page}")).await?
+        }
+        "highest" => items::albums_where(c, "an.rating > 0", &[], &format!("ORDER BY an.rating DESC {page}")).await?,
+        "alphabeticalByName" => items::albums_where(c, "1", &[], &format!("ORDER BY al.sort_name {page}")).await?,
+        "alphabeticalByArtist" => {
+            items::albums_where(c, "1", &[], &format!("ORDER BY al.artist_name COLLATE NOCASE, al.year {page}")).await?
+        }
+        "byYear" => {
+            let order = if from > to { "DESC" } else { "ASC" };
+            let (lo, hi) = if from > to { (&years.1, &years.0) } else { (&years.0, &years.1) };
+            items::albums_where(c, "al.year BETWEEN ? AND ?", &[lo, hi], &format!("ORDER BY al.year {order} {page}")).await?
+        }
+        "byGenre" => {
+            let g = c.p.req("genre")?;
+            items::albums_where(c, "al.genre = ?", &[g], &format!("ORDER BY al.sort_name {page}")).await?
+        }
+        other => return Err(ApiError::new(0, format!("Unknown list type: {other}"))),
+    };
+    let list: Vec<Value> = rows.iter().map(album_json).collect();
+    if id3 { ok(json!({ "albumList2": { "album": list } })) } else { ok(json!({ "albumList": { "album": list } })) }
+}
+
+pub async fn random_songs(c: &Ctx) -> Result<Reply, ApiError> {
+    let size = clamp(c.p.int("size"), 10, 500);
+    let mut cond = vec!["1".to_string()];
+    let mut binds: Vec<String> = vec![];
+    if let Some(g) = c.p.get("genre").filter(|g| !g.is_empty()) {
+        cond.push("t.genre = ?".into());
+        binds.push(g.into());
+    }
+    if let Some(y) = c.p.int("fromYear") {
+        cond.push("t.year >= ?".into());
+        binds.push(y.to_string());
+    }
+    if let Some(y) = c.p.int("toYear") {
+        cond.push("t.year <= ?".into());
+        binds.push(y.to_string());
+    }
+    let b: Vec<&str> = binds.iter().map(String::as_str).collect();
+    let rows = items::tracks_where(c, &cond.join(" AND "), &b, &format!("ORDER BY RANDOM() LIMIT {size}")).await?;
+    ok(json!({ "randomSongs": { "song": rows.iter().map(song_json).collect::<Vec<_>>() } }))
+}
+
+pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
+    let g = c.p.req("genre")?;
+    let count = clamp(c.p.int("count"), 10, 500);
+    let offset = c.p.int("offset").unwrap_or(0).max(0);
+    let rows = items::tracks_where(
+        c,
+        "t.genre = ?",
+        &[g],
+        &format!("ORDER BY t.album_name, t.disc, t.number LIMIT {count} OFFSET {offset}"),
+    )
+    .await?;
+    ok(json!({ "songsByGenre": { "song": rows.iter().map(song_json).collect::<Vec<_>>() } }))
+}
+
+pub async fn genres(c: &Ctx) -> Result<Reply, ApiError> {
+    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT genre, COUNT(*), COUNT(DISTINCT album_id) FROM track WHERE genre IS NOT NULL AND missing_since IS NULL
+         GROUP BY genre ORDER BY genre COLLATE NOCASE",
+    )
+    .fetch_all(&c.st.db)
+    .await?;
+    let g: Vec<Value> = rows.into_iter().map(|(n, s, a)| json!({ "value": n, "songCount": s, "albumCount": a })).collect();
+    ok(json!({ "genres": { "genre": g } }))
+}
+
+/// Every word must appear somewhere in the item's name fields. An empty query (or `""`) lists everything.
+fn word_conditions(q: &str, fields: &str) -> (String, Vec<String>) {
+    let q = q.trim().trim_matches('"').trim();
+    let words: Vec<String> = q.split_whitespace().map(|w| format!("%{}%", w.replace('%', "\\%").replace('_', "\\_"))).collect();
+    if words.is_empty() {
+        return ("1".into(), vec![]);
+    }
+    let cond = words.iter().map(|_| format!("({fields}) LIKE ? ESCAPE '\\'")).collect::<Vec<_>>().join(" AND ");
+    (cond, words)
+}
+
+pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
+    let q = c.p.get("query").unwrap_or("");
+    let page = |count: &str, offset: &str, def: i64| {
+        format!("LIMIT {} OFFSET {}", clamp(c.p.int(count), def, 500), c.p.int(offset).unwrap_or(0).max(0))
+    };
+    let (ac, ab) = word_conditions(q, "ar.name");
+    let ab: Vec<&str> = ab.iter().map(String::as_str).collect();
+    let artists = items::artists_where(
+        c,
+        &format!("ar.album_count > 0 AND {ac}"),
+        &ab,
+        &format!("ORDER BY ar.sort_name {}", page("artistCount", "artistOffset", 20)),
+    )
+    .await?;
+    let (lc, lb) = word_conditions(q, "al.name || ' ' || al.artist_name");
+    let lb: Vec<&str> = lb.iter().map(String::as_str).collect();
+    let albums =
+        items::albums_where(c, &lc, &lb, &format!("ORDER BY al.sort_name {}", page("albumCount", "albumOffset", 20))).await?;
+    let (sc, sb) = word_conditions(q, "t.title || ' ' || t.artist_name || ' ' || t.album_name");
+    let sb: Vec<&str> = sb.iter().map(String::as_str).collect();
+    let songs =
+        items::tracks_where(c, &sc, &sb, &format!("ORDER BY t.sort_title {}", page("songCount", "songOffset", 20))).await?;
+    let body = json!({
+        "artist": artists.iter().map(artist_json).collect::<Vec<_>>(),
+        "album": albums.iter().map(album_json).collect::<Vec<_>>(),
+        "song": songs.iter().map(song_json).collect::<Vec<_>>(),
+    });
+    if version == 3 { ok(json!({ "searchResult3": body })) } else { ok(json!({ "searchResult2": body })) }
+}
+
+pub async fn starred(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
+    let artists = items::artists_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
+    let albums = items::albums_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
+    let songs = items::tracks_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
+    let body = json!({
+        "artist": artists.iter().map(artist_json).collect::<Vec<_>>(),
+        "album": albums.iter().map(album_json).collect::<Vec<_>>(),
+        "song": songs.iter().map(song_json).collect::<Vec<_>>(),
+    });
+    if id3 { ok(json!({ "starred2": body })) } else { ok(json!({ "starred": body })) }
+}
+
+pub async fn top_songs(c: &Ctx) -> Result<Reply, ApiError> {
+    let artist = c.p.req("artist")?;
+    let count = clamp(c.p.int("count"), 50, 500);
+    let rows = items::tracks_where(
+        c,
+        "t.artist_name = ? COLLATE NOCASE OR al.artist_name = ? COLLATE NOCASE",
+        &[artist, artist],
+        &format!("ORDER BY COALESCE(an.play_count, 0) DESC, an.rating DESC, t.year LIMIT {count}"),
+    )
+    .await?;
+    ok(json!({ "topSongs": { "song": rows.iter().map(song_json).collect::<Vec<_>>() } }))
+}
+
+/// Without outside sources yet: songs by the same artist and in the same genre, shuffled.
+pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
+    let id = c.p.req("id")?;
+    let count = clamp(c.p.int("count"), 50, 500);
+    let (artist, genre) = match items::kind_of(c, id).await? {
+        Some("track") => {
+            let t = items::track(c, id).await?;
+            (t.artist_id, t.genre.unwrap_or_default())
+        }
+        Some("album") => {
+            let a = items::albums_where(c, "al.id = ?", &[id], "").await?.remove(0);
+            (a.artist_id, a.genre.unwrap_or_default())
+        }
+        Some("artist") => (id.to_string(), String::new()),
+        _ => return Err(ApiError::not_found("Item")),
+    };
+    let rows = items::tracks_where(
+        c,
+        "(t.artist_id = ? OR al.artist_id = ? OR (t.genre = ? AND t.genre != '')) AND t.id != ?",
+        &[&artist, &artist, &genre, id],
+        &format!("ORDER BY RANDOM() LIMIT {count}"),
+    )
+    .await?;
+    let songs: Vec<Value> = rows.iter().map(song_json).collect();
+    if id3 { ok(json!({ "similarSongs2": { "song": songs } })) } else { ok(json!({ "similarSongs": { "song": songs } })) }
+}
+
+pub async fn scan_status(c: &Ctx) -> Result<Reply, ApiError> {
+    let s = &c.st.scan;
+    let last = s.last_scan.load(Ordering::Relaxed);
+    let mut v = json!({ "scanning": s.scanning.load(Ordering::Relaxed), "count": s.count.load(Ordering::Relaxed) });
+    if last > 0 {
+        v["lastScan"] = iso(last).into();
+    }
+    ok(json!({ "scanStatus": v }))
+}
+
+pub async fn start_scan(c: &Ctx) -> Result<Reply, ApiError> {
+    if !c.user.is_admin {
+        return Err(ApiError::new(50, "Only admins can start a scan"));
+    }
+    let st = c.st.clone();
+    let full = c.p.bool("fullScan").unwrap_or(false);
+    tokio::spawn(async move {
+        if let Err(e) = library::scan(&st.db, &st.libs, &st.scan, full).await {
+            tracing::error!("scan failed: {e:#}");
+        }
+    });
+    scan_status(c).await
+}

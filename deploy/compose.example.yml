@@ -1,0 +1,15 @@
+# Example only. Runs beside Navidrome on another port.
+services:
+  encore-server:
+    image: encore-server:dev
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    container_name: encore-server
+    restart: unless-stopped
+    user: ${PUID}:${PGID}
+    environment:
+      TZ: ${TZ}
+      ENCORE_SCAN_THREADS: "2"
+    volumes:
+      - ./config/encore-server:/data:Z           # internal disk
+      - ${DATA}/media/music:/music:ro
+    ports: ["127.0.0.1:4590:4533"]

@@ -1,0 +1,161 @@
+//! Encore Server: a music server for Encore and any Subsonic / OpenSubsonic app.
+//!
+//!   encore-server [--config FILE] [serve]          run the server (default)
+//!   encore-server [--config FILE] scan [--full]     scan the libraries once and exit
+//!   encore-server [--config FILE] user add NAME [--admin]     password from ENCORE_PASSWORD or stdin
+//!   encore-server [--config FILE] user passwd NAME
+//!   encore-server [--config FILE] apikey NAME [LABEL]          prints a new API key
+
+use std::{
+    collections::HashMap,
+    io::{BufRead, Write},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
+
+use anyhow::{Context, Result, bail};
+use tokio::sync::Mutex;
+use tracing::{info, warn};
+
+use encore_server::{
+    api::{self, AppState},
+    auth::{self, Secrets},
+    config::{Config, LibraryConfig},
+    db, library,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,sqlx=warn,lofty=error".into()),
+        )
+        .init();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config_path = None;
+    if let Some(i) = args.iter().position(|a| a == "--config") {
+        config_path = Some(PathBuf::from(args.get(i + 1).context("--config needs a file")?));
+        args.drain(i..=i + 1);
+    }
+    let cfg = Config::load(config_path)?;
+    std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
+    let pool = db::open(&cfg.data_dir.join("encore.db")).await?;
+    let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
+    let libs = library::ensure_libraries(&pool, &cfg.libraries).await?;
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    match a.as_slice() {
+        [] | ["serve"] => serve(cfg, pool, secrets, libs).await,
+        ["scan", rest @ ..] => {
+            let status = Arc::new(library::ScanStatus::default());
+            let rep = library::scan(&pool, &libs, &status, rest.contains(&"--full")).await?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
+            Ok(())
+        }
+        ["user", "add", name, rest @ ..] => {
+            let pw = read_password()?;
+            auth::create_user(&pool, &secrets, name, &pw, rest.contains(&"--admin")).await?;
+            println!("user {name} added");
+            Ok(())
+        }
+        ["user", "passwd", name] => {
+            let pw = read_password()?;
+            if !auth::set_password(&pool, &secrets, name, &pw).await? {
+                bail!("no user {name}");
+            }
+            println!("password changed");
+            Ok(())
+        }
+        ["apikey", name, rest @ ..] => {
+            let key = auth::create_api_key(&pool, name, rest.first().copied().unwrap_or("cli")).await?;
+            println!("{key}");
+            Ok(())
+        }
+        _ => bail!("unknown command; see the top of src/main.rs"),
+    }
+}
+
+fn read_password() -> Result<String> {
+    if let Ok(p) = std::env::var("ENCORE_PASSWORD") {
+        return Ok(p);
+    }
+    eprint!("password: ");
+    std::io::stderr().flush()?;
+    let mut s = String::new();
+    std::io::stdin().lock().read_line(&mut s)?;
+    let s = s.trim_end_matches(['\r', '\n']).to_string();
+    if s.is_empty() {
+        bail!("empty password");
+    }
+    Ok(s)
+}
+
+async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>) -> Result<()> {
+    if auth::user_count(&pool).await? == 0 {
+        match (std::env::var("ENCORE_ADMIN_USER"), std::env::var("ENCORE_ADMIN_PASSWORD")) {
+            (Ok(u), Ok(p)) if !u.is_empty() && !p.is_empty() => {
+                auth::create_user(&pool, &secrets, &u, &p, true).await?;
+                info!(user = %u, "first admin created from ENCORE_ADMIN_USER");
+            }
+            _ => warn!(
+                "no users yet: add one with `encore-server user add NAME --admin` or set ENCORE_ADMIN_USER / ENCORE_ADMIN_PASSWORD"
+            ),
+        }
+    }
+    if libs.is_empty() {
+        warn!("no music folders configured (config.toml [[libraries]] or ENCORE_MUSIC)");
+    }
+    let addr = cfg.listen;
+    let state = Arc::new(AppState {
+        db: pool,
+        secrets,
+        cfg,
+        libs,
+        scan: Arc::new(library::ScanStatus::default()),
+        now_playing: Mutex::new(HashMap::new()),
+    });
+    tokio::spawn(scan_loop(state.clone()));
+
+    let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
+    let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
+    info!(%addr, "Encore Server listening");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+    Ok(())
+}
+
+/// Scan at start, then on a timer. A music folder that comes back (drive reconnected) is scanned at once.
+async fn scan_loop(st: Arc<AppState>) {
+    let interval = Duration::from_secs(st.cfg.scan_interval_min.max(1) * 60);
+    let mut last = std::time::Instant::now();
+    let mut was_online: Vec<bool> = st.libs.iter().map(|_| false).collect();
+    let mut first = true;
+    loop {
+        let online: Vec<bool> = st.libs.iter().map(|(_, l)| library::is_online(l)).collect();
+        let came_back = online.iter().zip(&was_online).any(|(n, o)| *n && !*o);
+        let due = st.cfg.scan_interval_min > 0 && last.elapsed() >= interval;
+        if first || came_back || due {
+            if came_back && !first {
+                info!("a music folder is connected again: scanning");
+            }
+            if let Err(e) = library::scan(&st.db, &st.libs, &st.scan, false).await {
+                warn!("scan failed: {e:#}");
+            }
+            last = std::time::Instant::now();
+            first = false;
+        } else if online != was_online {
+            for ((id, l), on) in st.libs.iter().zip(&online) {
+                let _ = sqlx::query("UPDATE library SET online = ? WHERE id = ?").bind(on).bind(id).execute(&st.db).await;
+                if !on {
+                    warn!(library = %l.name, "music folder disconnected");
+                }
+            }
+        }
+        was_online = online;
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
