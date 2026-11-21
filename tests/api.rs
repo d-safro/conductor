@@ -867,3 +867,129 @@ async fn songs_on_trial_expire() {
     let r = s2.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
     assert_eq!(r["lookupSongs"]["song"][0]["status"], "limit");
 }
+
+#[tokio::test]
+async fn lidarr_wanted_albums() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    let lidarr_music = tmp.path().join("lidarr-music");
+    tone(&tmp.path().join("a.flac"), "Born Under Punches", "Talking Heads", "Remain in Light", 1, 2);
+    let flac = std::fs::read(tmp.path().join("a.flac")).unwrap();
+    let dir = r"Music\Talking Heads\Remain in Light (1980)";
+    let files = [format!(r"{dir}\01 - Born Under Punches.flac"), format!(r"{dir}\02 - Crosseyed and Painless.flac")];
+
+    // slskd: one user with the whole album, one with half of it
+    let sl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sl_base = format!("http://{}", sl.local_addr().unwrap());
+    let sent = Arc::new(std::sync::Mutex::new(false));
+    let (f2, s2, d2, flac2) = (files.clone(), sent.clone(), downloads.clone(), flac.clone());
+    let slskd = axum::Router::new().fallback(move |req: Request| {
+        let (files, sent, downloads, flac) = (f2.clone(), s2.clone(), d2.clone(), flac2.clone());
+        async move {
+            let (m, path) = (req.method().clone(), req.uri().path().to_string());
+            let body = match (m.as_str(), path.as_str()) {
+                (_, "/api/v0/application") => json!({ "server": { "isLoggedIn": true } }),
+                ("GET", p) if p.ends_with("/responses") => json!([
+                    { "username": "half", "hasFreeUploadSlot": true, "files": [{ "filename": files[0], "size": 1 }] },
+                    { "username": "good", "hasFreeUploadSlot": true, "uploadSpeed": 900_000,
+                      "files": [{ "filename": files[0], "size": flac.len() }, { "filename": files[1], "size": flac.len() }] }]),
+                ("GET", p) if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+                ("POST", "/api/v0/transfers/downloads/good") => {
+                    let d = downloads.join("Remain in Light (1980)");
+                    std::fs::create_dir_all(&d).unwrap();
+                    for f in &files {
+                        std::fs::write(d.join(f.rsplit('\\').next().unwrap()), &flac).unwrap();
+                    }
+                    *sent.lock().unwrap() = true;
+                    json!({})
+                }
+                ("GET", "/api/v0/transfers/downloads") if *sent.lock().unwrap() => {
+                    json!([{ "username": "good", "directories": [{ "files": [
+                    { "id": "a", "filename": files[0], "state": "Completed, Succeeded" },
+                    { "id": "b", "filename": files[1], "state": "Completed, Succeeded" }] }] }])
+                }
+                ("GET", "/api/v0/transfers/downloads") => json!([]),
+                _ => json!({}),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(sl, slskd).await.unwrap() });
+
+    // Lidarr: wants one album; "imports" by moving the folder into its own music folder
+    let ll = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ll_base = format!("http://{}", ll.local_addr().unwrap());
+    let imported = Arc::new(std::sync::Mutex::new(None::<String>));
+    let (imp, lm) = (imported.clone(), lidarr_music.clone());
+    let lidarr = axum::Router::new().fallback(move |req: Request| {
+        let (imported, music) = (imp.clone(), lm.clone());
+        async move {
+            let (m, path, query) =
+                (req.method().clone(), req.uri().path().to_string(), req.uri().query().unwrap_or("").to_string());
+            assert_eq!(req.headers()["x-api-key"], "lkey");
+            let done = imported.lock().unwrap().is_some();
+            let body = match (m.as_str(), path.as_str()) {
+                ("GET", "/api/v1/wanted/missing") => json!({ "records": if done { json!([]) } else {
+                    json!([{ "id": 42, "title": "Remain in Light", "artist": { "artistName": "Talking Heads" } }]) } }),
+                ("GET", "/api/v1/track") if query.contains("albumId=42") => {
+                    json!([{ "title": "Born Under Punches" }, { "title": "Crosseyed and Painless" }])
+                }
+                ("POST", "/api/v1/command") => {
+                    let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+                    let v: Value = serde_json::from_slice(&b).unwrap();
+                    assert_eq!(v["name"], "DownloadedAlbumsScan");
+                    let from = std::path::PathBuf::from(v["path"].as_str().unwrap());
+                    let to = music.join("Talking Heads/Remain in Light");
+                    std::fs::create_dir_all(&to).unwrap();
+                    for e in std::fs::read_dir(&from).unwrap().flatten() {
+                        std::fs::rename(e.path(), to.join(e.file_name())).unwrap();
+                    }
+                    *imported.lock().unwrap() = Some(v["path"].as_str().unwrap().to_string());
+                    json!({ "id": 7 })
+                }
+                ("GET", "/api/v1/command/7") => json!({ "status": "completed" }),
+                ("GET", "/api/v1/album/42") => json!({ "statistics": { "trackFileCount": if done { 2 } else { 0 } } }),
+                _ => json!({}),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(ll, lidarr).await.unwrap() });
+
+    let s = Arc::new(
+        Server::start_with(|c| {
+            c.slskd_url = Some(sl_base.clone());
+            c.slskd_api_key = Some("test".into());
+            c.slskd_downloads = Some(downloads.clone());
+            c.lidarr_url = Some(ll_base.clone());
+            c.lidarr_api_key = Some("lkey".into());
+            c.slskd_fast_test = true;
+        })
+        .await,
+    );
+    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    wait_for(
+        async || {
+            sqlx::query_scalar::<_, String>("SELECT status FROM lidarr_grab WHERE album_id = 42")
+                .fetch_optional(&s.st.db)
+                .await
+                .unwrap()
+                .as_deref()
+                == Some("done")
+        },
+        "the album to be imported",
+    )
+    .await;
+    let path = imported.lock().unwrap().clone().unwrap();
+    assert!(path.ends_with("Talking Heads - Remain in Light"), "{path}");
+    assert!(lidarr_music.join("Talking Heads/Remain in Light/02 - Crosseyed and Painless.flac").is_file());
+    assert!(!downloads.join("Talking Heads - Remain in Light").exists(), "the emptied folder is removed");
+    let user: String =
+        sqlx::query_scalar("SELECT slsk_user FROM lidarr_grab WHERE album_id = 42").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(user, "good"); // the whole album, not half of it
+}

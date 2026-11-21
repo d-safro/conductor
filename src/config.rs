@@ -44,6 +44,16 @@ pub struct Config {
     pub trial_hours: f64,
     /// At most this many new trial downloads a day.
     pub trial_per_day: i64,
+    /// Lidarr: albums it wants are fetched from Soulseek (one folder from one user) and handed to it to import.
+    pub lidarr_url: Option<String>,
+    pub lidarr_api_key: Option<String>,
+    /// The downloads folder as Lidarr sees it (default: the same as slskd_downloads).
+    pub lidarr_downloads: Option<String>,
+    /// Minutes between looks at Lidarr's wanted list, and how many albums to take each time.
+    pub lidarr_interval_min: u64,
+    pub lidarr_albums_per_run: i64,
+    /// Smallest share of an album's track names that must match a folder's file names (0..1).
+    pub lidarr_match_ratio: f64,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -83,6 +93,12 @@ impl Default for Config {
             import_library: None,
             trial_hours: 24.0,
             trial_per_day: 40,
+            lidarr_url: None,
+            lidarr_api_key: None,
+            lidarr_downloads: None,
+            lidarr_interval_min: 5,
+            lidarr_albums_per_run: 20,
+            lidarr_match_ratio: 0.8,
             slskd_fast_test: false,
         }
     }
@@ -152,6 +168,15 @@ impl Config {
         }
         if let Some(v) = std::env::var_os("MAESTRO_SLSKD_DOWNLOADS") {
             c.slskd_downloads = Some(v.into());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LIDARR_URL") {
+            c.lidarr_url = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LIDARR_API_KEY") {
+            c.lidarr_api_key = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LIDARR_DOWNLOADS") {
+            c.lidarr_downloads = Some(v);
         }
         if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
             c.ffmpeg = Some(v.into());

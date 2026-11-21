@@ -54,9 +54,14 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   downloaded into `Trial/` and listed in your "On trial" playlist; `stream?hold=true` plays silence until it's here.
   Heart it, add it to another playlist or rate it 4+ to keep it (it moves to `Songs/`, same id); take it out of
   "On trial" to delete it now; the rest go `trial_hours` (24) after they arrive; at most `trial_per_day` (40) a day.
+- **Lidarr's wanted albums** (what Soularr did): every `lidarr_interval_min` (5), up to `lidarr_albums_per_run` (20)
+  missing albums are searched on Soulseek; one user's folder with the whole album (as many FLAC / MP3 320 files as
+  tracks, `lidarr_match_ratio` of the track names, the artist in the path) is downloaded, renamed
+  "<Artist> - <Album>" and handed to Lidarr (`DownloadedAlbumsScan`). A user whose copy fails isn't tried again.
+  Set `lidarr_url`, `lidarr_api_key`, and `lidarr_downloads` when Lidarr sees the downloads folder at another path.
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: Lidarr's wanted albums, Spotify sync, LRCLIB lyrics,
+Coming next: Spotify sync, LRCLIB lyrics,
 artist info. See `docs/api/` for the extension list.
 
 ## Run it

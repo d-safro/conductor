@@ -6,6 +6,7 @@
 
 pub mod acquire;
 pub mod deezer;
+pub mod lidarr;
 pub mod text;
 pub mod trial;
 

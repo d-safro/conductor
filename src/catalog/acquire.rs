@@ -33,7 +33,7 @@ impl Slskd {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(60)).build().expect("http client");
         Self { base: format!("{}/api/v0", base.trim_end_matches('/')), key: key.to_string(), http }
     }
-    async fn call(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
+    pub(crate) async fn call(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
         let mut r = self.http.request(method, format!("{}{path}", self.base)).header("X-API-Key", &self.key);
         if let Some(b) = body {
             r = r.json(&b);
@@ -46,7 +46,7 @@ impl Slskd {
         }
         Ok(if text.trim().is_empty() { Value::Null } else { serde_json::from_str(&text).unwrap_or(Value::Null) })
     }
-    async fn get(&self, path: &str) -> Result<Value> {
+    pub(crate) async fn get(&self, path: &str) -> Result<Value> {
         self.call(reqwest::Method::GET, path, None).await
     }
     pub async fn logged_in(&self) -> bool {
@@ -108,7 +108,7 @@ fn artist_variants(artists: &[String]) -> HashSet<String> {
 }
 
 /// Is one of the song's artists named in `text` (a file path), in any alphabet or spelling?
-fn artist_in(artists: &[String], text: &str) -> bool {
+pub(crate) fn artist_in(artists: &[String], text: &str) -> bool {
     let hay = [loose(&norm(text)), loose(&norm(&translit(text)))];
     artist_variants(artists).iter().any(|v| hay.iter().any(|h| !h.is_empty() && h.contains(v.as_str())))
 }
@@ -197,7 +197,7 @@ pub fn score_file(r: &Req, resp: &Value, f: &Value, tried: &[String]) -> Option<
     Some(q)
 }
 
-async fn search(st: &AppState, sl: &Slskd, text: &str) -> Result<Vec<Value>> {
+pub(crate) async fn search(st: &AppState, sl: &Slskd, text: &str) -> Result<Vec<Value>> {
     // one search at a time, at most one every 12 s: much faster and the Soulseek server ignores you
     let _turn = st.search_pace.lock().await;
     let id = crate::db::random_id();
@@ -316,7 +316,7 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
     Ok(if cands.is_empty() { "not found".into() } else { "found, but nobody reachable right now (will retry)".into() })
 }
 
-fn urlencode(s: &str) -> String {
+pub(crate) fn urlencode(s: &str) -> String {
     form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20")
 }
 
@@ -332,7 +332,7 @@ fn safe(s: &str) -> String {
 }
 
 /// The finished file in slskd's downloads folder.
-fn locate(downloads: &Path, remote: &str) -> Option<PathBuf> {
+pub(crate) fn locate(downloads: &Path, remote: &str) -> Option<PathBuf> {
     let parts: Vec<&str> = remote.split(['\\', '/']).collect();
     let name = parts.last()?;
     if parts.len() > 1 {
@@ -530,7 +530,18 @@ pub async fn worker(st: Arc<AppState>) {
         return;
     };
     let sl = Slskd::new(&url, &key);
+    let lidarr = super::lidarr::configured(&st);
+    if lidarr.is_some() {
+        info!("Lidarr's wanted albums are fetched from Soulseek too");
+    }
+    let mut last_wanted = 0;
     loop {
+        if let Some(lid) = &lidarr
+            && sl.logged_in().await
+            && let Err(e) = super::lidarr::tick(&st, &sl, lid, &mut last_wanted).await
+        {
+            warn!("Lidarr albums: {e:#}");
+        }
         if let Err(e) = tick(&st, &sl).await {
             warn!("downloads: {e:#}");
         }

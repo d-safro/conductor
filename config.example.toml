@@ -29,6 +29,14 @@ catalog_skip_clients = ["symfonium"]
 # Songs you play but don't have: deleted this many hours after they arrive unless kept; at most this many a day.
 trial_hours = 24
 trial_per_day = 40
+
+# Lidarr's wanted albums, fetched from Soulseek and handed to Lidarr to import (what Soularr did).
+# lidarr_url = "http://127.0.0.1:8686"
+# lidarr_api_key = "…"                      # or MAESTRO_LIDARR_API_KEY
+# lidarr_downloads = "/data/soulseek/complete"   # the downloads folder as Lidarr sees it
+lidarr_interval_min = 5
+lidarr_albums_per_run = 20
+lidarr_match_ratio = 0.8
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 [[libraries]]
