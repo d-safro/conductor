@@ -84,7 +84,8 @@ server's Tailscale address. Nothing is open to the internet.
   (`--tunnel-token TOKEN` or `CONDUCTOR_TUNNEL_TOKEN`, `--tunnel-host NAME`.)
 - **Tailscale Funnel**: it shows (and, with a yes, runs) `tailscale funnel --bg` for the Jam listener and
   `tailscale serve --bg --https=8443` for the apps, which stay on your tailnet, and sets `jam_public_url` to this
-  computer's `https://<machine>.<tailnet>.ts.net` name. (`--funnel`.)
+  computer's `https://<machine>.<tailnet>.ts.net` name; Caddy or a tunnel set up before is offered to be taken out.
+  (`--funnel`.)
 
 `--no-domain` takes Caddy or the tunnel out again. Start what it wrote with `docker compose up -d` in the folder.
 

@@ -45,6 +45,8 @@ What changed in each release, newest first. The full notes for each are on the
   terminal, then "Type a path", offered "auto" as the folder.
 - Prelude's import step stopped with an error (pointing at a `--replace` it doesn't have) when given a Navidrome
   database on a server already in use; it now asks before replacing, and with `--yes` leaves things as they are.
+- Choosing Tailscale Funnel in Prelude's domain step left Caddy or the Cloudflare Tunnel set up before in place,
+  still opening Conductor on its old name; they're now offered to be taken out, as switching between those two does.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.

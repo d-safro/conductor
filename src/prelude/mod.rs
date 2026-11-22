@@ -1346,7 +1346,15 @@ impl Wizard<'_> {
             0 => self.domain_caddy(&dir).await?,
             1 => self.domain_tunnel(&dir)?,
             2 => {
-                self.domain_funnel();
+                // Funnel does it now: Caddy or a tunnel set up before would keep Conductor open on its old name too
+                if self.domain_funnel() {
+                    for (part, name) in [("caddy", "Caddy"), ("tunnel", "the Cloudflare Tunnel")] {
+                        if stack::has_part(&dir, part) && self.ui.yes(&format!("Take {name} out (Funnel does it now)?"), true) {
+                            stack::remove_part(&dir, part)?;
+                            self.ui.say(&format!("  ✓ {name} is out (its container goes at the next docker compose up)"));
+                        }
+                    }
+                }
                 false
             }
             _ => {
@@ -1502,11 +1510,12 @@ impl Wizard<'_> {
         Ok(true)
     }
 
-    fn domain_funnel(&mut self) {
+    /// True when Funnel is set up (Tailscale is here and signed in).
+    fn domain_funnel(&mut self) -> bool {
         let run = |args: &[&str]| std::process::Command::new("tailscale").args(args).output().ok().filter(|o| o.status.success());
         if run(&["version"]).is_none() {
             self.ui.say("  ✗ Tailscale isn't on this computer: install it (tailscale.com/download), sign in (tailscale up), then run conductor setup domain");
-            return;
+            return false;
         }
         let name = run(&["status", "--json"])
             .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
@@ -1514,7 +1523,7 @@ impl Wizard<'_> {
             .filter(|s| !s.is_empty());
         let Some(name) = name else {
             self.ui.say("  ✗ Tailscale isn't signed in, so this computer has no name yet: tailscale up, then conductor setup domain");
-            return;
+            return false;
         };
         let (app, jam) = self.upstreams();
         self.ui.say(&format!("  Funnel puts the Jam listener (it serves nothing but Jam and share pages) on the internet at https://{name};"));
@@ -1535,6 +1544,7 @@ impl Wizard<'_> {
         }
         self.d.set("jam_public_url", format!("https://{name}"));
         self.ui.say(&format!("  ✓ Jam guests and share links: https://{name}"));
+        true
     }
 
     // ── 8. import ──
