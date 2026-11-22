@@ -1,8 +1,8 @@
 //! ListenBrainz: your plays are sent there (as Navidrome did; it's what its recommendations are made from), and its
 //! playlists made for you become discovery playlists (what Explo did): "Weekly Exploration", "Weekly Jams",
 //! "Daily Jams". Songs you have go straight in; songs you don't are downloaded into Discovery/ and join the playlist
-//! as they arrive. When the next list comes, last time's songs you didn't keep (heart, rate 4+, or add to another
-//! playlist) are deleted; kept ones move to Songs/.
+//! as they arrive. When the next list comes, last time's songs nobody kept (heart, rate 4+, or add to another
+//! playlist) are deleted, unless another discovery playlist still has them; kept ones move to Songs/.
 
 use std::{sync::Arc, time::Duration};
 
@@ -197,8 +197,6 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
     if last == source {
         return Ok(());
     }
-    // last time's songs you didn't keep go; kept ones move into Songs
-    clean_up(st, &owner).await?;
     let mut have = vec![];
     let mut wanted = vec![];
     sqlx::query("DELETE FROM request_want WHERE playlist_id = ?").bind(&pid).execute(&st.db).await?;
@@ -233,10 +231,12 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
     }
     sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&mut *tx).await?;
     tx.commit().await?;
+    // last time's songs you didn't keep go (unless another discovery playlist still has them); kept ones move into Songs
+    clean_up(st).await?;
     let mut asked = 0;
     for key in &wanted {
         // filed into Discovery/ from the start (set afterwards, a quick download could land in Songs/ and stay)
-        if catalog::ask_into(st, key, &owner, false, Some(&pid), false, Some(FOLDER)).await? {
+        if catalog::ask_synced(st, key, &owner, false, Some(&pid), Some(FOLDER)).await? {
             asked += 1;
         }
     }
@@ -245,9 +245,9 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
     Ok(())
 }
 
-/// Discovery songs that arrived: kept ones (hearted, 4+, in a playlist that isn't a discovery one) move into Songs;
-/// the rest are deleted (only ever inside Discovery/).
-async fn clean_up(st: &AppState, owner: &str) -> Result<()> {
+/// Discovery songs that arrived: kept ones (hearted or rated 4+ by anyone, in a playlist that isn't a discovery one)
+/// move into Songs; the rest are deleted (only ever inside Discovery/), once no discovery playlist has them.
+async fn clean_up(st: &AppState) -> Result<()> {
     let rows: Vec<(String, String, Option<String>)> =
         sqlx::query_as("SELECT key, local_id, rel FROM request WHERE folder = ? AND local_id IS NOT NULL")
             .bind(FOLDER)
@@ -256,12 +256,17 @@ async fn clean_up(st: &AppState, owner: &str) -> Result<()> {
     let mut changed = false;
     for (key, local, rel) in rows {
         let liked: i64 = sqlx::query_scalar(
-            "SELECT (SELECT COUNT(*) FROM annotation WHERE user_id = ? AND item_kind = 'track' AND item_id = ? AND (starred_at IS NOT NULL OR rating >= 4))
+            "SELECT (SELECT COUNT(*) FROM annotation WHERE item_kind = 'track' AND item_id = ? AND (starred_at IS NOT NULL OR rating >= 4))
                   + (SELECT COUNT(*) FROM playlist_entry WHERE track_id = ? AND playlist_id NOT IN (SELECT playlist_id FROM discovery)
                        AND playlist_id NOT IN (SELECT value FROM setting WHERE key LIKE 'trial_playlist:%'))",
         )
-        .bind(owner)
         .bind(&local)
+        .bind(&local)
+        .fetch_one(&st.db)
+        .await?;
+        let listed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM playlist_entry WHERE track_id = ? AND playlist_id IN (SELECT playlist_id FROM discovery)",
+        )
         .bind(&local)
         .fetch_one(&st.db)
         .await?;
@@ -273,6 +278,8 @@ async fn clean_up(st: &AppState, owner: &str) -> Result<()> {
                 .bind(&key)
                 .execute(&st.db)
                 .await?;
+        } else if listed > 0 {
+            continue; // still in this or another discovery playlist
         } else {
             trial::delete_inside(st, rel.as_deref(), FOLDER).await;
             sqlx::query("DELETE FROM request WHERE key = ?").bind(&key).execute(&st.db).await?;

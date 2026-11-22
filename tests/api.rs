@@ -964,6 +964,72 @@ async fn songs_on_trial_kept() {
 }
 
 #[tokio::test]
+async fn a_trial_song_someone_else_hearted_is_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    s.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
+    let mut local = String::new();
+    wait_for(
+        async || {
+            let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().unwrap_or("").to_string();
+            !local.is_empty()
+        },
+        "the trial song",
+    )
+    .await;
+    // Ann hearts it, not the one who played it
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/star.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&id={local}", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok", "{r}");
+    wait_for(async || s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac").is_file(), "the song to be kept").await;
+}
+
+#[tokio::test]
+async fn a_sync_doesnt_refile_or_search_again_soon() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let me = s.st_user().await;
+    // asked for by someone (filed in Songs), and a song Soulseek didn't have two hours ago
+    for (key, status) in [("dz-t-5", "retry"), ("dz-t-6", "notfound")] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, status, last_search, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', ?, ?, 1)")
+            .bind(key)
+            .bind(status)
+            .bind(conductor::db::now() - 7200)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO request_want (key, user_id, star) VALUES ('dz-t-5', 'someone', 1)").execute(&s.st.db).await.unwrap();
+    let row = async |key: &str| -> (String, String) {
+        sqlx::query_as("SELECT folder, status FROM request WHERE key = ?").bind(key).fetch_one(&s.st.db).await.unwrap()
+    };
+    // a discovery playlist wants them too: they stay where they're filed, and nothing is searched again yet
+    for key in ["dz-t-5", "dz-t-6"] {
+        assert!(conductor::catalog::ask_synced(&s.st, key, &me, false, Some("pl-x"), Some("Discovery")).await.unwrap());
+    }
+    assert_eq!(row("dz-t-5").await, ("Songs".into(), "retry".into()));
+    assert_eq!(row("dz-t-6").await, ("Songs".into(), "notfound".into()));
+    assert!(conductor::catalog::ask_synced(&s.st, "dz-t-6", &me, true, None, None).await.unwrap());
+    assert_eq!(row("dz-t-6").await.1, "notfound", "a Spotify sync doesn't either");
+    // someone asking for it now: looked for again
+    assert!(conductor::catalog::ask(&s.st, "dz-t-6", &me, true, None, false).await.unwrap());
+    assert_eq!(row("dz-t-6").await.1, "retry");
+}
+
+#[tokio::test]
 async fn a_kept_trial_song_never_replaces_or_loses_a_file() {
     if !have_ffmpeg() {
         return;
@@ -1370,23 +1436,30 @@ async fn listenbrainz_discovery_and_plays() {
         return;
     }
     let week = Arc::new(std::sync::atomic::AtomicU8::new(1));
+    let jams = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let listens = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let lb = format!("http://{}", l.local_addr().unwrap());
-    let (w2, l2) = (week.clone(), listens.clone());
+    let (w2, j2, l2) = (week.clone(), jams.clone(), listens.clone());
     let app = axum::Router::new().fallback(move |req: Request| {
-        let (week, listens) = (w2.clone(), l2.clone());
+        let (week, jams, listens) = (w2.clone(), j2.clone(), l2.clone());
         async move {
             let w = week.load(std::sync::atomic::Ordering::SeqCst);
+            let j = jams.load(std::sync::atomic::Ordering::SeqCst);
             let path = req.uri().path().to_string();
             let body = match path.as_str() {
-                "/1/user/lbuser/playlists/createdfor" => json!({ "playlists": [
-                    { "playlist": { "title": format!("Weekly Exploration for lbuser, week {w}"), "identifier": format!("https://listenbrainz.org/playlist/pl-{w}"), "date": format!("2026-11-{:02}T00:00:00", 10 + w) } },
-                    { "playlist": { "title": "Weekly Jams for lbuser", "identifier": "https://listenbrainz.org/playlist/jams", "date": "2026-11-01T00:00:00" } }] }),
+                "/1/user/lbuser/playlists/createdfor" => {
+                    let mut lists = vec![json!({ "playlist": { "title": format!("Weekly Exploration for lbuser, week {w}"), "identifier": format!("https://listenbrainz.org/playlist/pl-{w}"), "date": format!("2026-11-{:02}T00:00:00", 10 + w) } })];
+                    if j > 0 {
+                        lists.push(json!({ "playlist": { "title": "Weekly Jams for lbuser", "identifier": format!("https://listenbrainz.org/playlist/jams-{j}"), "date": "2026-11-01T00:00:00" } }));
+                    }
+                    json!({ "playlists": lists })
+                }
                 "/1/playlist/pl-1" => json!({ "playlist": { "track": [
                     { "title": "One", "creator": "Alpha", "album": "First Album" },
                     { "title": "Psycho Killer", "creator": "Talking Heads", "album": "Talking Heads: 77", "duration": 3000 }] } }),
                 "/1/playlist/pl-2" => json!({ "playlist": { "track": [{ "title": "Two", "creator": "Alpha" }] } }),
+                "/1/playlist/jams-1" => json!({ "playlist": { "track": [{ "title": "Two", "creator": "Alpha" }] } }),
                 "/1/submit-listens" => {
                     assert_eq!(req.headers()["authorization"], "Token lbtok");
                     let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
@@ -1403,7 +1476,7 @@ async fn listenbrainz_discovery_and_plays() {
         c.listenbrainz_url = lb.clone();
         c.listenbrainz_user = Some("lbuser".into());
         c.listenbrainz_token = Some("lbtok".into());
-        c.discovery = vec!["weekly-exploration".into()];
+        c.discovery = vec!["weekly-exploration".into(), "weekly-jams".into()];
     })
     .await;
     tokio::spawn(conductor::listenbrainz::worker(s.st.clone()));
@@ -1460,7 +1533,24 @@ async fn listenbrainz_discovery_and_plays() {
     )
     .await;
 
-    // week 2: a new list; last week's song you didn't keep is deleted
+    // another discovery playlist's new list doesn't delete what this one still has
+    jams.store(1, std::sync::atomic::Ordering::SeqCst);
+    wait_for(
+        async || {
+            let r = s.ok("getPlaylists", &[]).await;
+            let Some(p) = r["playlists"]["playlist"].as_array().unwrap().iter().find(|p| p["name"] == "Weekly Jams").cloned() else {
+                return false;
+            };
+            let e = s.ok("getPlaylist", &[("id", p["id"].as_str().unwrap())]).await["playlist"]["entry"].clone();
+            e.as_array().is_some_and(|e| e.len() == 1 && e[0]["title"] == "Two")
+        },
+        "Weekly Jams",
+    )
+    .await;
+    assert!(file.is_file(), "Weekly Exploration still has it");
+    assert_eq!(s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].as_array().map(|e| e.len()), Some(2));
+
+    // week 2: a new list; last week's song nobody kept is deleted
     week.store(2, std::sync::atomic::Ordering::SeqCst);
     wait_for(async || !file.exists(), "last week's song to go").await;
     wait_for(

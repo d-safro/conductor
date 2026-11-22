@@ -299,7 +299,7 @@ pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
                         continue;
                     }
                     if let Some(key) = deezer_key(st, s).await
-                        && catalog::ask(st, &key, &owner, name == LIKED, Some(&pid), false).await?
+                        && catalog::ask_synced(st, &key, &owner, name == LIKED, Some(&pid), None).await?
                     {
                         asked_n += 1;
                     }
