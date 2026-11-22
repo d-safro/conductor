@@ -7,8 +7,9 @@
 //!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
 //!   maestro [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
-//!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, podcasts from
-//!                                                         STATE/podcasts.json; run it after import-navidrome)
+//!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, mixes, shares,
+//!                                                         concerts; podcasts and songs asked for from STATE's
+//!                                                         podcasts.json and requests.json; after import-navidrome)
 
 use std::{
     io::{BufRead, Write},

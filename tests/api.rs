@@ -2014,6 +2014,70 @@ async fn albums_grouped_like_navidrome() {
 }
 
 #[tokio::test]
+async fn music_lookup_requests_come_over() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let s = Server::start().await;
+    let song = async |q: &str| s.ok("search3", &[("query", q)]).await["searchResult3"]["song"][0].clone();
+    let (one, three) = (song("One").await, song("Three").await);
+    // Navidrome had music-lookup's "On trial" and a playlist of yours (ids kept by import-navidrome)
+    let on_trial = s.ok("createPlaylist", &[("name", "On trial"), ("songId", three["id"].as_str().unwrap())]).await["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mine = s.ok("createPlaylist", &[("name", "Mine")]).await["playlist"]["id"].as_str().unwrap().to_string();
+    let state = tempfile::tempdir().unwrap();
+    let t = |name: &str, artist: &str| json!({ "name": name, "artists": [artist], "album": "First Album", "ms": 3000, "isrc": "X" });
+    let req = json!({
+        "tracks": { "dz-t-1": t("One", "Alpha"), "dz-t-2": t("Three", "The Beta Band"), "dz-t-3": t("Four", "Alpha"),
+                    "dz-t-4": t("Five", "Alpha"), "1x2y3z": t("Spotify key", "Alpha") },
+        "state": {
+            "dz-t-1": { "status": "done", "user": "u1", "file": "Music\\Alpha\\First Album\\01 One.flac", "same_album": true,
+                        "rel": "Alpha/First Album/01 One.flac", "searches": 1, "last": 5, "since": 5 },
+            "dz-t-2": { "status": "done", "folder": "Trial", "rel": "The Beta Band/Second/01 Three.mp3", "same_album": false },
+            "dz-t-3": { "status": "queued", "user": "u2", "file": "Alpha\\Four.flac", "since": 7, "tried": ["u0"], "found": true },
+            "dz-t-4": { "status": "notfound", "searches": 8, "last": 9 } },
+        "want": {
+            "dz-t-1": { "star": true, "playlists": [], "asked": 100, "applied": 101 },
+            "dz-t-2": { "star": false, "playlists": [], "asked": 200, "trial": true, "trial_at": 200, "arrived": 300, "listed": true },
+            "dz-t-3": { "star": false, "playlists": [mine], "asked": 400 },
+            "dz-t-4": { "star": false, "playlists": [], "asked": 500, "trial": true, "trial_at": 500, "mix": "radar", "trial_hours": 168 } },
+        "local": { "dz-t-1": one["id"], "dz-t-2": "an-id-navidrome-had" },
+        "meta": { "trial_playlist": on_trial } });
+    std::fs::write(state.path().join("requests.json"), req.to_string()).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let rep = maestro::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
+    assert_eq!((rep.requests, rep.requests_waiting, rep.requests_on_trial), (4, 1, 2), "{rep:?}");
+    type R = (String, String, Option<String>, bool, Option<i64>, Option<String>, Option<bool>, String);
+    let rows: Vec<R> = sqlx::query_as(
+        "SELECT key, status, local_id, trial, arrived_at, slsk_user, same_album, folder FROM request ORDER BY key",
+    )
+    .fetch_all(&s.st.db)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 4, "only Deezer keys");
+    assert_eq!(rows[0].2.as_deref(), one["id"].as_str());
+    assert_eq!(rows[0].6, Some(true));
+    // found by the file it was filed as (the id music-lookup had is gone); on trial since it arrived
+    assert_eq!(rows[1].2.as_deref(), three["id"].as_str());
+    assert_eq!((rows[1].3, rows[1].4, rows[1].7.as_str()), (true, Some(300), "Trial"));
+    assert_eq!((rows[2].1.as_str(), rows[2].5.as_deref()), ("queued", Some("u2")), "the download goes on");
+    assert_eq!(rows[3].1, "notfound");
+    // the same "On trial" playlist goes on; the wish to add Four to Mine waits for it
+    let uid: String = sqlx::query_scalar("SELECT id FROM user WHERE name = ?").bind(USER).fetch_one(&s.st.db).await.unwrap();
+    let pid = maestro::catalog::trial::playlist_id(&s.st, &uid, false).await.unwrap();
+    assert_eq!(pid.as_deref(), Some(on_trial.as_str()));
+    let wants: Vec<(String, String, bool, bool)> =
+        sqlx::query_as("SELECT key, playlist_id, star, done FROM request_want ORDER BY key").fetch_all(&s.st.db).await.unwrap();
+    assert_eq!(wants, [("dz-t-1".into(), "".into(), true, true), ("dz-t-3".into(), mine.clone(), false, false)]);
+    // a second run leaves what's there alone
+    let again = maestro::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
+    assert_eq!((again.requests, again.requests_already_there), (0, 4));
+}
+
+#[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {
         return;

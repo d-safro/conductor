@@ -37,6 +37,11 @@ pub struct LookupReport {
     pub mix_playlists: usize,
     pub playlist_shares: usize,
     pub concerts: usize,
+    /// requests.json: songs asked for (⬇), with how getting each is going
+    pub requests: usize,
+    pub requests_waiting: usize,
+    pub requests_on_trial: usize,
+    pub requests_already_there: usize,
 }
 
 /// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data), and its
@@ -140,7 +145,148 @@ pub async fn music_lookup(ours: &Db, data: &Path, state: Option<&Path>) -> Resul
     }
     tx.commit().await?;
     extras(ours, data, &users, &mut rep).await?;
+    if let Some(text) = state.and_then(|s| std::fs::read_to_string(s.join("requests.json")).ok()) {
+        let d: serde_json::Value = serde_json::from_str(&text).context("requests.json")?;
+        requests(ours, &d, &mut rep).await?;
+    }
     Ok(rep)
+}
+
+/// music-lookup's requests.json: the songs asked for that it was getting or had got (Deezer "dz-t-…" keys, as
+/// Maestro's), so downloads in progress go on, songs on trial keep their clock and "On trial" playlist, and a ⬇
+/// song asked for again isn't fetched twice. music-lookup kept them for one user: the owner of its "On trial"
+/// playlist, else the first admin. Requests Maestro already has are left as they are.
+async fn requests(ours: &Db, d: &serde_json::Value, rep: &mut LookupReport) -> Result<()> {
+    let owner_of = async |pid: &str| -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT owner_id FROM playlist WHERE id = ?").bind(pid).fetch_optional(ours).await?)
+    };
+    let trial_pl = d["meta"]["trial_playlist"].as_str().unwrap_or("");
+    let user: Option<String> = match owner_of(trial_pl).await? {
+        Some(u) => Some(u),
+        None => sqlx::query_scalar("SELECT id FROM user WHERE is_admin = 1 ORDER BY rowid LIMIT 1").fetch_optional(ours).await?,
+    };
+    let Some(user) = user else { return Ok(()) };
+    let mut tx = ours.begin().await?;
+    if !trial_pl.is_empty() && owner_of(trial_pl).await?.is_some() {
+        // the same "On trial" playlist goes on (it came over from Navidrome), not a second one
+        sqlx::query("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)")
+            .bind(format!("trial_playlist:{user}"))
+            .bind(trial_pl)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let s = |v: &serde_json::Value, k: &str| v[k].as_str().map(String::from);
+    let n = |v: &serde_json::Value, k: &str| v[k].as_f64().map(|x| x as i64);
+    for (key, t) in d["tracks"].as_object().into_iter().flatten() {
+        if !key.starts_with("dz-t-") {
+            continue;
+        }
+        let e = &d["state"][key];
+        let w = &d["want"][key];
+        let rel = s(e, "rel");
+        // the library song: the file music-lookup filed, else the id it knew (kept by import-navidrome)
+        let mut local: Option<String> = None;
+        if let Some(r) = &rel {
+            local = sqlx::query_scalar("SELECT id FROM track WHERE rel_path = ? AND missing_since IS NULL")
+                .bind(r.replace('\\', "/"))
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        if local.is_none()
+            && let Some(id) = d["local"][key].as_str()
+        {
+            local = sqlx::query_scalar("SELECT id FROM track WHERE id = ? AND missing_since IS NULL")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        let status = match e["status"].as_str() {
+            Some("queued") => "queued",
+            Some("done") | Some("upgrading") => "done", // an upgrade under way is dropped: the copy you have stays
+            Some("notfound") => "notfound",
+            _ => "retry",
+        };
+        let rel = rel.map(|r| r.replace('\\', "/"));
+        let folder = s(e, "folder")
+            .or_else(|| rel.as_deref().and_then(|r| r.split('/').next()).map(String::from))
+            .unwrap_or_else(|| "Songs".into());
+        let trial = w["trial"].as_bool().unwrap_or(false);
+        let artists: Vec<String> =
+            t["artists"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(String::from)).collect();
+        let done = sqlx::query(
+            "INSERT INTO request (key, title, artists_json, album, duration_ms, isrc, folder, status, slsk_user, slsk_file,
+                searches, last_search, tried_json, found, since, rel, local_id, trial, trial_at, arrived_at, asked_at,
+                trial_user, keep, kept_at, listed, mix, trial_hours, same_album, upgrade_tried)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(s(t, "name").unwrap_or_default())
+        .bind(serde_json::to_string(&artists)?)
+        .bind(s(t, "album").unwrap_or_default())
+        .bind(n(t, "ms").unwrap_or(0))
+        .bind(s(t, "isrc"))
+        .bind(&folder)
+        .bind(status)
+        .bind(s(e, "user"))
+        .bind(s(e, "file"))
+        .bind(n(e, "searches").unwrap_or(0))
+        .bind(n(e, "last").unwrap_or(0))
+        .bind(e["tried"].as_array().map(|a| serde_json::Value::from(a.clone()).to_string()).unwrap_or("[]".into()))
+        .bind(e["found"].as_bool().unwrap_or(false))
+        .bind(n(e, "since").unwrap_or(0))
+        .bind(&rel)
+        .bind(&local)
+        .bind(trial)
+        .bind(n(w, "trial_at"))
+        .bind(n(w, "arrived"))
+        .bind(n(w, "asked").unwrap_or_else(crate::db::now))
+        .bind((trial || w["trial_at"].is_number()).then_some(&user))
+        .bind(w["keep"].as_bool().unwrap_or(false))
+        .bind(n(w, "kept"))
+        .bind(w["listed"].as_bool().unwrap_or(false))
+        .bind(s(w, "mix"))
+        .bind(w["trial_hours"].as_f64())
+        .bind(e["same_album"].as_bool())
+        .bind(e["upgrade_tried"].as_bool().unwrap_or(false))
+        .execute(&mut *tx)
+        .await?;
+        if done.rows_affected() == 0 {
+            rep.requests_already_there += 1;
+            continue;
+        }
+        rep.requests += 1;
+        if local.is_none() && status != "notfound" {
+            rep.requests_waiting += 1;
+        }
+        if trial {
+            rep.requests_on_trial += 1;
+        }
+        // what to do once it's there: heart it, add it to playlists (each playlist for its owner)
+        let applied = w["applied"].is_number() && local.is_some();
+        let mut wants: Vec<(String, String)> = vec![];
+        if w["star"].as_bool().unwrap_or(false) {
+            wants.push((user.clone(), String::new()));
+        }
+        for pid in w["playlists"].as_array().into_iter().flatten().filter_map(|p| p.as_str()) {
+            if let Some(o) = owner_of(pid).await? {
+                wants.push((o, pid.to_string()));
+            }
+        }
+        for (uid, pid) in wants {
+            sqlx::query("INSERT OR IGNORE INTO request_want (key, user_id, star, playlist_id, done) VALUES (?, ?, ?, ?, ?)")
+                .bind(key)
+                .bind(&uid)
+                .bind(pid.is_empty())
+                .bind(&pid)
+                .bind(applied)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    info!(requests = rep.requests, waiting = rep.requests_waiting, on_trial = rep.requests_on_trial, "music-lookup's requests");
+    Ok(())
 }
 
 /// music-lookup's mixes (so its Discover Weekly, Daily Mix … playlists, brought over from Navidrome, go on being
