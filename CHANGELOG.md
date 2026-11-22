@@ -4,6 +4,14 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 0.5.1 (2026-11-22)
+
+### Fixed
+- **Security:** the SQLite built into Conductor had a vulnerability (CVE-2026-119375, RUSTSEC-2026-0459). It's the
+  fixed one now (sqlx 0.9, libsqlite3-sys 0.40). Every place that builds SQL as it runs was checked again.
+- The API's shapes are recorded and checked (docs/api/), with a spec for each of Conductor's own extensions; the list
+  of extensions no longer names calls that don't exist.
+
 ## 0.5.0 (2026-11-22)
 
 ### New
