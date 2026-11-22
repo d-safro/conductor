@@ -3665,3 +3665,93 @@ async fn users_stay_apart() {
     assert_eq!(ok(call("ann", "getSong", vec![("id", a.clone())]).await)["song"]["userRating"], 5);
     assert_eq!(ok(call("ann", "getPlayQueue", vec![]).await)["playQueue"]["current"], b.as_str());
 }
+
+#[tokio::test]
+async fn helpers_see_every_music_folder() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // two music folders with the same path inside each: only the "lib<n>/" prefix tells them apart
+    let dir = tempfile::tempdir().unwrap();
+    let (m0, m1) = (dir.path().join("m0"), dir.path().join("m1"));
+    tone(&m0.join("A/B/01 Same.flac"), "First Copy", "A", "B", 1, 2);
+    tone(&m1.join("A/B/01 Same.flac"), "Second Copy", "A", "B", 2, 2);
+    let (sid, _) = stand_in(|path, _, _| match path {
+        "/identify" => Some(serde_json::json!({ "path": "lib1/A/B/01 Same.flac", "offset": 1.0, "score": 30 })),
+        _ => None,
+    })
+    .await;
+    let mix = dir.path().join("mix");
+    std::fs::create_dir_all(&mix).unwrap();
+    std::fs::write(mix.join("info.jsonl"), "{\"path\": \"lib0/A/B/01 Same.flac\", \"dur\": 2.0, \"bpm\": 99.0}\n").unwrap();
+    let mut cfg = Config {
+        data_dir: dir.path().join("data"),
+        libraries: vec![
+            LibraryConfig { name: "One".into(), path: m0, sentinel: None, scan_threads: None },
+            LibraryConfig { name: "Two".into(), path: m1, sentinel: None, scan_threads: None },
+        ],
+        songid_url: Some(sid),
+        mixinfo_dir: Some(mix.clone()),
+        catalog: false,
+        ..Config::default()
+    };
+    Server::no_network(&mut cfg);
+    std::fs::create_dir_all(&cfg.data_dir).unwrap();
+    let pool = db::open(&cfg.data_dir.join("conductor.db")).await.unwrap();
+    let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
+    auth::create_user(&pool, &secrets, USER, PASS, true).await.unwrap();
+    let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();
+    let st = Arc::new(AppState::new(pool, secrets, cfg, libs));
+    assert_eq!(library::scan(&st.db, &st.libs, &st.scan, false).await.unwrap().added, 2);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = api::router(st.clone());
+    tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+    let s = Server { base, http: reqwest::Client::new(), st, _dir: dir, music: std::path::PathBuf::new() };
+
+    let songs = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    let id = |t: &str| songs.iter().find(|x| x["title"] == t).unwrap()["id"].as_str().unwrap().to_string();
+    // Pitch's "lib1/…" is the second folder's song, not the first's (same path inside)
+    let v: Value = s.http.post(s.url("identifySong", &[])).body("audio").send().await.unwrap().json().await.unwrap();
+    assert_eq!(v["subsonic-response"]["songIdentification"]["song"]["title"], "Second Copy", "{v}");
+    // Metronome's "lib0/…" is the first folder's; the second's isn't measured yet, so it's asked for with its prefix
+    let r = s.ok("getMixInfo", &[("id", &id("First Copy")), ("id", &id("Second Copy"))]).await;
+    let got = r["mixInfo"]["song"].as_array().unwrap();
+    assert_eq!((got.len(), got[0]["id"].as_str()), (1, Some(id("First Copy").as_str())), "{r}");
+    assert_eq!(std::fs::read_to_string(mix.join("wanted.txt")).unwrap().trim(), "lib1/A/B/01 Same.flac");
+}
+
+#[tokio::test]
+async fn waiting_imports_are_capped() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let body = r#"[{"ts":"2024-03-01T10:00:00Z","ms_played":180000,"master_metadata_track_name":"One","master_metadata_album_artist_name":"Alpha","spotify_track_uri":"spotify:track:1111111111111111111111"}]"#;
+    let upload = || async {
+        let r: Value = s
+            .http
+            .post(s.url("importUpload", &[("name", "Streaming_History_Audio_2024.json")]))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        r["subsonic-response"].clone()
+    };
+    let mut ids = vec![];
+    for _ in 0..conductor::import::jobs::MAX_WAITING {
+        let r = upload().await;
+        assert_eq!(r["status"], "ok", "{r}");
+        ids.push(r["import"]["id"].as_str().unwrap().to_string());
+    }
+    // a sixth waits for room: refused before anything is taken
+    let r = upload().await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("waiting already"), "{r}");
+    // discarding one makes room again
+    s.ok("deleteImport", &[("id", &ids[0])]).await;
+    assert_eq!(upload().await["status"], "ok");
+}

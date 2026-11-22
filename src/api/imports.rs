@@ -31,6 +31,7 @@ fn failed(e: anyhow::Error) -> ApiError {
 }
 
 pub async fn upload(st: &crate::api::Shared, user: &User, name: &str, body: axum::body::Body) -> Result<Reply, ApiError> {
+    jobs::room_for_another(st, &user.id).await.map_err(failed)?; // before taking the upload
     let file = jobs::save_upload_stream(st, name, body).await.map_err(failed)?;
     let id = jobs::create(st, &user.id, json!({ "file": file, "name": name })).await.map_err(failed)?;
     let b = jobs::get(st, &id).await?.ok_or_else(|| ApiError::not_found("Import"))?;
@@ -43,6 +44,7 @@ pub async fn online(c: &Ctx) -> Result<Reply, ApiError> {
         return Err(ApiError::new(10, "source is spotify, lastfm or deezer"));
     }
     let input = json!({ "online": source, "user": c.p.get("account").unwrap_or("") });
+    jobs::room_for_another(&c.st, &c.user.id).await.map_err(failed)?;
     let id = jobs::create(&c.st, &c.user.id, input).await.map_err(failed)?;
     let b = jobs::get(&c.st, &id).await?.ok_or_else(|| ApiError::not_found("Import"))?;
     ok(json!({ "import": jobs::batch_json(&b) }))

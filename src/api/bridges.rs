@@ -21,6 +21,27 @@ use super::{ApiError, Ctx, Reply, items, ok};
 
 // ───────────── song ID ─────────────
 
+/// A song's path as Pitch and Metronome see it. With one music folder it's mounted as their /music, so the path in
+/// the folder; with several, each is mounted at /music/lib<n> (n: its place in the settings), so "lib<n>/" first.
+pub fn helper_path(st: &super::AppState, library_id: i64, rel: &str) -> String {
+    match st.libs.iter().position(|(id, _)| *id == library_id) {
+        Some(n) if st.libs.len() > 1 => format!("lib{n}/{rel}"),
+        _ => rel.to_string(),
+    }
+}
+
+/// Back from a helper's path: the library (when it says) and the path in it.
+pub fn from_helper_path(st: &super::AppState, p: &str) -> (Option<i64>, String) {
+    if st.libs.len() > 1
+        && let Some((first, rest)) = p.split_once('/')
+        && let Some(n) = first.strip_prefix("lib").and_then(|n| n.parse::<usize>().ok())
+        && let Some((id, _)) = st.libs.get(n)
+    {
+        return (Some(*id), rest.to_string());
+    }
+    (None, p.to_string())
+}
+
 pub async fn identify_song(c: &Ctx) -> Result<Reply, ApiError> {
     let reply = |v: Value| ok(json!({ "songIdentification": v }));
     let Some(base) = c.st.cfg.songid_url.as_deref().filter(|u| !u.is_empty()).map(|u| u.trim_end_matches('/').to_string()) else {
@@ -46,8 +67,12 @@ pub async fn identify_song(c: &Ctx) -> Result<Reply, ApiError> {
         let e = v["error"].as_str().map(String::from).unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
         return reply(json!({ "found": false, "error": e }));
     }
-    let rel = v["path"].as_str().unwrap_or("");
-    let found = if rel.is_empty() { vec![] } else { items::tracks_where(c, "t.rel_path = ?", &[rel], "LIMIT 1").await? };
+    let (lib, rel) = from_helper_path(&c.st, v["path"].as_str().unwrap_or(""));
+    let found = match lib {
+        _ if rel.is_empty() => vec![],
+        Some(id) => items::tracks_where(c, "t.rel_path = ? AND t.library_id = ?", &[&rel, &id.to_string()], "LIMIT 1").await?,
+        None => items::tracks_where(c, "t.rel_path = ?", &[&rel], "LIMIT 1").await?,
+    };
     let Some(t) = found.first() else {
         let st: Value = match http.get(format!("{base}/status")).timeout(std::time::Duration::from_secs(5)).send().await {
             Ok(r) => r.json().await.unwrap_or_default(),
@@ -130,24 +155,25 @@ fn want(dir: &Path, paths: &[String]) {
 pub async fn mix_info(c: &Ctx) -> Result<Reply, ApiError> {
     let Some(dir) = c.st.cfg.mixinfo_dir.clone() else { return ok(json!({ "mixInfo": { "song": [] } })) };
     let ids: Vec<&str> = c.p.all("id").into_iter().take(200).collect();
-    let mut paths: Vec<(String, String)> = vec![];
+    let mut paths: Vec<(String, String, String)> = vec![];
     for chunk in ids.chunks(200) {
-        let sql = format!("SELECT id, rel_path FROM track WHERE id IN ({})", vec!["?"; chunk.len()].join(","));
-        let mut q = sqlx::query_as::<_, (String, String)>(&sql);
+        let sql = format!("SELECT id, library_id, rel_path FROM track WHERE id IN ({})", vec!["?"; chunk.len()].join(","));
+        let mut q = sqlx::query_as::<_, (String, i64, String)>(&sql);
         for id in chunk {
             q = q.bind(*id);
         }
-        paths.extend(q.fetch_all(&c.st.db).await?);
+        paths.extend(q.fetch_all(&c.st.db).await?.into_iter().map(|(id, lib, rel)| (id, helper_path(&c.st, lib, &rel), rel)));
     }
-    let by_id: HashMap<String, String> = paths.into_iter().collect();
+    // the helper's path, and the plain one (an analyzer set up before it saw every folder wrote those)
+    let by_id: HashMap<String, (String, String)> = paths.into_iter().map(|(id, h, rel)| (id, (h, rel))).collect();
     let (out, missing) = {
         let mut g = INFO.lock().unwrap_or_else(|e| e.into_inner());
         reload(&mut g, &dir);
         let (mut out, mut missing) = (vec![], vec![]);
         for id in &ids {
-            let Some(rel) = by_id.get(*id) else { continue };
-            match g.by_path.get(rel) {
-                None => missing.push(rel.clone()),
+            let Some((hp, rel)) = by_id.get(*id) else { continue };
+            match g.by_path.get(hp).or_else(|| g.by_path.get(rel)) {
+                None => missing.push(hp.clone()),
                 Some(j) if j.contains_key("error") => {}
                 Some(j) => {
                     let mut o = Map::new();

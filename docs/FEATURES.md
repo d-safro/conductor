@@ -88,7 +88,7 @@ The detailed list. The [README](../README.md) has the short version.
   each service can be set up for you there, be one you already run, or be off, and its address and keys go into
   Conductor's settings by themselves. The downloader (`downloads.yml`); Lidarr (its key shared with Conductor, your
   music as its root folder); AudioMuse-AI (its database, web app and worker; it reads the library with its own,
-  non-admin Conductor account); Pitch and Metronome (built on your computer from `helpers/`); and only with AI on,
+  non-admin Conductor account); Pitch and Metronome (built on your computer from `helpers/`, seeing every music folder); and only with AI on,
   Ollama (or the one already running) and Interlude's voice. Everything listens on 127.0.0.1, on ports that don't
   clash; keys and logins are in files only you can read. `--docker lidarr,audiomuse,pitch,metronome,ai` does the
   same for `--yes` runs.
@@ -124,6 +124,8 @@ The detailed list. The [README](../README.md) has the short version.
   become playlists here ("Synced from Spotify"), in Spotify's order, Liked Songs hearted; songs you don't have are
   matched on Deezer (ISRC first) and asked for. The login and choices come from spotify.py's folder via
   `import-music-lookup`.
+- **Imports waiting**: at most 5 per user (being read, or read and not started), each up to 2 GB; start or discard
+  one to make room. Uploads not started are removed after a day.
 - **Transpose**, imports from other services (`conductor import`, Podium's Transpose tab, `encore.import`): your liked songs
   (→ hearts), saved albums (→ starred), followed artists (→ follows), playlists (in order), listening history (→ plays
   with their times; under 30 s → skips), ratings, play counts and podcasts, from:

@@ -155,6 +155,22 @@ async fn drop_upload(st: &AppState, input: &Value) {
 }
 
 /// A new import for `user`: read and matched in the background; its preview is in the batch's report.
+/// Imports a user can have waiting (being read, or read and not started yet): each can hold an upload of up to 2 GB
+/// until it's started or discarded.
+pub const MAX_WAITING: i64 = 5;
+
+/// Refused when the user already has `MAX_WAITING` imports waiting.
+pub async fn room_for_another(st: &AppState, user: &str) -> Result<()> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batch WHERE user_id = ? AND status IN ('reading', 'preview')")
+        .bind(user)
+        .fetch_one(&st.db)
+        .await?;
+    if n >= MAX_WAITING {
+        bail!("{n} imports are waiting already: start or discard some first");
+    }
+    Ok(())
+}
+
 pub async fn create(st: &Arc<AppState>, user: &str, input: Value) -> Result<String> {
     tidy_uploads(st).await;
     let id = db::random_id()[..16].to_string();

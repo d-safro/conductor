@@ -762,6 +762,10 @@ impl Wizard<'_> {
         p
     }
 
+    fn all_music(&self) -> Vec<String> {
+        self.d.cfg.get("libraries").and_then(|l| l.as_array()).into_iter().flatten().filter_map(|l| l.get("path").and_then(|p| p.as_str()).map(String::from)).collect()
+    }
+
     fn first_music(&self) -> Option<String> {
         self.d.cfg.get("libraries").and_then(|l| l.as_array()).and_then(|l| l.first()).and_then(|l| l.get("path")).and_then(|p| p.as_str()).map(String::from)
     }
@@ -876,9 +880,9 @@ impl Wizard<'_> {
         let c = self.how("Pitch: \"What's playing?\" against your own songs (offline)?", "pitch", self.d.str("songid_url").is_some() || self.f.get("songid-url").is_some());
         match c {
             0 => match music.clone() {
-                Some(m) => {
+                Some(_) => {
                     let port = self.port(4540);
-                    stack::pitch(&dir, port, &m)?;
+                    stack::pitch(&dir, port, &self.all_music())?;
                     self.d.set("songid_url", format!("http://127.0.0.1:{port}"));
                     self.ui.say("  ✓ Pitch: it fingerprints your songs once, slowly, newest first (about 150 MB of memory for 2,000 songs)");
                     made.push("pitch");
@@ -900,9 +904,9 @@ impl Wizard<'_> {
         let c = self.how("Metronome: Automix's analysis (where songs start, end and fade)?", "metronome", self.d.str("mixinfo_dir").is_some() || self.f.get("mixinfo-dir").is_some());
         match c {
             0 => match music.clone() {
-                Some(m) => {
+                Some(_) => {
                     let out = self.data_dir().join("mixinfo").to_string_lossy().to_string();
-                    stack::metronome(&dir, &m, &out)?;
+                    stack::metronome(&dir, &self.all_music(), &out)?;
                     self.d.set("mixinfo_dir", out);
                     self.ui.say("  ✓ Metronome: the songs coming up in your queue first, then slowly the rest");
                     made.push("metronome");

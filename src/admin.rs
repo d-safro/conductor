@@ -441,6 +441,9 @@ async fn import_upload(
 ) -> Response {
     need_admin!(st, h, true);
     let Some(uid) = user_by_name(&st, &q.user).await else { return err(StatusCode::NOT_FOUND, "no such user") };
+    if let Err(e) = crate::import::jobs::room_for_another(&st, &uid).await {
+        return err(StatusCode::TOO_MANY_REQUESTS, &format!("{e:#}"));
+    }
     let file = match crate::import::jobs::save_upload_stream(&st, q.name.as_deref().unwrap_or("export.zip"), body).await {
         Ok(f) => f,
         Err(e) => return err(StatusCode::BAD_REQUEST, &format!("{e:#}")),
@@ -464,6 +467,9 @@ async fn import_online(State(st): State<Shared>, h: HeaderMap, Json(b): Json<Onl
     let Some(uid) = user_by_name(&st, &b.user).await else { return err(StatusCode::NOT_FOUND, "no such user") };
     if !["spotify", "lastfm", "deezer"].contains(&b.source.as_str()) {
         return err(StatusCode::BAD_REQUEST, "source is spotify, lastfm or deezer");
+    }
+    if let Err(e) = crate::import::jobs::room_for_another(&st, &uid).await {
+        return err(StatusCode::TOO_MANY_REQUESTS, &format!("{e:#}"));
     }
     match crate::import::jobs::create(&st, &uid, json!({ "online": b.source, "user": b.account.trim() })).await {
         Ok(id) => Json(json!({ "id": id })).into_response(),

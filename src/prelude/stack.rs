@@ -271,8 +271,18 @@ services:
     write_part(dir, "audiomuse", &yaml, &[])
 }
 
-/// Pitch: the first music folder, read-only; its fingerprints in pitch/data.
-pub fn pitch(dir: &Path, port: u16, music: &str) -> Result<()> {
+/// The music folders as Pitch and Metronome see them (read-only): one is their /music; several are /music/lib<n>,
+/// in the settings' order (Conductor maps paths the same way: api::bridges::helper_path).
+fn music_mounts(music: &[String]) -> String {
+    let ro = opts(true);
+    match music {
+        [one] => format!("      - {}\n", q(&format!("{one}:/music{ro}"))),
+        many => many.iter().enumerate().map(|(n, m)| format!("      - {}\n", q(&format!("{m}:/music/lib{n}{ro}")))).collect(),
+    }
+}
+
+/// Pitch: the music folders, read-only; its fingerprints in pitch/data.
+pub fn pitch(dir: &Path, port: u16, music: &[String]) -> Result<()> {
     let (uid, gid) = ids();
     let yaml = format!(
         "# Pitch, \"What's playing?\": fingerprints your songs once (slowly, newest first) and recognises short
@@ -287,23 +297,22 @@ services:
       MUSIC: /music
       OUT: /out
     volumes:
-      - {music}
-      - ./pitch/data:/out{z}
+{music}      - ./pitch/data:/out{z}
     ports:
       - \"127.0.0.1:{port}:4540\"
     cpus: 1
     mem_limit: 768m
     restart: unless-stopped
 ",
-        music = q(&format!("{music}:/music{}", opts(true))),
+        music = music_mounts(music),
         z = opts(false),
     );
     std::fs::create_dir_all(dir.join("pitch/data"))?;
     write_part(dir, "pitch", &yaml, PITCH_FILES)
 }
 
-/// Metronome: the first music folder, read-only; its results in `out` (Conductor's mixinfo_dir).
-pub fn metronome(dir: &Path, music: &str, out: &str) -> Result<()> {
+/// Metronome: the music folders, read-only; its results in `out` (Conductor's mixinfo_dir).
+pub fn metronome(dir: &Path, music: &[String], out: &str) -> Result<()> {
     let (uid, gid) = ids();
     std::fs::create_dir_all(out).with_context(|| format!("making {out}"))?;
     let yaml = format!(
@@ -320,13 +329,12 @@ services:
       MUSIC: /music
       OUT: /out
     volumes:
-      - {music}
-      - {out}
+{music}      - {out}
     cpus: 1
     mem_limit: 512m
     restart: unless-stopped
 ",
-        music = q(&format!("{music}:/music{}", opts(true))),
+        music = music_mounts(music),
         out = q(&format!("{out}:/out{}", opts(false))),
     );
     write_part(dir, "metronome", &yaml, METRONOME_FILES)
@@ -409,4 +417,15 @@ pub fn exec(container: &str, args: &[&str]) -> Result<()> {
         bail!("{} failed in {container}", args.join(" "));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn music_folders_for_the_helpers() {
+        let one = super::music_mounts(&["/srv/music".into()]);
+        assert!(one.contains("/srv/music:/music:ro") && !one.contains("lib0"), "{one}");
+        let two = super::music_mounts(&["/srv/a".into(), "/srv/b".into()]);
+        assert!(two.contains("/srv/a:/music/lib0:ro") && two.contains("/srv/b:/music/lib1:ro"), "{two}");
+    }
 }
