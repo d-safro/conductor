@@ -1,0 +1,65 @@
+{
+  "devicePoll": [
+    "object"
+  ],
+  "devicePoll.commands": [
+    "array"
+  ],
+  "devicePoll.commands[]": [
+    "object"
+  ],
+  "devicePoll.commands[].at": [
+    "number"
+  ],
+  "devicePoll.commands[].pad": [
+    "string"
+  ],
+  "devicePoll.commands[].sender": [
+    "string"
+  ],
+  "devicePoll.commands[].seq": [
+    "number"
+  ],
+  "devicePoll.commands[].type": [
+    "string"
+  ],
+  "devicePoll.devices": [
+    "array"
+  ],
+  "devicePoll.devices[]": [
+    "object"
+  ],
+  "devicePoll.devices[].client": [
+    "string"
+  ],
+  "devicePoll.devices[].id": [
+    "string"
+  ],
+  "devicePoll.devices[].kind": [
+    "string"
+  ],
+  "devicePoll.devices[].name": [
+    "string"
+  ],
+  "devicePoll.devices[].online": [
+    "boolean"
+  ],
+  "devicePoll.devices[].seen": [
+    "number"
+  ],
+  "devicePoll.devices[].state": [
+    "object"
+  ],
+  "devicePoll.devices[].state.at": [
+    "number"
+  ],
+  "devicePoll.devices[].state.playing": [
+    "boolean"
+  ],
+  "devicePoll.devices[].state.songId": [
+    "string"
+  ],
+  "devicePoll.now": [
+    "number"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "openSubsonicExtensions": [
+    "array"
+  ],
+  "openSubsonicExtensions[]": [
+    "object"
+  ],
+  "openSubsonicExtensions[].name": [
+    "string"
+  ],
+  "openSubsonicExtensions[].versions": [
+    "array"
+  ],
+  "openSubsonicExtensions[].versions[]": [
+    "number"
+  ]
+}

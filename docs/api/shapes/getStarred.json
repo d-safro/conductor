@@ -1,0 +1,14 @@
+{
+  "starred": [
+    "object"
+  ],
+  "starred.album": [
+    "array"
+  ],
+  "starred.artist": [
+    "array"
+  ],
+  "starred.song": [
+    "array"
+  ]
+}

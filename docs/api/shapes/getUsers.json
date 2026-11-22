@@ -1,0 +1,59 @@
+{
+  "users": [
+    "object"
+  ],
+  "users.user": [
+    "array"
+  ],
+  "users.user[]": [
+    "object"
+  ],
+  "users.user[].adminRole": [
+    "boolean"
+  ],
+  "users.user[].commentRole": [
+    "boolean"
+  ],
+  "users.user[].coverArtRole": [
+    "boolean"
+  ],
+  "users.user[].downloadRole": [
+    "boolean"
+  ],
+  "users.user[].email": [
+    "string"
+  ],
+  "users.user[].folder": [
+    "array"
+  ],
+  "users.user[].folder[]": [
+    "number"
+  ],
+  "users.user[].jukeboxRole": [
+    "boolean"
+  ],
+  "users.user[].playlistRole": [
+    "boolean"
+  ],
+  "users.user[].podcastRole": [
+    "boolean"
+  ],
+  "users.user[].settingsRole": [
+    "boolean"
+  ],
+  "users.user[].shareRole": [
+    "boolean"
+  ],
+  "users.user[].streamRole": [
+    "boolean"
+  ],
+  "users.user[].uploadRole": [
+    "boolean"
+  ],
+  "users.user[].username": [
+    "string"
+  ],
+  "users.user[].{key}": [
+    "boolean"
+  ]
+}

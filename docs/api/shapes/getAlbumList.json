@@ -1,0 +1,125 @@
+{
+  "albumList": [
+    "object"
+  ],
+  "albumList.album": [
+    "array"
+  ],
+  "albumList.album[]": [
+    "object"
+  ],
+  "albumList.album[].album": [
+    "string"
+  ],
+  "albumList.album[].artist": [
+    "string"
+  ],
+  "albumList.album[].artistId": [
+    "string"
+  ],
+  "albumList.album[].artists": [
+    "array"
+  ],
+  "albumList.album[].artists[]": [
+    "object"
+  ],
+  "albumList.album[].artists[].id": [
+    "string"
+  ],
+  "albumList.album[].artists[].name": [
+    "string"
+  ],
+  "albumList.album[].coverArt": [
+    "string"
+  ],
+  "albumList.album[].created": [
+    "string"
+  ],
+  "albumList.album[].discTitles": [
+    "array"
+  ],
+  "albumList.album[].displayArtist": [
+    "string"
+  ],
+  "albumList.album[].duration": [
+    "number"
+  ],
+  "albumList.album[].explicitStatus": [
+    "string"
+  ],
+  "albumList.album[].genre": [
+    "string"
+  ],
+  "albumList.album[].genres": [
+    "array"
+  ],
+  "albumList.album[].genres[]": [
+    "object"
+  ],
+  "albumList.album[].genres[].name": [
+    "string"
+  ],
+  "albumList.album[].id": [
+    "string"
+  ],
+  "albumList.album[].isCompilation": [
+    "boolean"
+  ],
+  "albumList.album[].isDir": [
+    "boolean"
+  ],
+  "albumList.album[].mediaType": [
+    "string"
+  ],
+  "albumList.album[].moods": [
+    "array"
+  ],
+  "albumList.album[].musicBrainzId": [
+    "string"
+  ],
+  "albumList.album[].name": [
+    "string"
+  ],
+  "albumList.album[].parent": [
+    "string"
+  ],
+  "albumList.album[].playCount": [
+    "number"
+  ],
+  "albumList.album[].recordLabels": [
+    "array"
+  ],
+  "albumList.album[].releaseDate": [
+    "object"
+  ],
+  "albumList.album[].releaseDate.year": [
+    "number"
+  ],
+  "albumList.album[].releaseTypes": [
+    "array"
+  ],
+  "albumList.album[].songCount": [
+    "number"
+  ],
+  "albumList.album[].sortName": [
+    "string"
+  ],
+  "albumList.album[].title": [
+    "string"
+  ],
+  "albumList.album[].userRating": [
+    "number"
+  ],
+  "albumList.album[].version": [
+    "string"
+  ],
+  "albumList.album[].year": [
+    "number"
+  ],
+  "albumList.album[].{key}": [
+    "object"
+  ],
+  "albumList.album[].{key}.year": [
+    "number"
+  ]
+}

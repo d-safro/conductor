@@ -1,0 +1,158 @@
+{
+  "artist": [
+    "object"
+  ],
+  "artist.album": [
+    "array"
+  ],
+  "artist.albumCount": [
+    "number"
+  ],
+  "artist.album[]": [
+    "object"
+  ],
+  "artist.album[].album": [
+    "string"
+  ],
+  "artist.album[].artist": [
+    "string"
+  ],
+  "artist.album[].artistId": [
+    "string"
+  ],
+  "artist.album[].artists": [
+    "array"
+  ],
+  "artist.album[].artists[]": [
+    "object"
+  ],
+  "artist.album[].artists[].id": [
+    "string"
+  ],
+  "artist.album[].artists[].name": [
+    "string"
+  ],
+  "artist.album[].coverArt": [
+    "string"
+  ],
+  "artist.album[].created": [
+    "string"
+  ],
+  "artist.album[].discTitles": [
+    "array"
+  ],
+  "artist.album[].displayArtist": [
+    "string"
+  ],
+  "artist.album[].duration": [
+    "number"
+  ],
+  "artist.album[].explicitStatus": [
+    "string"
+  ],
+  "artist.album[].genre": [
+    "string"
+  ],
+  "artist.album[].genres": [
+    "array"
+  ],
+  "artist.album[].genres[]": [
+    "object"
+  ],
+  "artist.album[].genres[].name": [
+    "string"
+  ],
+  "artist.album[].id": [
+    "string"
+  ],
+  "artist.album[].isCompilation": [
+    "boolean"
+  ],
+  "artist.album[].isDir": [
+    "boolean"
+  ],
+  "artist.album[].isVideo": [
+    "boolean"
+  ],
+  "artist.album[].mediaType": [
+    "string"
+  ],
+  "artist.album[].moods": [
+    "array"
+  ],
+  "artist.album[].musicBrainzId": [
+    "string"
+  ],
+  "artist.album[].name": [
+    "string"
+  ],
+  "artist.album[].parent": [
+    "string"
+  ],
+  "artist.album[].playCount": [
+    "number"
+  ],
+  "artist.album[].recordLabels": [
+    "array"
+  ],
+  "artist.album[].releaseDate": [
+    "object"
+  ],
+  "artist.album[].releaseDate.year": [
+    "number"
+  ],
+  "artist.album[].releaseTypes": [
+    "array"
+  ],
+  "artist.album[].releaseTypes[]": [
+    "string"
+  ],
+  "artist.album[].songCount": [
+    "number"
+  ],
+  "artist.album[].sortName": [
+    "string"
+  ],
+  "artist.album[].title": [
+    "string"
+  ],
+  "artist.album[].userRating": [
+    "number"
+  ],
+  "artist.album[].version": [
+    "string"
+  ],
+  "artist.album[].year": [
+    "number"
+  ],
+  "artist.album[].{key}": [
+    "object"
+  ],
+  "artist.album[].{key}.year": [
+    "number"
+  ],
+  "artist.coverArt": [
+    "string"
+  ],
+  "artist.id": [
+    "string"
+  ],
+  "artist.musicBrainzId": [
+    "string"
+  ],
+  "artist.name": [
+    "string"
+  ],
+  "artist.roles": [
+    "array"
+  ],
+  "artist.roles[]": [
+    "string"
+  ],
+  "artist.sortName": [
+    "string"
+  ],
+  "artist.userRating": [
+    "number"
+  ]
+}

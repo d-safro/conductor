@@ -1,0 +1,17 @@
+{
+  "djLine": [
+    "object"
+  ],
+  "djLine.duration": [
+    "number"
+  ],
+  "djLine.error": [
+    "string"
+  ],
+  "djLine.id": [
+    "string"
+  ],
+  "djLine.text": [
+    "string"
+  ]
+}

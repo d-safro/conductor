@@ -1,0 +1,74 @@
+{
+  "newestPodcasts": [
+    "object"
+  ],
+  "newestPodcasts.episode": [
+    "array"
+  ],
+  "newestPodcasts.episode[]": [
+    "object"
+  ],
+  "newestPodcasts.episode[].album": [
+    "string"
+  ],
+  "newestPodcasts.episode[].artist": [
+    "string"
+  ],
+  "newestPodcasts.episode[].channelId": [
+    "string"
+  ],
+  "newestPodcasts.episode[].contentType": [
+    "string"
+  ],
+  "newestPodcasts.episode[].coverArt": [
+    "string"
+  ],
+  "newestPodcasts.episode[].description": [
+    "string"
+  ],
+  "newestPodcasts.episode[].downloaded": [
+    "boolean"
+  ],
+  "newestPodcasts.episode[].duration": [
+    "number"
+  ],
+  "newestPodcasts.episode[].id": [
+    "string"
+  ],
+  "newestPodcasts.episode[].isDir": [
+    "boolean"
+  ],
+  "newestPodcasts.episode[].mediaType": [
+    "string"
+  ],
+  "newestPodcasts.episode[].parent": [
+    "string"
+  ],
+  "newestPodcasts.episode[].played": [
+    "boolean"
+  ],
+  "newestPodcasts.episode[].position": [
+    "number"
+  ],
+  "newestPodcasts.episode[].publishDate": [
+    "string"
+  ],
+  "newestPodcasts.episode[].size": [
+    "number"
+  ],
+  "newestPodcasts.episode[].status": [
+    "string"
+  ],
+  "newestPodcasts.episode[].streamId": [
+    "string"
+  ],
+  "newestPodcasts.episode[].suffix": [
+    "string"
+  ],
+  "newestPodcasts.episode[].title": [
+    "string"
+  ],
+  "newestPodcasts.episode[].type": [
+    "string"
+  ]
+}

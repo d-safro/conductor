@@ -1,0 +1,11 @@
+{
+  "lastfmLink": [
+    "object"
+  ],
+  "lastfmLink.name": [
+    "string"
+  ],
+  "lastfmLink.status": [
+    "string"
+  ]
+}

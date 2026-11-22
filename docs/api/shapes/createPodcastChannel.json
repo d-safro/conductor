@@ -1,0 +1,38 @@
+{
+  "podcastChannel": [
+    "object"
+  ],
+  "podcastChannel.author": [
+    "string"
+  ],
+  "podcastChannel.coverArt": [
+    "string"
+  ],
+  "podcastChannel.description": [
+    "string"
+  ],
+  "podcastChannel.episodeCount": [
+    "number"
+  ],
+  "podcastChannel.id": [
+    "string"
+  ],
+  "podcastChannel.latest": [
+    "number"
+  ],
+  "podcastChannel.status": [
+    "string"
+  ],
+  "podcastChannel.title": [
+    "string"
+  ],
+  "podcastChannel.unplayed": [
+    "number"
+  ],
+  "podcastChannel.url": [
+    "string"
+  ],
+  "podcastChannel.{key}": [
+    "string"
+  ]
+}

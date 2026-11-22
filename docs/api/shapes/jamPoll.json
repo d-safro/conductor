@@ -1,0 +1,26 @@
+{
+  "jam": [
+    "object"
+  ],
+  "jam.commands": [
+    "array"
+  ],
+  "jam.commands[]": [
+    "object"
+  ],
+  "jam.commands[].by": [
+    "string"
+  ],
+  "jam.commands[].id": [
+    "string"
+  ],
+  "jam.commands[].seq": [
+    "number"
+  ],
+  "jam.commands[].type": [
+    "string"
+  ],
+  "jam.guests": [
+    "number"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "user": [
+    "object"
+  ],
+  "user.adminRole": [
+    "boolean"
+  ],
+  "user.commentRole": [
+    "boolean"
+  ],
+  "user.coverArtRole": [
+    "boolean"
+  ],
+  "user.downloadRole": [
+    "boolean"
+  ],
+  "user.email": [
+    "string"
+  ],
+  "user.folder": [
+    "array"
+  ],
+  "user.folder[]": [
+    "number"
+  ],
+  "user.jukeboxRole": [
+    "boolean"
+  ],
+  "user.playlistRole": [
+    "boolean"
+  ],
+  "user.podcastRole": [
+    "boolean"
+  ],
+  "user.settingsRole": [
+    "boolean"
+  ],
+  "user.shareRole": [
+    "boolean"
+  ],
+  "user.streamRole": [
+    "boolean"
+  ],
+  "user.uploadRole": [
+    "boolean"
+  ],
+  "user.username": [
+    "string"
+  ],
+  "user.{key}": [
+    "boolean"
+  ]
+}

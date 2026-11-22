@@ -1,0 +1,92 @@
+{
+  "bookmarks": [
+    "object"
+  ],
+  "bookmarks.bookmark": [
+    "array"
+  ],
+  "bookmarks.bookmark[]": [
+    "object"
+  ],
+  "bookmarks.bookmark[].changed": [
+    "string"
+  ],
+  "bookmarks.bookmark[].comment": [
+    "string"
+  ],
+  "bookmarks.bookmark[].created": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry": [
+    "object"
+  ],
+  "bookmarks.bookmark[].entry.album": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.artist": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.channelId": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.contentType": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.coverArt": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.description": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.downloaded": [
+    "boolean"
+  ],
+  "bookmarks.bookmark[].entry.duration": [
+    "number"
+  ],
+  "bookmarks.bookmark[].entry.id": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.isDir": [
+    "boolean"
+  ],
+  "bookmarks.bookmark[].entry.mediaType": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.parent": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.played": [
+    "boolean"
+  ],
+  "bookmarks.bookmark[].entry.position": [
+    "number"
+  ],
+  "bookmarks.bookmark[].entry.publishDate": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.size": [
+    "number"
+  ],
+  "bookmarks.bookmark[].entry.status": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.streamId": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.suffix": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.title": [
+    "string"
+  ],
+  "bookmarks.bookmark[].entry.type": [
+    "string"
+  ],
+  "bookmarks.bookmark[].position": [
+    "number"
+  ],
+  "bookmarks.bookmark[].username": [
+    "string"
+  ]
+}

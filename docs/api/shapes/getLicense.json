@@ -1,0 +1,14 @@
+{
+  "license": [
+    "object"
+  ],
+  "license.email": [
+    "string"
+  ],
+  "license.licenseExpires": [
+    "string"
+  ],
+  "license.valid": [
+    "boolean"
+  ]
+}

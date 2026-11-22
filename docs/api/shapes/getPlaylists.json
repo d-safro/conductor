@@ -1,0 +1,44 @@
+{
+  "playlists": [
+    "object"
+  ],
+  "playlists.playlist": [
+    "array"
+  ],
+  "playlists.playlist[]": [
+    "object"
+  ],
+  "playlists.playlist[].changed": [
+    "string"
+  ],
+  "playlists.playlist[].comment": [
+    "string"
+  ],
+  "playlists.playlist[].coverArt": [
+    "string"
+  ],
+  "playlists.playlist[].created": [
+    "string"
+  ],
+  "playlists.playlist[].duration": [
+    "number"
+  ],
+  "playlists.playlist[].id": [
+    "string"
+  ],
+  "playlists.playlist[].name": [
+    "string"
+  ],
+  "playlists.playlist[].owner": [
+    "string"
+  ],
+  "playlists.playlist[].public": [
+    "boolean"
+  ],
+  "playlists.playlist[].readonly": [
+    "boolean"
+  ],
+  "playlists.playlist[].songCount": [
+    "number"
+  ]
+}

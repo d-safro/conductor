@@ -1,0 +1,32 @@
+{
+  "devices": [
+    "object"
+  ],
+  "devices.device": [
+    "array"
+  ],
+  "devices.device[]": [
+    "object"
+  ],
+  "devices.device[].client": [
+    "string"
+  ],
+  "devices.device[].id": [
+    "string"
+  ],
+  "devices.device[].kind": [
+    "string"
+  ],
+  "devices.device[].name": [
+    "string"
+  ],
+  "devices.device[].online": [
+    "boolean"
+  ],
+  "devices.device[].seen": [
+    "number"
+  ],
+  "devices.device[].state": [
+    "object"
+  ]
+}

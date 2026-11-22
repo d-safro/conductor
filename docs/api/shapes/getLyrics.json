@@ -1,0 +1,14 @@
+{
+  "lyrics": [
+    "object"
+  ],
+  "lyrics.artist": [
+    "string"
+  ],
+  "lyrics.title": [
+    "string"
+  ],
+  "lyrics.value": [
+    "string"
+  ]
+}

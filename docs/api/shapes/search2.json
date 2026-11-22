@@ -1,0 +1,173 @@
+{
+  "searchResult2": [
+    "object"
+  ],
+  "searchResult2.album": [
+    "array"
+  ],
+  "searchResult2.artist": [
+    "array"
+  ],
+  "searchResult2.song": [
+    "array"
+  ],
+  "searchResult2.song[]": [
+    "object"
+  ],
+  "searchResult2.song[].album": [
+    "string"
+  ],
+  "searchResult2.song[].albumArtists": [
+    "array"
+  ],
+  "searchResult2.song[].albumArtists[]": [
+    "object"
+  ],
+  "searchResult2.song[].albumArtists[].id": [
+    "string"
+  ],
+  "searchResult2.song[].albumArtists[].name": [
+    "string"
+  ],
+  "searchResult2.song[].albumId": [
+    "string"
+  ],
+  "searchResult2.song[].artist": [
+    "string"
+  ],
+  "searchResult2.song[].artistId": [
+    "string"
+  ],
+  "searchResult2.song[].artists": [
+    "array"
+  ],
+  "searchResult2.song[].artists[]": [
+    "object"
+  ],
+  "searchResult2.song[].artists[].id": [
+    "string"
+  ],
+  "searchResult2.song[].artists[].name": [
+    "string"
+  ],
+  "searchResult2.song[].bitDepth": [
+    "number"
+  ],
+  "searchResult2.song[].bitRate": [
+    "number"
+  ],
+  "searchResult2.song[].bpm": [
+    "number"
+  ],
+  "searchResult2.song[].channelCount": [
+    "number"
+  ],
+  "searchResult2.song[].comment": [
+    "string"
+  ],
+  "searchResult2.song[].contentType": [
+    "string"
+  ],
+  "searchResult2.song[].contributors": [
+    "array"
+  ],
+  "searchResult2.song[].coverArt": [
+    "string"
+  ],
+  "searchResult2.song[].created": [
+    "string"
+  ],
+  "searchResult2.song[].displayArtist": [
+    "string"
+  ],
+  "searchResult2.song[].displayComposer": [
+    "string"
+  ],
+  "searchResult2.song[].duration": [
+    "number"
+  ],
+  "searchResult2.song[].explicitStatus": [
+    "string"
+  ],
+  "searchResult2.song[].genre": [
+    "string"
+  ],
+  "searchResult2.song[].genres": [
+    "array"
+  ],
+  "searchResult2.song[].genres[]": [
+    "object"
+  ],
+  "searchResult2.song[].genres[].name": [
+    "string"
+  ],
+  "searchResult2.song[].id": [
+    "string"
+  ],
+  "searchResult2.song[].isDir": [
+    "boolean"
+  ],
+  "searchResult2.song[].isVideo": [
+    "boolean"
+  ],
+  "searchResult2.song[].isrc": [
+    "array"
+  ],
+  "searchResult2.song[].isrc[]": [
+    "string"
+  ],
+  "searchResult2.song[].mediaType": [
+    "string"
+  ],
+  "searchResult2.song[].moods": [
+    "array"
+  ],
+  "searchResult2.song[].musicBrainzId": [
+    "string"
+  ],
+  "searchResult2.song[].parent": [
+    "string"
+  ],
+  "searchResult2.song[].path": [
+    "string"
+  ],
+  "searchResult2.song[].playCount": [
+    "number"
+  ],
+  "searchResult2.song[].replayGain": [
+    "object"
+  ],
+  "searchResult2.song[].replayGain.trackGain": [
+    "number"
+  ],
+  "searchResult2.song[].samplingRate": [
+    "number"
+  ],
+  "searchResult2.song[].size": [
+    "number"
+  ],
+  "searchResult2.song[].sortName": [
+    "string"
+  ],
+  "searchResult2.song[].suffix": [
+    "string"
+  ],
+  "searchResult2.song[].title": [
+    "string"
+  ],
+  "searchResult2.song[].track": [
+    "number"
+  ],
+  "searchResult2.song[].type": [
+    "string"
+  ],
+  "searchResult2.song[].userRating": [
+    "number"
+  ],
+  "searchResult2.song[].year": [
+    "number"
+  ],
+  "searchResult2.song[].{key}": [
+    "string"
+  ]
+}

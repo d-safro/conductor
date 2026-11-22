@@ -1,0 +1,35 @@
+{
+  "playlistShares": [
+    "object"
+  ],
+  "playlistShares.share": [
+    "array"
+  ],
+  "playlistShares.share[]": [
+    "object"
+  ],
+  "playlistShares.share[].added": [
+    "array"
+  ],
+  "playlistShares.share[].added[]": [
+    "object"
+  ],
+  "playlistShares.share[].added[].at": [
+    "number"
+  ],
+  "playlistShares.share[].added[].by": [
+    "string"
+  ],
+  "playlistShares.share[].added[].guest": [
+    "string"
+  ],
+  "playlistShares.share[].added[].id": [
+    "string"
+  ],
+  "playlistShares.share[].playlist": [
+    "string"
+  ],
+  "playlistShares.share[].url": [
+    "string"
+  ]
+}

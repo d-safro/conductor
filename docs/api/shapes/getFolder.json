@@ -1,0 +1,77 @@
+{
+  "folder": [
+    "object"
+  ],
+  "folder.dir": [
+    "array"
+  ],
+  "folder.dir[]": [
+    "object"
+  ],
+  "folder.dir[].count": [
+    "number"
+  ],
+  "folder.dir[].coverArt": [
+    "string"
+  ],
+  "folder.dir[].name": [
+    "string"
+  ],
+  "folder.dir[].path": [
+    "string"
+  ],
+  "folder.path": [
+    "string"
+  ],
+  "folder.song": [
+    "array"
+  ],
+  "folder.song[]": [
+    "object"
+  ],
+  "folder.song[].album": [
+    "string"
+  ],
+  "folder.song[].albumId": [
+    "string"
+  ],
+  "folder.song[].artist": [
+    "string"
+  ],
+  "folder.song[].artistId": [
+    "string"
+  ],
+  "folder.song[].bitRate": [
+    "number"
+  ],
+  "folder.song[].coverArt": [
+    "string"
+  ],
+  "folder.song[].duration": [
+    "number"
+  ],
+  "folder.song[].id": [
+    "string"
+  ],
+  "folder.song[].isDir": [
+    "boolean"
+  ],
+  "folder.song[].plays": [
+    "number"
+  ],
+  "folder.song[].suffix": [
+    "string"
+  ],
+  "folder.song[].title": [
+    "string"
+  ],
+  "folder.song[].track": [
+    "number"
+  ],
+  "folder.song[].type": [
+    "string"
+  ],
+  "folder.song[].year": [
+    "number"
+  ]
+}

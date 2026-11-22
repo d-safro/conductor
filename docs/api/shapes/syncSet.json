@@ -1,0 +1,31 @@
+{
+  "sync": [
+    "object"
+  ],
+  "sync.changed": [
+    "boolean"
+  ],
+  "sync.value": [
+    "object"
+  ],
+  "sync.value.at": [
+    "number"
+  ],
+  "sync.value.by": [
+    "string"
+  ],
+  "sync.value.value": [
+    "array",
+    "object"
+  ],
+  "sync.value.value.city": [
+    "string"
+  ],
+  "sync.value.value[]": [
+    "number",
+    "object"
+  ],
+  "sync.value.value[].name": [
+    "string"
+  ]
+}

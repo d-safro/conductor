@@ -1,0 +1,216 @@
+{
+  "playQueue": [
+    "object"
+  ],
+  "playQueue.changed": [
+    "string"
+  ],
+  "playQueue.changedBy": [
+    "string"
+  ],
+  "playQueue.current": [
+    "string"
+  ],
+  "playQueue.entry": [
+    "array"
+  ],
+  "playQueue.entry[]": [
+    "object"
+  ],
+  "playQueue.entry[].album": [
+    "string"
+  ],
+  "playQueue.entry[].albumArtists": [
+    "array"
+  ],
+  "playQueue.entry[].albumArtists[]": [
+    "object"
+  ],
+  "playQueue.entry[].albumArtists[].id": [
+    "string"
+  ],
+  "playQueue.entry[].albumArtists[].name": [
+    "string"
+  ],
+  "playQueue.entry[].albumId": [
+    "string"
+  ],
+  "playQueue.entry[].artist": [
+    "string"
+  ],
+  "playQueue.entry[].artistId": [
+    "string"
+  ],
+  "playQueue.entry[].artists": [
+    "array"
+  ],
+  "playQueue.entry[].artists[]": [
+    "object"
+  ],
+  "playQueue.entry[].artists[].id": [
+    "string"
+  ],
+  "playQueue.entry[].artists[].name": [
+    "string"
+  ],
+  "playQueue.entry[].bitDepth": [
+    "number"
+  ],
+  "playQueue.entry[].bitRate": [
+    "number"
+  ],
+  "playQueue.entry[].bpm": [
+    "number"
+  ],
+  "playQueue.entry[].channelCount": [
+    "number"
+  ],
+  "playQueue.entry[].channelId": [
+    "string"
+  ],
+  "playQueue.entry[].comment": [
+    "string"
+  ],
+  "playQueue.entry[].contentType": [
+    "string"
+  ],
+  "playQueue.entry[].contributors": [
+    "array"
+  ],
+  "playQueue.entry[].coverArt": [
+    "string"
+  ],
+  "playQueue.entry[].created": [
+    "string"
+  ],
+  "playQueue.entry[].description": [
+    "string"
+  ],
+  "playQueue.entry[].discNumber": [
+    "number"
+  ],
+  "playQueue.entry[].displayArtist": [
+    "string"
+  ],
+  "playQueue.entry[].displayComposer": [
+    "string"
+  ],
+  "playQueue.entry[].downloaded": [
+    "boolean"
+  ],
+  "playQueue.entry[].duration": [
+    "number"
+  ],
+  "playQueue.entry[].explicitStatus": [
+    "string"
+  ],
+  "playQueue.entry[].genre": [
+    "string"
+  ],
+  "playQueue.entry[].genres": [
+    "array"
+  ],
+  "playQueue.entry[].genres[]": [
+    "object"
+  ],
+  "playQueue.entry[].genres[].name": [
+    "string"
+  ],
+  "playQueue.entry[].id": [
+    "string"
+  ],
+  "playQueue.entry[].isDir": [
+    "boolean"
+  ],
+  "playQueue.entry[].isVideo": [
+    "boolean"
+  ],
+  "playQueue.entry[].isrc": [
+    "array"
+  ],
+  "playQueue.entry[].isrc[]": [
+    "string"
+  ],
+  "playQueue.entry[].lookupState": [
+    "number"
+  ],
+  "playQueue.entry[].mediaType": [
+    "string"
+  ],
+  "playQueue.entry[].moods": [
+    "array"
+  ],
+  "playQueue.entry[].musicBrainzId": [
+    "string"
+  ],
+  "playQueue.entry[].parent": [
+    "string"
+  ],
+  "playQueue.entry[].path": [
+    "string"
+  ],
+  "playQueue.entry[].playCount": [
+    "number"
+  ],
+  "playQueue.entry[].played": [
+    "boolean",
+    "string"
+  ],
+  "playQueue.entry[].position": [
+    "number"
+  ],
+  "playQueue.entry[].publishDate": [
+    "string"
+  ],
+  "playQueue.entry[].replayGain": [
+    "object"
+  ],
+  "playQueue.entry[].replayGain.trackGain": [
+    "number"
+  ],
+  "playQueue.entry[].samplingRate": [
+    "number"
+  ],
+  "playQueue.entry[].size": [
+    "number"
+  ],
+  "playQueue.entry[].sortName": [
+    "string"
+  ],
+  "playQueue.entry[].starred": [
+    "string"
+  ],
+  "playQueue.entry[].status": [
+    "string"
+  ],
+  "playQueue.entry[].streamId": [
+    "string"
+  ],
+  "playQueue.entry[].suffix": [
+    "string"
+  ],
+  "playQueue.entry[].title": [
+    "string"
+  ],
+  "playQueue.entry[].track": [
+    "number"
+  ],
+  "playQueue.entry[].type": [
+    "string"
+  ],
+  "playQueue.entry[].userRating": [
+    "number"
+  ],
+  "playQueue.entry[].year": [
+    "number"
+  ],
+  "playQueue.entry[].{key}": [
+    "string"
+  ],
+  "playQueue.position": [
+    "number"
+  ],
+  "playQueue.username": [
+    "string"
+  ]
+}

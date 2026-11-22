@@ -1,0 +1,50 @@
+{
+  "mixes": [
+    "object"
+  ],
+  "mixes.kind": [
+    "array"
+  ],
+  "mixes.kind[]": [
+    "object"
+  ],
+  "mixes.kind[].enabled": [
+    "boolean"
+  ],
+  "mixes.kind[].kind": [
+    "string"
+  ],
+  "mixes.kind[].name": [
+    "string"
+  ],
+  "mixes.kind[].updated": [
+    "number"
+  ],
+  "mixes.mix": [
+    "array"
+  ],
+  "mixes.mix[]": [
+    "object"
+  ],
+  "mixes.mix[].comment": [
+    "string"
+  ],
+  "mixes.mix[].kind": [
+    "string"
+  ],
+  "mixes.mix[].name": [
+    "string"
+  ],
+  "mixes.mix[].playlistId": [
+    "string"
+  ],
+  "mixes.mix[].slot": [
+    "string"
+  ],
+  "mixes.mix[].songCount": [
+    "number"
+  ],
+  "mixes.mix[].updated": [
+    "number"
+  ]
+}

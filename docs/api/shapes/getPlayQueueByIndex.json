@@ -1,0 +1,182 @@
+{
+  "playQueueByIndex": [
+    "object"
+  ],
+  "playQueueByIndex.changed": [
+    "string"
+  ],
+  "playQueueByIndex.changedBy": [
+    "string"
+  ],
+  "playQueueByIndex.currentIndex": [
+    "number"
+  ],
+  "playQueueByIndex.entry": [
+    "array"
+  ],
+  "playQueueByIndex.entry[]": [
+    "object"
+  ],
+  "playQueueByIndex.entry[].album": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].albumArtists": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].albumArtists[]": [
+    "object"
+  ],
+  "playQueueByIndex.entry[].albumArtists[].id": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].albumArtists[].name": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].albumId": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].artist": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].artistId": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].artists": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].artists[]": [
+    "object"
+  ],
+  "playQueueByIndex.entry[].artists[].id": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].artists[].name": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].bitDepth": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].bitRate": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].bpm": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].channelCount": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].comment": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].contentType": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].contributors": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].coverArt": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].created": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].displayArtist": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].displayComposer": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].duration": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].explicitStatus": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].genre": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].genres": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].genres[]": [
+    "object"
+  ],
+  "playQueueByIndex.entry[].genres[].name": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].id": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].isDir": [
+    "boolean"
+  ],
+  "playQueueByIndex.entry[].isVideo": [
+    "boolean"
+  ],
+  "playQueueByIndex.entry[].isrc": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].isrc[]": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].mediaType": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].moods": [
+    "array"
+  ],
+  "playQueueByIndex.entry[].musicBrainzId": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].parent": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].path": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].playCount": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].replayGain": [
+    "object"
+  ],
+  "playQueueByIndex.entry[].replayGain.trackGain": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].samplingRate": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].size": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].sortName": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].suffix": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].title": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].track": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].type": [
+    "string"
+  ],
+  "playQueueByIndex.entry[].userRating": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].year": [
+    "number"
+  ],
+  "playQueueByIndex.entry[].{key}": [
+    "string"
+  ],
+  "playQueueByIndex.position": [
+    "number"
+  ],
+  "playQueueByIndex.username": [
+    "string"
+  ]
+}

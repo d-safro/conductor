@@ -1,0 +1,113 @@
+{
+  "podcasts": [
+    "object"
+  ],
+  "podcasts.channel": [
+    "array"
+  ],
+  "podcasts.channel[]": [
+    "object"
+  ],
+  "podcasts.channel[].author": [
+    "string"
+  ],
+  "podcasts.channel[].coverArt": [
+    "string"
+  ],
+  "podcasts.channel[].description": [
+    "string"
+  ],
+  "podcasts.channel[].episode": [
+    "array"
+  ],
+  "podcasts.channel[].episodeCount": [
+    "number"
+  ],
+  "podcasts.channel[].episode[]": [
+    "object"
+  ],
+  "podcasts.channel[].episode[].album": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].artist": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].channelId": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].contentType": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].coverArt": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].description": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].downloaded": [
+    "boolean"
+  ],
+  "podcasts.channel[].episode[].duration": [
+    "number"
+  ],
+  "podcasts.channel[].episode[].id": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].isDir": [
+    "boolean"
+  ],
+  "podcasts.channel[].episode[].mediaType": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].parent": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].played": [
+    "boolean"
+  ],
+  "podcasts.channel[].episode[].position": [
+    "number"
+  ],
+  "podcasts.channel[].episode[].publishDate": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].size": [
+    "number"
+  ],
+  "podcasts.channel[].episode[].status": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].streamId": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].suffix": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].title": [
+    "string"
+  ],
+  "podcasts.channel[].episode[].type": [
+    "string"
+  ],
+  "podcasts.channel[].id": [
+    "string"
+  ],
+  "podcasts.channel[].latest": [
+    "number"
+  ],
+  "podcasts.channel[].status": [
+    "string"
+  ],
+  "podcasts.channel[].title": [
+    "string"
+  ],
+  "podcasts.channel[].unplayed": [
+    "number"
+  ],
+  "podcasts.channel[].url": [
+    "string"
+  ],
+  "podcasts.channel[].{key}": [
+    "string"
+  ]
+}

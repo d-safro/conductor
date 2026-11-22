@@ -1,0 +1,23 @@
+{
+  "scanStatus": [
+    "object"
+  ],
+  "scanStatus.count": [
+    "number"
+  ],
+  "scanStatus.elapsedTime": [
+    "number"
+  ],
+  "scanStatus.folderCount": [
+    "number"
+  ],
+  "scanStatus.lastScan": [
+    "string"
+  ],
+  "scanStatus.scanType": [
+    "string"
+  ],
+  "scanStatus.scanning": [
+    "boolean"
+  ]
+}

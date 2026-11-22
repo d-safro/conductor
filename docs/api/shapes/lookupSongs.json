@@ -1,0 +1,38 @@
+{
+  "lookupSongs": [
+    "object"
+  ],
+  "lookupSongs.perDay": [
+    "number"
+  ],
+  "lookupSongs.playlist": [
+    "string"
+  ],
+  "lookupSongs.playlistId": [
+    "string"
+  ],
+  "lookupSongs.song": [
+    "array"
+  ],
+  "lookupSongs.song[]": [
+    "object"
+  ],
+  "lookupSongs.song[].id": [
+    "string"
+  ],
+  "lookupSongs.song[].songId": [
+    "string"
+  ],
+  "lookupSongs.song[].status": [
+    "string"
+  ],
+  "lookupSongs.song[].temporary": [
+    "boolean"
+  ],
+  "lookupSongs.trialHours": [
+    "number"
+  ],
+  "lookupSongs.usedToday": [
+    "number"
+  ]
+}

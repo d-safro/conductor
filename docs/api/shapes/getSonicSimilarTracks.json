@@ -1,0 +1,170 @@
+{
+  "sonicMatch": [
+    "array"
+  ],
+  "sonicMatch[]": [
+    "object"
+  ],
+  "sonicMatch[].entry": [
+    "object"
+  ],
+  "sonicMatch[].entry.album": [
+    "string"
+  ],
+  "sonicMatch[].entry.albumArtists": [
+    "array"
+  ],
+  "sonicMatch[].entry.albumArtists[]": [
+    "object"
+  ],
+  "sonicMatch[].entry.albumArtists[].id": [
+    "string"
+  ],
+  "sonicMatch[].entry.albumArtists[].name": [
+    "string"
+  ],
+  "sonicMatch[].entry.albumId": [
+    "string"
+  ],
+  "sonicMatch[].entry.artist": [
+    "string"
+  ],
+  "sonicMatch[].entry.artistId": [
+    "string"
+  ],
+  "sonicMatch[].entry.artists": [
+    "array"
+  ],
+  "sonicMatch[].entry.artists[]": [
+    "object"
+  ],
+  "sonicMatch[].entry.artists[].id": [
+    "string"
+  ],
+  "sonicMatch[].entry.artists[].name": [
+    "string"
+  ],
+  "sonicMatch[].entry.bitDepth": [
+    "number"
+  ],
+  "sonicMatch[].entry.bitRate": [
+    "number"
+  ],
+  "sonicMatch[].entry.bpm": [
+    "number"
+  ],
+  "sonicMatch[].entry.channelCount": [
+    "number"
+  ],
+  "sonicMatch[].entry.comment": [
+    "string"
+  ],
+  "sonicMatch[].entry.contentType": [
+    "string"
+  ],
+  "sonicMatch[].entry.contributors": [
+    "array"
+  ],
+  "sonicMatch[].entry.coverArt": [
+    "string"
+  ],
+  "sonicMatch[].entry.created": [
+    "string"
+  ],
+  "sonicMatch[].entry.displayArtist": [
+    "string"
+  ],
+  "sonicMatch[].entry.displayComposer": [
+    "string"
+  ],
+  "sonicMatch[].entry.duration": [
+    "number"
+  ],
+  "sonicMatch[].entry.explicitStatus": [
+    "string"
+  ],
+  "sonicMatch[].entry.genre": [
+    "string"
+  ],
+  "sonicMatch[].entry.genres": [
+    "array"
+  ],
+  "sonicMatch[].entry.genres[]": [
+    "object"
+  ],
+  "sonicMatch[].entry.genres[].name": [
+    "string"
+  ],
+  "sonicMatch[].entry.id": [
+    "string"
+  ],
+  "sonicMatch[].entry.isDir": [
+    "boolean"
+  ],
+  "sonicMatch[].entry.isVideo": [
+    "boolean"
+  ],
+  "sonicMatch[].entry.isrc": [
+    "array"
+  ],
+  "sonicMatch[].entry.isrc[]": [
+    "string"
+  ],
+  "sonicMatch[].entry.mediaType": [
+    "string"
+  ],
+  "sonicMatch[].entry.moods": [
+    "array"
+  ],
+  "sonicMatch[].entry.musicBrainzId": [
+    "string"
+  ],
+  "sonicMatch[].entry.parent": [
+    "string"
+  ],
+  "sonicMatch[].entry.path": [
+    "string"
+  ],
+  "sonicMatch[].entry.playCount": [
+    "number"
+  ],
+  "sonicMatch[].entry.replayGain": [
+    "object"
+  ],
+  "sonicMatch[].entry.replayGain.trackGain": [
+    "number"
+  ],
+  "sonicMatch[].entry.samplingRate": [
+    "number"
+  ],
+  "sonicMatch[].entry.size": [
+    "number"
+  ],
+  "sonicMatch[].entry.sortName": [
+    "string"
+  ],
+  "sonicMatch[].entry.suffix": [
+    "string"
+  ],
+  "sonicMatch[].entry.title": [
+    "string"
+  ],
+  "sonicMatch[].entry.track": [
+    "number"
+  ],
+  "sonicMatch[].entry.type": [
+    "string"
+  ],
+  "sonicMatch[].entry.userRating": [
+    "number"
+  ],
+  "sonicMatch[].entry.year": [
+    "number"
+  ],
+  "sonicMatch[].entry.{key}": [
+    "string"
+  ],
+  "sonicMatch[].similarity": [
+    "number"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "lastfmLink": [
+    "object"
+  ],
+  "lastfmLink.token": [
+    "string"
+  ],
+  "lastfmLink.url": [
+    "string"
+  ]
+}

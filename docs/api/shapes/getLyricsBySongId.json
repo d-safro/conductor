@@ -1,0 +1,38 @@
+{
+  "lyricsList": [
+    "object"
+  ],
+  "lyricsList.{key}": [
+    "array"
+  ],
+  "lyricsList.{key}[]": [
+    "object"
+  ],
+  "lyricsList.{key}[].displayArtist": [
+    "string"
+  ],
+  "lyricsList.{key}[].displayTitle": [
+    "string"
+  ],
+  "lyricsList.{key}[].lang": [
+    "string"
+  ],
+  "lyricsList.{key}[].line": [
+    "array"
+  ],
+  "lyricsList.{key}[].line[]": [
+    "object"
+  ],
+  "lyricsList.{key}[].line[].start": [
+    "number"
+  ],
+  "lyricsList.{key}[].line[].value": [
+    "string"
+  ],
+  "lyricsList.{key}[].offset": [
+    "number"
+  ],
+  "lyricsList.{key}[].synced": [
+    "boolean"
+  ]
+}

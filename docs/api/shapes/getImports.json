@@ -1,0 +1,200 @@
+{
+  "imports": [
+    "object"
+  ],
+  "imports.import": [
+    "array"
+  ],
+  "imports.import[]": [
+    "object"
+  ],
+  "imports.import[].created": [
+    "number"
+  ],
+  "imports.import[].done": [
+    "number"
+  ],
+  "imports.import[].error": [
+    "null"
+  ],
+  "imports.import[].from": [
+    "string"
+  ],
+  "imports.import[].id": [
+    "string"
+  ],
+  "imports.import[].options": [
+    "object"
+  ],
+  "imports.import[].options.albums": [
+    "boolean"
+  ],
+  "imports.import[].options.artists": [
+    "boolean"
+  ],
+  "imports.import[].options.askMissing": [
+    "number"
+  ],
+  "imports.import[].options.counts": [
+    "boolean"
+  ],
+  "imports.import[].options.liked": [
+    "boolean"
+  ],
+  "imports.import[].options.playlists": [
+    "boolean"
+  ],
+  "imports.import[].options.plays": [
+    "boolean"
+  ],
+  "imports.import[].options.podcasts": [
+    "boolean"
+  ],
+  "imports.import[].options.ratings": [
+    "boolean"
+  ],
+  "imports.import[].progress": [
+    "number"
+  ],
+  "imports.import[].report": [
+    "object"
+  ],
+  "imports.import[].report.by": [
+    "object"
+  ],
+  "imports.import[].report.by.name": [
+    "number"
+  ],
+  "imports.import[].report.changes": [
+    "object"
+  ],
+  "imports.import[].report.changes.albums": [
+    "number"
+  ],
+  "imports.import[].report.changes.counts": [
+    "number"
+  ],
+  "imports.import[].report.changes.follows": [
+    "number"
+  ],
+  "imports.import[].report.changes.hearts": [
+    "number"
+  ],
+  "imports.import[].report.changes.playlistsNew": [
+    "number"
+  ],
+  "imports.import[].report.changes.plays": [
+    "number"
+  ],
+  "imports.import[].report.changes.podcasts": [
+    "number"
+  ],
+  "imports.import[].report.changes.ratings": [
+    "number"
+  ],
+  "imports.import[].report.changes.requests": [
+    "number"
+  ],
+  "imports.import[].report.changes.skips": [
+    "number"
+  ],
+  "imports.import[].report.changes.{key}": [
+    "number"
+  ],
+  "imports.import[].report.found": [
+    "object"
+  ],
+  "imports.import[].report.found.albums": [
+    "number"
+  ],
+  "imports.import[].report.found.artists": [
+    "number"
+  ],
+  "imports.import[].report.found.counts": [
+    "number"
+  ],
+  "imports.import[].report.found.liked": [
+    "number"
+  ],
+  "imports.import[].report.found.playlistSongs": [
+    "number"
+  ],
+  "imports.import[].report.found.playlists": [
+    "number"
+  ],
+  "imports.import[].report.found.plays": [
+    "number"
+  ],
+  "imports.import[].report.found.podcasts": [
+    "number"
+  ],
+  "imports.import[].report.found.ratings": [
+    "number"
+  ],
+  "imports.import[].report.found.skips": [
+    "number"
+  ],
+  "imports.import[].report.matchRate": [
+    "number"
+  ],
+  "imports.import[].report.matched": [
+    "object"
+  ],
+  "imports.import[].report.matched.albums": [
+    "number"
+  ],
+  "imports.import[].report.matched.artists": [
+    "number"
+  ],
+  "imports.import[].report.matched.counts": [
+    "number"
+  ],
+  "imports.import[].report.matched.liked": [
+    "number"
+  ],
+  "imports.import[].report.matched.playlistSongs": [
+    "number"
+  ],
+  "imports.import[].report.matched.playlists": [
+    "number"
+  ],
+  "imports.import[].report.matched.plays": [
+    "number"
+  ],
+  "imports.import[].report.matched.podcasts": [
+    "number"
+  ],
+  "imports.import[].report.matched.ratings": [
+    "number"
+  ],
+  "imports.import[].report.matched.skips": [
+    "number"
+  ],
+  "imports.import[].report.missingTotal": [
+    "number"
+  ],
+  "imports.import[].report.notes": [
+    "array"
+  ],
+  "imports.import[].report.songs": [
+    "number"
+  ],
+  "imports.import[].report.songsMatched": [
+    "number"
+  ],
+  "imports.import[].report.sources": [
+    "array"
+  ],
+  "imports.import[].report.sources[]": [
+    "string"
+  ],
+  "imports.import[].source": [
+    "string"
+  ],
+  "imports.import[].status": [
+    "string"
+  ],
+  "imports.import[].userId": [
+    "string"
+  ]
+}

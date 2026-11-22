@@ -1,0 +1,17 @@
+{
+  "musicFolders": [
+    "object"
+  ],
+  "musicFolders.musicFolder": [
+    "array"
+  ],
+  "musicFolders.musicFolder[]": [
+    "object"
+  ],
+  "musicFolders.musicFolder[].id": [
+    "number"
+  ],
+  "musicFolders.musicFolder[].name": [
+    "string"
+  ]
+}

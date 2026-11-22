@@ -1,0 +1,23 @@
+{
+  "sync": [
+    "object"
+  ],
+  "sync.values": [
+    "object"
+  ],
+  "sync.values.pins": [
+    "object"
+  ],
+  "sync.values.pins.at": [
+    "number"
+  ],
+  "sync.values.pins.by": [
+    "string"
+  ],
+  "sync.values.pins.value": [
+    "array"
+  ],
+  "sync.values.pins.value[]": [
+    "number"
+  ]
+}

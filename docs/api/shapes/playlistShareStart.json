@@ -1,0 +1,20 @@
+{
+  "playlistShare": [
+    "object"
+  ],
+  "playlistShare.added": [
+    "array"
+  ],
+  "playlistShare.error": [
+    "string"
+  ],
+  "playlistShare.playlist": [
+    "string"
+  ],
+  "playlistShare.token": [
+    "string"
+  ],
+  "playlistShare.url": [
+    "string"
+  ]
+}

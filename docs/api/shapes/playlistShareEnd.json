@@ -1,0 +1,8 @@
+{
+  "playlistShare": [
+    "object"
+  ],
+  "playlistShare.ended": [
+    "boolean"
+  ]
+}

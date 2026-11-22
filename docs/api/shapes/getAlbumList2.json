@@ -1,0 +1,131 @@
+{
+  "albumList2": [
+    "object"
+  ],
+  "albumList2.album": [
+    "array"
+  ],
+  "albumList2.album[]": [
+    "object"
+  ],
+  "albumList2.album[].album": [
+    "string"
+  ],
+  "albumList2.album[].artist": [
+    "string"
+  ],
+  "albumList2.album[].artistId": [
+    "string"
+  ],
+  "albumList2.album[].artists": [
+    "array"
+  ],
+  "albumList2.album[].artists[]": [
+    "object"
+  ],
+  "albumList2.album[].artists[].id": [
+    "string"
+  ],
+  "albumList2.album[].artists[].name": [
+    "string"
+  ],
+  "albumList2.album[].coverArt": [
+    "string"
+  ],
+  "albumList2.album[].created": [
+    "string"
+  ],
+  "albumList2.album[].discTitles": [
+    "array"
+  ],
+  "albumList2.album[].displayArtist": [
+    "string"
+  ],
+  "albumList2.album[].duration": [
+    "number"
+  ],
+  "albumList2.album[].explicitStatus": [
+    "string"
+  ],
+  "albumList2.album[].genre": [
+    "string"
+  ],
+  "albumList2.album[].genres": [
+    "array"
+  ],
+  "albumList2.album[].genres[]": [
+    "object"
+  ],
+  "albumList2.album[].genres[].name": [
+    "string"
+  ],
+  "albumList2.album[].id": [
+    "string"
+  ],
+  "albumList2.album[].isCompilation": [
+    "boolean"
+  ],
+  "albumList2.album[].isDir": [
+    "boolean"
+  ],
+  "albumList2.album[].mediaType": [
+    "string"
+  ],
+  "albumList2.album[].moods": [
+    "array"
+  ],
+  "albumList2.album[].musicBrainzId": [
+    "string"
+  ],
+  "albumList2.album[].name": [
+    "string"
+  ],
+  "albumList2.album[].parent": [
+    "string"
+  ],
+  "albumList2.album[].playCount": [
+    "number"
+  ],
+  "albumList2.album[].played": [
+    "string"
+  ],
+  "albumList2.album[].recordLabels": [
+    "array"
+  ],
+  "albumList2.album[].releaseDate": [
+    "object"
+  ],
+  "albumList2.album[].releaseDate.year": [
+    "number"
+  ],
+  "albumList2.album[].releaseTypes": [
+    "array"
+  ],
+  "albumList2.album[].songCount": [
+    "number"
+  ],
+  "albumList2.album[].sortName": [
+    "string"
+  ],
+  "albumList2.album[].starred": [
+    "string"
+  ],
+  "albumList2.album[].title": [
+    "string"
+  ],
+  "albumList2.album[].userRating": [
+    "number"
+  ],
+  "albumList2.album[].version": [
+    "string"
+  ],
+  "albumList2.album[].year": [
+    "number"
+  ],
+  "albumList2.album[].{key}": [
+    "object"
+  ],
+  "albumList2.album[].{key}.year": [
+    "number"
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "playlist": [
+    "object"
+  ],
+  "playlist.changed": [
+    "string"
+  ],
+  "playlist.comment": [
+    "string"
+  ],
+  "playlist.coverArt": [
+    "string"
+  ],
+  "playlist.created": [
+    "string"
+  ],
+  "playlist.duration": [
+    "number"
+  ],
+  "playlist.entry": [
+    "array"
+  ],
+  "playlist.entry[]": [
+    "object"
+  ],
+  "playlist.entry[].album": [
+    "string"
+  ],
+  "playlist.entry[].albumArtists": [
+    "array"
+  ],
+  "playlist.entry[].albumArtists[]": [
+    "object"
+  ],
+  "playlist.entry[].albumArtists[].id": [
+    "string"
+  ],
+  "playlist.entry[].albumArtists[].name": [
+    "string"
+  ],
+  "playlist.entry[].albumId": [
+    "string"
+  ],
+  "playlist.entry[].artist": [
+    "string"
+  ],
+  "playlist.entry[].artistId": [
+    "string"
+  ],
+  "playlist.entry[].artists": [
+    "array"
+  ],
+  "playlist.entry[].artists[]": [
+    "object"
+  ],
+  "playlist.entry[].artists[].id": [
+    "string"
+  ],
+  "playlist.entry[].artists[].name": [
+    "string"
+  ],
+  "playlist.entry[].bitDepth": [
+    "number"
+  ],
+  "playlist.entry[].bitRate": [
+    "number"
+  ],
+  "playlist.entry[].bpm": [
+    "number"
+  ],
+  "playlist.entry[].channelCount": [
+    "number"
+  ],
+  "playlist.entry[].comment": [
+    "string"
+  ],
+  "playlist.entry[].contentType": [
+    "string"
+  ],
+  "playlist.entry[].contributors": [
+    "array"
+  ],
+  "playlist.entry[].coverArt": [
+    "string"
+  ],
+  "playlist.entry[].created": [
+    "string"
+  ],
+  "playlist.entry[].displayArtist": [
+    "string"
+  ],
+  "playlist.entry[].displayComposer": [
+    "string"
+  ],
+  "playlist.entry[].duration": [
+    "number"
+  ],
+  "playlist.entry[].explicitStatus": [
+    "string"
+  ],
+  "playlist.entry[].genre": [
+    "string"
+  ],
+  "playlist.entry[].genres": [
+    "array"
+  ],
+  "playlist.entry[].genres[]": [
+    "object"
+  ],
+  "playlist.entry[].genres[].name": [
+    "string"
+  ],
+  "playlist.entry[].id": [
+    "string"
+  ],
+  "playlist.entry[].isDir": [
+    "boolean"
+  ],
+  "playlist.entry[].isVideo": [
+    "boolean"
+  ],
+  "playlist.entry[].isrc": [
+    "array"
+  ],
+  "playlist.entry[].isrc[]": [
+    "string"
+  ],
+  "playlist.entry[].mediaType": [
+    "string"
+  ],
+  "playlist.entry[].moods": [
+    "array"
+  ],
+  "playlist.entry[].musicBrainzId": [
+    "string"
+  ],
+  "playlist.entry[].parent": [
+    "string"
+  ],
+  "playlist.entry[].path": [
+    "string"
+  ],
+  "playlist.entry[].playCount": [
+    "number"
+  ],
+  "playlist.entry[].played": [
+    "string"
+  ],
+  "playlist.entry[].replayGain": [
+    "object"
+  ],
+  "playlist.entry[].replayGain.trackGain": [
+    "number"
+  ],
+  "playlist.entry[].samplingRate": [
+    "number"
+  ],
+  "playlist.entry[].size": [
+    "number"
+  ],
+  "playlist.entry[].sortName": [
+    "string"
+  ],
+  "playlist.entry[].suffix": [
+    "string"
+  ],
+  "playlist.entry[].title": [
+    "string"
+  ],
+  "playlist.entry[].track": [
+    "number"
+  ],
+  "playlist.entry[].type": [
+    "string"
+  ],
+  "playlist.entry[].userRating": [
+    "number"
+  ],
+  "playlist.entry[].year": [
+    "number"
+  ],
+  "playlist.entry[].{key}": [
+    "string"
+  ],
+  "playlist.id": [
+    "string"
+  ],
+  "playlist.name": [
+    "string"
+  ],
+  "playlist.owner": [
+    "string"
+  ],
+  "playlist.public": [
+    "boolean"
+  ],
+  "playlist.readonly": [
+    "boolean"
+  ],
+  "playlist.songCount": [
+    "number"
+  ]
+}

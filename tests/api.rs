@@ -132,7 +132,9 @@ impl Server {
 
     async fn call(&self, method: &str, params: &[(&str, &str)]) -> Value {
         let r: Value = self.http.get(self.url(method, params)).send().await.unwrap().json().await.unwrap();
-        r["subsonic-response"].clone()
+        let r = r["subsonic-response"].clone();
+        contract::observe(method, &r);
+        r
     }
 
     async fn st_user(&self) -> String {
@@ -904,6 +906,9 @@ async fn songs_you_dont_have() {
     // heart it: found on Soulseek (the studio copy, not the live one), downloaded, filed, scanned, hearted
     s.ok("star", &[("id", "dz-t-900")]).await;
     let mut ready = Value::Null;
+    // (and the catalog's lists, for the API contract)
+    s.ok("getDiscoveries", &[]).await;
+    s.ok("getSongDiscoveries", &[("id", "dz-t-900")]).await;
     for _ in 0..100 {
         let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
         if r["lookupSongs"]["song"][0]["status"] == "ready" {
@@ -2037,6 +2042,7 @@ async fn song_id_and_automix() {
                 .json()
                 .await
                 .unwrap();
+            contract::observe("identifySong", &v["subsonic-response"]);
             v["subsonic-response"]["songIdentification"].clone()
         }
     };
@@ -4527,7 +4533,11 @@ async fn every_user_scrobbles_to_their_own_accounts() {
     })
     .await;
     s.ok("createUser", &[("username", "sam"), ("password", "sam pass")]).await;
-    let get = async |u: String| -> Value { s.http.get(u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() };
+    let get = async |u: String| -> Value {
+        let r = s.http.get(&u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone();
+        contract::observe_url(&u, &r);
+        r
+    };
     let sam = |m: &str, q: &str| format!("{}/rest/{m}.view?u=sam&p=sam%20pass&v=1.16.1&c=test&f=json{q}", s.base);
     let mut ids = Vec::new();
     for t in ["One", "Two", "Three"] {
@@ -4740,7 +4750,11 @@ async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_toke
     // sam's own token, which ListenBrainz later stops taking: sam is told to link it again
     s.ok("createUser", &[("username", "sam"), ("password", "sam pass")]).await;
     let sam = |m: &str, q: &str| format!("{}/rest/{m}.view?u=sam&p=sam%20pass&v=1.16.1&c=test&f=json{q}", s.base);
-    let get = async |u: String| -> Value { s.http.get(u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() };
+    let get = async |u: String| -> Value {
+        let r = s.http.get(&u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone();
+        contract::observe_url(&u, &r);
+        r
+    };
     assert_eq!(get(sam("setListenBrainz", "&token=samtok")).await["scrobbling"]["listenbrainz"]["broken"], false);
     fake.revoked.store(true, SeqCst);
     get(sam("scrobble", &format!("&id={}", ids[1]))).await;
@@ -4813,4 +4827,165 @@ async fn song_radio_without_audiomuse_stays_close() {
     let names: Vec<&str> = info["artistInfo2"]["similarArtist"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
     assert_eq!(names.len(), 3, "{names:?}");
     assert!(names.contains(&"Земфира") && names.contains(&"ДДТ"), "{names:?}");
+}
+
+
+/// The API's contract: the shape of every answer (its fields and their types) is recorded in docs/api/shapes/, one
+/// file per call. Every call a test makes is checked against it: a field that isn't recorded, or has another type,
+/// fails the test. `CONDUCTOR_BLESS=1 cargo test --test api` records them again; CI does that and fails if the files
+/// change, so a dropped or changed field is seen (STABILITY.md: fields may be added, never taken away).
+mod contract {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        path::PathBuf,
+        sync::Mutex,
+    };
+
+    use serde_json::Value;
+
+    type Shape = BTreeMap<String, BTreeSet<String>>;
+    static SEEN: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
+    /// The envelope every answer has (checked by Subsonic apps themselves, and the same for every call).
+    const ENVELOPE: &[&str] = &["status", "version", "type", "serverVersion", "openSubsonic", "error"];
+
+    fn dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/api/shapes")
+    }
+
+    /// A key that's data, not a field name (a date, an id, a number): one name for all of them.
+    fn key(k: &str) -> &str {
+        let id_like = k.len() >= 16 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if k.starts_with(|c: char| c.is_ascii_digit()) || id_like { "{key}" } else { k }
+    }
+
+    fn walk(v: &Value, path: &str, out: &mut Shape) {
+        let t = match v {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        };
+        out.entry(path.to_string()).or_default().insert(t.to_string());
+        match v {
+            Value::Array(a) => {
+                for x in a {
+                    walk(x, &format!("{path}[]"), out);
+                }
+            }
+            Value::Object(o) => {
+                for (k, x) in o {
+                    walk(x, &format!("{path}.{}", key(k)), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The same, for an answer to a request made by hand (its method from the address).
+    pub fn observe_url(url: &str, r: &Value) {
+        let path = url.split('?').next().unwrap_or("");
+        if let Some(m) = path.split("/rest/").nth(1) {
+            observe(m, r);
+        }
+    }
+
+    pub fn observe(method: &str, r: &Value) {
+        let method = method.trim_end_matches(".view");
+        if method.contains('/') || r["status"] != "ok" {
+            return; // a passed-through answer (AudioMuse's), or an error (its shape is Subsonic's)
+        }
+        let mut shape = Shape::new();
+        for (k, v) in r.as_object().into_iter().flatten() {
+            if !ENVELOPE.contains(&k.as_str()) {
+                walk(v, k, &mut shape);
+            }
+        }
+        let file = dir().join(format!("{method}.json"));
+        if std::env::var_os("CONDUCTOR_BLESS").is_some() {
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            let all = seen.entry(method.to_string()).or_default();
+            for (p, t) in shape {
+                all.entry(p).or_default().extend(t);
+            }
+            std::fs::create_dir_all(dir()).unwrap();
+            std::fs::write(&file, serde_json::to_string_pretty(all).unwrap() + "\n").unwrap();
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            panic!("{method}: no recorded shape in docs/api/shapes/ (record it: CONDUCTOR_BLESS=1 cargo test --test api)");
+        };
+        let known: Shape = serde_json::from_str(&text).unwrap();
+        for (p, t) in &shape {
+            match known.get(p) {
+                None => panic!("{method}: the field {p} isn't recorded (a new field: CONDUCTOR_BLESS=1 cargo test --test api, and document it)"),
+                Some(k) if !t.is_subset(k) => panic!("{method}: {p} is {t:?}, recorded as {k:?}"),
+                _ => {}
+            }
+        }
+    }
+}
+
+
+#[tokio::test]
+async fn every_call_has_a_recorded_shape() {
+    // the calls no other test makes, made here; then every call the server answers (but those that send files) must
+    // have its shape recorded in docs/api/shapes/ (see the contract module)
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    for (m, p) in [
+        ("getLicense", vec![]),
+        ("getMusicFolders", vec![]),
+        ("getScanStatus", vec![]),
+        ("startScan", vec![]),
+        ("getAlbumList", vec![("type", "newest")]),
+        ("search2", vec![("query", "One")]),
+        ("getStarred", vec![]),
+        ("getTopSongs", vec![("artist", "Alpha")]),
+        ("getSimilarSongs", vec![("id", one.as_str())]),
+        ("getLyrics", vec![("artist", "Alpha"), ("title", "One")]),
+        ("reportPlayback", vec![("mediaId", one.as_str()), ("mediaType", "song"), ("positionMs", "1000"), ("state", "playing")]),
+        ("createInternetRadioStation", vec![("streamUrl", "http://radio.example/s"), ("name", "Test FM")]),
+        ("createBookmark", vec![("id", one.as_str()), ("position", "1000")]),
+        ("deleteBookmark", vec![("id", one.as_str())]),
+        ("refreshPodcasts", vec![]),
+        ("changePassword", vec![("username", USER), ("password", PASS)]),
+        ("refreshMix", vec![("kind", "daylist")]),
+        ("refreshConcerts", vec![]),
+        ("getScrobbling", vec![]),
+        ("setListenBrainz", vec![("token", "")]),
+        ("lastfmUnlink", vec![]),
+    ] {
+        let r = s.call(m, &p).await;
+        assert!(r["status"] == "ok" || r["error"]["code"].as_i64().is_some(), "{m}: {r}");
+    }
+    let radio = s.ok("getInternetRadioStations", &[]).await["internetRadioStations"]["internetRadioStation"][0]["id"].as_str().unwrap().to_string();
+    s.ok("updateInternetRadioStation", &[("id", &radio), ("streamUrl", "http://radio.example/s2"), ("name", "Test FM 2")]).await;
+    s.ok("deleteInternetRadioStation", &[("id", &radio)]).await;
+
+    let src = [include_str!("../src/api/mod.rs"), include_str!("../src/api/catalog_api.rs")].concat();
+    let mut calls = std::collections::BTreeSet::new();
+    for line in src.lines() {
+        let t = line.trim_start();
+        if t.starts_with('"') && t.contains("=>") {
+            for part in t.split("=>").next().unwrap().split('|') {
+                let name = part.trim().trim_matches('"');
+                if name.len() > 2 && name.chars().all(|c| c.is_ascii_alphanumeric()) && name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
+                    calls.insert(name.to_string());
+                }
+            }
+        }
+    }
+    let files = ["stream", "download", "getCoverArt", "getAvatar", "djAudio"];
+    // calls that only answer with the catalog, a downloader or a service (their shapes come from the tests that have those)
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/api/shapes");
+    if std::env::var_os("CONDUCTOR_BLESS").is_some() {
+        return; // recording: the other tests may still be writing theirs
+    }
+    let missing: Vec<&String> = calls.iter().filter(|c| !files.contains(&c.as_str()) && !dir.join(format!("{c}.json")).is_file()).collect();
+    assert!(missing.is_empty(), "calls without a recorded shape (make them in a test, then CONDUCTOR_BLESS=1): {missing:?}");
 }

@@ -1,0 +1,158 @@
+{
+  "listeningStats": [
+    "object"
+  ],
+  "listeningStats.album": [
+    "array"
+  ],
+  "listeningStats.albumCount": [
+    "number"
+  ],
+  "listeningStats.album[]": [
+    "object"
+  ],
+  "listeningStats.album[].artist": [
+    "string"
+  ],
+  "listeningStats.album[].artistId": [
+    "string"
+  ],
+  "listeningStats.album[].coverArt": [
+    "string"
+  ],
+  "listeningStats.album[].id": [
+    "string"
+  ],
+  "listeningStats.album[].minutes": [
+    "number"
+  ],
+  "listeningStats.album[].name": [
+    "string"
+  ],
+  "listeningStats.album[].plays": [
+    "number"
+  ],
+  "listeningStats.album[].year": [
+    "number"
+  ],
+  "listeningStats.artist": [
+    "array"
+  ],
+  "listeningStats.artistCount": [
+    "number"
+  ],
+  "listeningStats.artist[]": [
+    "object"
+  ],
+  "listeningStats.artist[].coverArt": [
+    "string"
+  ],
+  "listeningStats.artist[].id": [
+    "string"
+  ],
+  "listeningStats.artist[].minutes": [
+    "number"
+  ],
+  "listeningStats.artist[].name": [
+    "string"
+  ],
+  "listeningStats.artist[].plays": [
+    "number"
+  ],
+  "listeningStats.day": [
+    "array"
+  ],
+  "listeningStats.day[]": [
+    "object"
+  ],
+  "listeningStats.day[].date": [
+    "string"
+  ],
+  "listeningStats.day[].minutes": [
+    "number"
+  ],
+  "listeningStats.from": [
+    "number"
+  ],
+  "listeningStats.hour": [
+    "array"
+  ],
+  "listeningStats.hour[]": [
+    "number"
+  ],
+  "listeningStats.minutes": [
+    "number"
+  ],
+  "listeningStats.newArtists": [
+    "number"
+  ],
+  "listeningStats.offset": [
+    "number"
+  ],
+  "listeningStats.period": [
+    "string"
+  ],
+  "listeningStats.plays": [
+    "number"
+  ],
+  "listeningStats.since": [
+    "number"
+  ],
+  "listeningStats.song": [
+    "array"
+  ],
+  "listeningStats.song[]": [
+    "object"
+  ],
+  "listeningStats.song[].album": [
+    "string"
+  ],
+  "listeningStats.song[].albumId": [
+    "string"
+  ],
+  "listeningStats.song[].artist": [
+    "string"
+  ],
+  "listeningStats.song[].artistId": [
+    "string"
+  ],
+  "listeningStats.song[].bitRate": [
+    "number"
+  ],
+  "listeningStats.song[].coverArt": [
+    "string"
+  ],
+  "listeningStats.song[].duration": [
+    "number"
+  ],
+  "listeningStats.song[].id": [
+    "string"
+  ],
+  "listeningStats.song[].isDir": [
+    "boolean"
+  ],
+  "listeningStats.song[].plays": [
+    "number"
+  ],
+  "listeningStats.song[].suffix": [
+    "string"
+  ],
+  "listeningStats.song[].title": [
+    "string"
+  ],
+  "listeningStats.song[].track": [
+    "number"
+  ],
+  "listeningStats.song[].type": [
+    "string"
+  ],
+  "listeningStats.song[].year": [
+    "number"
+  ],
+  "listeningStats.songs": [
+    "number"
+  ],
+  "listeningStats.to": [
+    "number"
+  ]
+}

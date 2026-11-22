@@ -1,0 +1,11 @@
+{
+  "deviceCommand": [
+    "object"
+  ],
+  "deviceCommand.online": [
+    "boolean"
+  ],
+  "deviceCommand.seq": [
+    "number"
+  ]
+}

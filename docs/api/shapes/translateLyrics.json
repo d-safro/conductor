@@ -1,0 +1,23 @@
+{
+  "lyricsTranslation": [
+    "object"
+  ],
+  "lyricsTranslation.error": [
+    "string"
+  ],
+  "lyricsTranslation.lang": [
+    "string"
+  ],
+  "lyricsTranslation.lines": [
+    "array"
+  ],
+  "lyricsTranslation.lines[]": [
+    "string"
+  ],
+  "lyricsTranslation.same": [
+    "boolean"
+  ],
+  "lyricsTranslation.source": [
+    "string"
+  ]
+}

@@ -1,0 +1,233 @@
+{
+  "import": [
+    "object"
+  ],
+  "import.created": [
+    "number"
+  ],
+  "import.done": [
+    "null"
+  ],
+  "import.error": [
+    "null"
+  ],
+  "import.from": [
+    "string"
+  ],
+  "import.id": [
+    "string"
+  ],
+  "import.options": [
+    "object"
+  ],
+  "import.options.albums": [
+    "boolean"
+  ],
+  "import.options.artists": [
+    "boolean"
+  ],
+  "import.options.askMissing": [
+    "number"
+  ],
+  "import.options.counts": [
+    "boolean"
+  ],
+  "import.options.liked": [
+    "boolean"
+  ],
+  "import.options.playlists": [
+    "boolean"
+  ],
+  "import.options.plays": [
+    "boolean"
+  ],
+  "import.options.podcasts": [
+    "boolean"
+  ],
+  "import.options.ratings": [
+    "boolean"
+  ],
+  "import.progress": [
+    "number"
+  ],
+  "import.report": [
+    "object"
+  ],
+  "import.report.albumsMissing": [
+    "array"
+  ],
+  "import.report.artistsMissing": [
+    "array"
+  ],
+  "import.report.artistsMissing[]": [
+    "string"
+  ],
+  "import.report.by": [
+    "object"
+  ],
+  "import.report.by.name": [
+    "number"
+  ],
+  "import.report.changes": [
+    "object"
+  ],
+  "import.report.changes.albums": [
+    "number"
+  ],
+  "import.report.changes.counts": [
+    "number"
+  ],
+  "import.report.changes.follows": [
+    "number"
+  ],
+  "import.report.changes.hearts": [
+    "number"
+  ],
+  "import.report.changes.playlistsNew": [
+    "number"
+  ],
+  "import.report.changes.plays": [
+    "number"
+  ],
+  "import.report.changes.podcasts": [
+    "number"
+  ],
+  "import.report.changes.ratings": [
+    "number"
+  ],
+  "import.report.changes.requests": [
+    "number"
+  ],
+  "import.report.changes.skips": [
+    "number"
+  ],
+  "import.report.changes.{key}": [
+    "number"
+  ],
+  "import.report.found": [
+    "object"
+  ],
+  "import.report.found.albums": [
+    "number"
+  ],
+  "import.report.found.artists": [
+    "number"
+  ],
+  "import.report.found.counts": [
+    "number"
+  ],
+  "import.report.found.liked": [
+    "number"
+  ],
+  "import.report.found.playlistSongs": [
+    "number"
+  ],
+  "import.report.found.playlists": [
+    "number"
+  ],
+  "import.report.found.plays": [
+    "number"
+  ],
+  "import.report.found.podcasts": [
+    "number"
+  ],
+  "import.report.found.ratings": [
+    "number"
+  ],
+  "import.report.found.skips": [
+    "number"
+  ],
+  "import.report.matchRate": [
+    "number"
+  ],
+  "import.report.matched": [
+    "object"
+  ],
+  "import.report.matched.albums": [
+    "number"
+  ],
+  "import.report.matched.artists": [
+    "number"
+  ],
+  "import.report.matched.counts": [
+    "number"
+  ],
+  "import.report.matched.liked": [
+    "number"
+  ],
+  "import.report.matched.playlistSongs": [
+    "number"
+  ],
+  "import.report.matched.playlists": [
+    "number"
+  ],
+  "import.report.matched.plays": [
+    "number"
+  ],
+  "import.report.matched.podcasts": [
+    "number"
+  ],
+  "import.report.matched.ratings": [
+    "number"
+  ],
+  "import.report.matched.skips": [
+    "number"
+  ],
+  "import.report.missing": [
+    "array"
+  ],
+  "import.report.missingTotal": [
+    "number"
+  ],
+  "import.report.missing[]": [
+    "object"
+  ],
+  "import.report.missing[].album": [
+    "string"
+  ],
+  "import.report.missing[].artist": [
+    "string"
+  ],
+  "import.report.missing[].liked": [
+    "boolean"
+  ],
+  "import.report.missing[].playlists": [
+    "array"
+  ],
+  "import.report.missing[].playlists[]": [
+    "string"
+  ],
+  "import.report.missing[].plays": [
+    "number"
+  ],
+  "import.report.missing[].spotify": [
+    "string"
+  ],
+  "import.report.missing[].title": [
+    "string"
+  ],
+  "import.report.notes": [
+    "array"
+  ],
+  "import.report.songs": [
+    "number"
+  ],
+  "import.report.songsMatched": [
+    "number"
+  ],
+  "import.report.sources": [
+    "array"
+  ],
+  "import.report.sources[]": [
+    "string"
+  ],
+  "import.source": [
+    "string"
+  ],
+  "import.status": [
+    "string"
+  ],
+  "import.userId": [
+    "string"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "mixes": [
+    "object"
+  ],
+  "mixes.kind": [
+    "array"
+  ],
+  "mixes.kind[]": [
+    "object"
+  ],
+  "mixes.kind[].enabled": [
+    "boolean"
+  ],
+  "mixes.kind[].kind": [
+    "string"
+  ],
+  "mixes.kind[].name": [
+    "string"
+  ],
+  "mixes.kind[].updated": [
+    "number"
+  ],
+  "mixes.mix": [
+    "array"
+  ]
+}

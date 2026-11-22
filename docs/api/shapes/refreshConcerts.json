@@ -1,0 +1,17 @@
+{
+  "concerts": [
+    "object"
+  ],
+  "concerts.city": [
+    "string"
+  ],
+  "concerts.show": [
+    "array"
+  ],
+  "concerts.source": [
+    "string"
+  ],
+  "concerts.updated": [
+    "number"
+  ]
+}

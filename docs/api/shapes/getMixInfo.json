@@ -1,0 +1,35 @@
+{
+  "mixInfo": [
+    "object"
+  ],
+  "mixInfo.song": [
+    "array"
+  ],
+  "mixInfo.song[]": [
+    "object"
+  ],
+  "mixInfo.song[].beat": [
+    "number"
+  ],
+  "mixInfo.song[].bpm": [
+    "number"
+  ],
+  "mixInfo.song[].dur": [
+    "number"
+  ],
+  "mixInfo.song[].end": [
+    "number"
+  ],
+  "mixInfo.song[].id": [
+    "string"
+  ],
+  "mixInfo.song[].introEnd": [
+    "number"
+  ],
+  "mixInfo.song[].outroStart": [
+    "number"
+  ],
+  "mixInfo.song[].start": [
+    "number"
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "podcastEpisode": [
+    "object"
+  ],
+  "podcastEpisode.album": [
+    "string"
+  ],
+  "podcastEpisode.artist": [
+    "string"
+  ],
+  "podcastEpisode.channelId": [
+    "string"
+  ],
+  "podcastEpisode.contentType": [
+    "string"
+  ],
+  "podcastEpisode.coverArt": [
+    "string"
+  ],
+  "podcastEpisode.description": [
+    "string"
+  ],
+  "podcastEpisode.downloaded": [
+    "boolean"
+  ],
+  "podcastEpisode.duration": [
+    "number"
+  ],
+  "podcastEpisode.id": [
+    "string"
+  ],
+  "podcastEpisode.isDir": [
+    "boolean"
+  ],
+  "podcastEpisode.mediaType": [
+    "string"
+  ],
+  "podcastEpisode.parent": [
+    "string"
+  ],
+  "podcastEpisode.played": [
+    "boolean"
+  ],
+  "podcastEpisode.position": [
+    "number"
+  ],
+  "podcastEpisode.publishDate": [
+    "string"
+  ],
+  "podcastEpisode.size": [
+    "number"
+  ],
+  "podcastEpisode.status": [
+    "string"
+  ],
+  "podcastEpisode.streamId": [
+    "string"
+  ],
+  "podcastEpisode.suffix": [
+    "string"
+  ],
+  "podcastEpisode.title": [
+    "string"
+  ],
+  "podcastEpisode.type": [
+    "string"
+  ]
+}

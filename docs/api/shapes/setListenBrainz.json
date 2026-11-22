@@ -1,0 +1,35 @@
+{
+  "scrobbling": [
+    "object"
+  ],
+  "scrobbling.lastfm": [
+    "object"
+  ],
+  "scrobbling.lastfm.available": [
+    "boolean"
+  ],
+  "scrobbling.lastfm.broken": [
+    "boolean"
+  ],
+  "scrobbling.lastfm.linked": [
+    "boolean"
+  ],
+  "scrobbling.lastfm.name": [
+    "string"
+  ],
+  "scrobbling.listenbrainz": [
+    "object"
+  ],
+  "scrobbling.listenbrainz.broken": [
+    "boolean"
+  ],
+  "scrobbling.listenbrainz.fromSettings": [
+    "boolean"
+  ],
+  "scrobbling.listenbrainz.linked": [
+    "boolean"
+  ],
+  "scrobbling.listenbrainz.name": [
+    "string"
+  ]
+}

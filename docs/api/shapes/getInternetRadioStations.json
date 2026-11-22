@@ -1,0 +1,20 @@
+{
+  "internetRadioStations": [
+    "object"
+  ],
+  "internetRadioStations.{key}": [
+    "array"
+  ],
+  "internetRadioStations.{key}[]": [
+    "object"
+  ],
+  "internetRadioStations.{key}[].id": [
+    "string"
+  ],
+  "internetRadioStations.{key}[].name": [
+    "string"
+  ],
+  "internetRadioStations.{key}[].streamUrl": [
+    "string"
+  ]
+}

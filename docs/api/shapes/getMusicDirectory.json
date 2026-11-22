@@ -1,0 +1,185 @@
+{
+  "directory": [
+    "object"
+  ],
+  "directory.child": [
+    "array"
+  ],
+  "directory.child[]": [
+    "object"
+  ],
+  "directory.child[].album": [
+    "string"
+  ],
+  "directory.child[].albumArtists": [
+    "array"
+  ],
+  "directory.child[].albumArtists[]": [
+    "object"
+  ],
+  "directory.child[].albumArtists[].id": [
+    "string"
+  ],
+  "directory.child[].albumArtists[].name": [
+    "string"
+  ],
+  "directory.child[].albumId": [
+    "string"
+  ],
+  "directory.child[].artist": [
+    "string"
+  ],
+  "directory.child[].artistId": [
+    "string"
+  ],
+  "directory.child[].artists": [
+    "array"
+  ],
+  "directory.child[].artists[]": [
+    "object"
+  ],
+  "directory.child[].artists[].id": [
+    "string"
+  ],
+  "directory.child[].artists[].name": [
+    "string"
+  ],
+  "directory.child[].bitDepth": [
+    "number"
+  ],
+  "directory.child[].bitRate": [
+    "number"
+  ],
+  "directory.child[].bpm": [
+    "number"
+  ],
+  "directory.child[].channelCount": [
+    "number"
+  ],
+  "directory.child[].comment": [
+    "string"
+  ],
+  "directory.child[].contentType": [
+    "string"
+  ],
+  "directory.child[].contributors": [
+    "array"
+  ],
+  "directory.child[].coverArt": [
+    "string"
+  ],
+  "directory.child[].created": [
+    "string"
+  ],
+  "directory.child[].displayArtist": [
+    "string"
+  ],
+  "directory.child[].displayComposer": [
+    "string"
+  ],
+  "directory.child[].duration": [
+    "number"
+  ],
+  "directory.child[].explicitStatus": [
+    "string"
+  ],
+  "directory.child[].genre": [
+    "string"
+  ],
+  "directory.child[].genres": [
+    "array"
+  ],
+  "directory.child[].genres[]": [
+    "object"
+  ],
+  "directory.child[].genres[].name": [
+    "string"
+  ],
+  "directory.child[].id": [
+    "string"
+  ],
+  "directory.child[].isDir": [
+    "boolean"
+  ],
+  "directory.child[].isVideo": [
+    "boolean"
+  ],
+  "directory.child[].isrc": [
+    "array"
+  ],
+  "directory.child[].isrc[]": [
+    "string"
+  ],
+  "directory.child[].mediaType": [
+    "string"
+  ],
+  "directory.child[].moods": [
+    "array"
+  ],
+  "directory.child[].musicBrainzId": [
+    "string"
+  ],
+  "directory.child[].parent": [
+    "string"
+  ],
+  "directory.child[].path": [
+    "string"
+  ],
+  "directory.child[].playCount": [
+    "number"
+  ],
+  "directory.child[].replayGain": [
+    "object"
+  ],
+  "directory.child[].replayGain.trackGain": [
+    "number"
+  ],
+  "directory.child[].samplingRate": [
+    "number"
+  ],
+  "directory.child[].size": [
+    "number"
+  ],
+  "directory.child[].sortName": [
+    "string"
+  ],
+  "directory.child[].suffix": [
+    "string"
+  ],
+  "directory.child[].title": [
+    "string"
+  ],
+  "directory.child[].track": [
+    "number"
+  ],
+  "directory.child[].type": [
+    "string"
+  ],
+  "directory.child[].userRating": [
+    "number"
+  ],
+  "directory.child[].year": [
+    "number"
+  ],
+  "directory.child[].{key}": [
+    "string"
+  ],
+  "directory.id": [
+    "string"
+  ],
+  "directory.name": [
+    "string"
+  ],
+  "directory.parent": [
+    "string"
+  ],
+  "directory.playCount": [
+    "number"
+  ],
+  "directory.songCount": [
+    "number"
+  ],
+  "directory.userRating": [
+    "number"
+  ]
+}

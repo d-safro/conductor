@@ -1,0 +1,53 @@
+{
+  "artistInfo": [
+    "object"
+  ],
+  "artistInfo.biography": [
+    "string"
+  ],
+  "artistInfo.largeImageUrl": [
+    "string"
+  ],
+  "artistInfo.mediumImageUrl": [
+    "string"
+  ],
+  "artistInfo.musicBrainzId": [
+    "string"
+  ],
+  "artistInfo.similarArtist": [
+    "array"
+  ],
+  "artistInfo.similarArtist[]": [
+    "object"
+  ],
+  "artistInfo.similarArtist[].albumCount": [
+    "number"
+  ],
+  "artistInfo.similarArtist[].coverArt": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].id": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].musicBrainzId": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].name": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].roles": [
+    "array"
+  ],
+  "artistInfo.similarArtist[].roles[]": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].sortName": [
+    "string"
+  ],
+  "artistInfo.similarArtist[].userRating": [
+    "number"
+  ],
+  "artistInfo.smallImageUrl": [
+    "string"
+  ]
+}

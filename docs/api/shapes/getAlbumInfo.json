@@ -1,0 +1,20 @@
+{
+  "albumInfo": [
+    "object"
+  ],
+  "albumInfo.largeImageUrl": [
+    "string"
+  ],
+  "albumInfo.mediumImageUrl": [
+    "string"
+  ],
+  "albumInfo.musicBrainzId": [
+    "string"
+  ],
+  "albumInfo.notes": [
+    "string"
+  ],
+  "albumInfo.smallImageUrl": [
+    "string"
+  ]
+}

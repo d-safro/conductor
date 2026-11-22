@@ -1,0 +1,173 @@
+{
+  "song": [
+    "object"
+  ],
+  "song.album": [
+    "string"
+  ],
+  "song.albumArtists": [
+    "array"
+  ],
+  "song.albumArtists[]": [
+    "object"
+  ],
+  "song.albumArtists[].id": [
+    "string"
+  ],
+  "song.albumArtists[].name": [
+    "string"
+  ],
+  "song.albumId": [
+    "string"
+  ],
+  "song.artist": [
+    "string"
+  ],
+  "song.artistId": [
+    "string"
+  ],
+  "song.artists": [
+    "array"
+  ],
+  "song.artists[]": [
+    "object"
+  ],
+  "song.artists[].id": [
+    "string"
+  ],
+  "song.artists[].name": [
+    "string"
+  ],
+  "song.bitDepth": [
+    "number"
+  ],
+  "song.bitRate": [
+    "number"
+  ],
+  "song.bpm": [
+    "number"
+  ],
+  "song.channelCount": [
+    "number"
+  ],
+  "song.comment": [
+    "string"
+  ],
+  "song.contentType": [
+    "string"
+  ],
+  "song.contributors": [
+    "array"
+  ],
+  "song.coverArt": [
+    "string"
+  ],
+  "song.created": [
+    "string"
+  ],
+  "song.discNumber": [
+    "number"
+  ],
+  "song.displayArtist": [
+    "string"
+  ],
+  "song.displayComposer": [
+    "string"
+  ],
+  "song.duration": [
+    "number"
+  ],
+  "song.explicitStatus": [
+    "string"
+  ],
+  "song.genre": [
+    "string"
+  ],
+  "song.genres": [
+    "array"
+  ],
+  "song.genres[]": [
+    "object"
+  ],
+  "song.genres[].name": [
+    "string"
+  ],
+  "song.id": [
+    "string"
+  ],
+  "song.isDir": [
+    "boolean"
+  ],
+  "song.isVideo": [
+    "boolean"
+  ],
+  "song.isrc": [
+    "array"
+  ],
+  "song.isrc[]": [
+    "string"
+  ],
+  "song.lookupState": [
+    "number"
+  ],
+  "song.mediaType": [
+    "string"
+  ],
+  "song.moods": [
+    "array"
+  ],
+  "song.musicBrainzId": [
+    "string"
+  ],
+  "song.parent": [
+    "string"
+  ],
+  "song.path": [
+    "string"
+  ],
+  "song.playCount": [
+    "number"
+  ],
+  "song.played": [
+    "string"
+  ],
+  "song.replayGain": [
+    "object"
+  ],
+  "song.replayGain.trackGain": [
+    "number"
+  ],
+  "song.samplingRate": [
+    "number"
+  ],
+  "song.size": [
+    "number"
+  ],
+  "song.sortName": [
+    "string"
+  ],
+  "song.starred": [
+    "string"
+  ],
+  "song.suffix": [
+    "string"
+  ],
+  "song.title": [
+    "string"
+  ],
+  "song.track": [
+    "number"
+  ],
+  "song.type": [
+    "string"
+  ],
+  "song.userRating": [
+    "number"
+  ],
+  "song.year": [
+    "number"
+  ],
+  "song.{key}": [
+    "string"
+  ]
+}

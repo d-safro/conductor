@@ -1,0 +1,38 @@
+{
+  "import": [
+    "object"
+  ],
+  "import.created": [
+    "number"
+  ],
+  "import.done": [
+    "null"
+  ],
+  "import.error": [
+    "null"
+  ],
+  "import.from": [
+    "string"
+  ],
+  "import.id": [
+    "string"
+  ],
+  "import.options": [
+    "object"
+  ],
+  "import.progress": [
+    "number"
+  ],
+  "import.report": [
+    "object"
+  ],
+  "import.source": [
+    "string"
+  ],
+  "import.status": [
+    "string"
+  ],
+  "import.userId": [
+    "string"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "artists": [
+    "object"
+  ],
+  "artists.ignoredArticles": [
+    "string"
+  ],
+  "artists.index": [
+    "array"
+  ],
+  "artists.index[]": [
+    "object"
+  ],
+  "artists.index[].artist": [
+    "array"
+  ],
+  "artists.index[].artist[]": [
+    "object"
+  ],
+  "artists.index[].artist[].albumCount": [
+    "number"
+  ],
+  "artists.index[].artist[].coverArt": [
+    "string"
+  ],
+  "artists.index[].artist[].id": [
+    "string"
+  ],
+  "artists.index[].artist[].musicBrainzId": [
+    "string"
+  ],
+  "artists.index[].artist[].name": [
+    "string"
+  ],
+  "artists.index[].artist[].roles": [
+    "array"
+  ],
+  "artists.index[].artist[].roles[]": [
+    "string"
+  ],
+  "artists.index[].artist[].sortName": [
+    "string"
+  ],
+  "artists.index[].artist[].userRating": [
+    "number"
+  ],
+  "artists.index[].name": [
+    "string"
+  ],
+  "artists.lastModified": [
+    "number"
+  ]
+}

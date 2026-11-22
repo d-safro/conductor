@@ -18,6 +18,28 @@ jobs:
         run: choco install ffmpeg -y --no-progress
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  api-contract:
+    # The shape of every answer (docs/api/shapes/, see the contract module in tests/api.rs) recorded again: a field
+    # added, dropped or changed shows as a change here, which fails until the files (and the docs) are updated.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: CONDUCTOR_BLESS=1 cargo test --test api
+      - name: the recorded shapes are the committed ones
+        run: |
+          git status --porcelain docs/api/shapes
+          git diff --stat --exit-code docs/api/shapes
+          test -z "$(git status --porcelain docs/api/shapes)"
+  audit:
+    # Known vulnerabilities in the crates Conductor uses (the RustSec advisory database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-audit }
+      - run: cargo audit
   windows-service:
     # The release build installed as a Windows service with install.ps1 (as a user would, no questions asked),
     # checked from outside, restarted, then removed with uninstall.ps1.
