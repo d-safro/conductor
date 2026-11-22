@@ -115,6 +115,22 @@ fn private(path: &Path, text: &str) -> Result<()> {
     crate::config::write_private(path, text.as_bytes()).with_context(|| format!("writing {}", path.display()))
 }
 
+/// SELinux (Fedora, RHEL…) keeps containers out of folders that aren't labelled for them: with it, every folder
+/// mounted gets `:z` (Docker labels it once, shared). Elsewhere nothing is added.
+pub fn selinux() -> bool {
+    std::fs::read_to_string("/sys/fs/selinux/enforce").is_ok()
+}
+
+/// A mount's options: "" / ":z", or for read-only ":ro" / ":ro,z".
+pub fn opts(read_only: bool) -> &'static str {
+    match (read_only, selinux()) {
+        (false, false) => "",
+        (false, true) => ":z",
+        (true, false) => ":ro",
+        (true, true) => ":ro,z",
+    }
+}
+
 pub fn q(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_default()
 }
@@ -144,9 +160,10 @@ pub struct Lidarr<'a> {
 pub fn lidarr(dir: &Path, l: &Lidarr) -> Result<()> {
     let (uid, gid) = ids();
     private(&dir.join("lidarr.env"), &format!("# Lidarr's API key (Conductor has the same one). Keep it to yourself.\nLIDARR__AUTH__APIKEY={}\n", l.key))?;
-    let mut vols = format!("      - ./lidarr:/config\n      - {}\n", q(&format!("{0}:{0}", l.music)));
+    let z = opts(false);
+    let mut vols = format!("      - ./lidarr:/config{z}\n      - {}\n", q(&format!("{0}:{0}{z}", l.music)));
     if let Some(d) = l.downloads.filter(|d| !d.is_empty() && *d != l.music) {
-        vols += &format!("      - {}\n", q(&format!("{d}:{d}")));
+        vols += &format!("      - {}\n", q(&format!("{d}:{d}{z}")));
     }
     let yaml = format!(
         "# Lidarr: albums you want, which Conductor fetches from Soulseek (Stagehand) and files into your music.
@@ -221,7 +238,7 @@ services:
     container_name: conductor-audiomuse-db
     env_file: [audiomuse.env]
     volumes:
-      - ./audiomuse/db:/var/lib/postgresql/data
+      - ./audiomuse/db:/var/lib/postgresql/data{z}
     restart: unless-stopped
   audiomuse:
     image: ghcr.io/neptunehub/audiomuse-ai:latest
@@ -232,7 +249,7 @@ services:
       SERVICE_TYPE: flask
     extra_hosts: [\"host.docker.internal:host-gateway\"]
     volumes:
-      - ./audiomuse/plugins:/app/plugin/installed
+      - ./audiomuse/plugins:/app/plugin/installed{z}
     ports:
       - \"127.0.0.1:{port}:8000\"
     restart: unless-stopped
@@ -245,10 +262,11 @@ services:
       SERVICE_TYPE: worker
     extra_hosts: [\"host.docker.internal:host-gateway\"]
     volumes:
-      - ./audiomuse/plugins-worker:/app/plugin/installed
+      - ./audiomuse/plugins-worker:/app/plugin/installed{z}
     restart: unless-stopped
 ",
         port = a.port,
+        z = opts(false),
     );
     write_part(dir, "audiomuse", &yaml, &[])
 }
@@ -270,14 +288,15 @@ services:
       OUT: /out
     volumes:
       - {music}
-      - ./pitch/data:/out
+      - ./pitch/data:/out{z}
     ports:
       - \"127.0.0.1:{port}:4540\"
     cpus: 1
     mem_limit: 768m
     restart: unless-stopped
 ",
-        music = q(&format!("{music}:/music:ro")),
+        music = q(&format!("{music}:/music{}", opts(true))),
+        z = opts(false),
     );
     std::fs::create_dir_all(dir.join("pitch/data"))?;
     write_part(dir, "pitch", &yaml, PITCH_FILES)
@@ -307,8 +326,8 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 ",
-        music = q(&format!("{music}:/music:ro")),
-        out = q(&format!("{out}:/out")),
+        music = q(&format!("{music}:/music{}", opts(true))),
+        out = q(&format!("{out}:/out{}", opts(false))),
     );
     write_part(dir, "metronome", &yaml, METRONOME_FILES)
 }
@@ -322,6 +341,7 @@ pub fn ai(dir: &Path, ollama_port: Option<u16>, voice_port: u16) -> Result<()> {
 services:
 ",
     );
+    let z = opts(false);
     if let Some(p) = ollama_port {
         yaml += &format!(
             "  ollama:
@@ -330,7 +350,7 @@ services:
     environment:
       OLLAMA_KEEP_ALIVE: 10m
     volumes:
-      - ./ollama:/root/.ollama
+      - ./ollama:/root/.ollama{z}
     ports:
       - \"127.0.0.1:{p}:11434\"
     restart: unless-stopped
@@ -346,7 +366,7 @@ services:
     environment:
       HOME: /tmp
     volumes:
-      - ./voice/voices:/voices
+      - ./voice/voices:/voices{z}
     ports:
       - \"127.0.0.1:{voice_port}:4541\"
     mem_limit: 512m

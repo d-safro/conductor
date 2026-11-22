@@ -114,13 +114,14 @@ services:
       - \"127.0.0.1:{web}:5030\"   # slskd's web page, and Conductor's way in
       - \"{listen}:{listen}\"      # Soulseek: other people connect here
     volumes:
-      - ./slskd:/app
+      - ./slskd:/app{z}
       - {downloads}
     restart: unless-stopped
 ",
             web = s.web_port,
             listen = s.listen_port,
-            downloads = q(&format!("{}:/app/downloads", s.downloads.display())),
+            z = super::stack::opts(false),
+            downloads = q(&format!("{}:/app/downloads{}", s.downloads.display(), super::stack::opts(false))),
         );
     }
     format!(
@@ -137,7 +138,7 @@ services:
       HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH: /gluetun/auth/config.toml
       VPN_PORT_FORWARDING: \"{pf}\"
     volumes:
-      - ./gluetun:/gluetun
+      - ./gluetun:/gluetun{z}
     ports:
       - \"127.0.0.1:{web}:5030\"     # slskd (its web page and Conductor's way in)
       - \"127.0.0.1:{control}:8000\"  # gluetun's control server (the VPN check, the forwarded port)
@@ -152,14 +153,15 @@ services:
     environment:
       SLSKD_REMOTE_CONFIGURATION: \"true\"
     volumes:
-      - ./slskd:/app
+      - ./slskd:/app{z}
       - {downloads}
     restart: unless-stopped
 ",
+        z = super::stack::opts(false),
         pf = if s.port_forwarding { "on" } else { "off" },
         web = s.web_port,
         control = s.control_port,
-        downloads = q(&format!("{}:/app/downloads", s.downloads.display())),
+        downloads = q(&format!("{}:/app/downloads{}", s.downloads.display(), super::stack::opts(false))),
     )
 }
 

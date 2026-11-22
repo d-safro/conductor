@@ -3554,3 +3554,17 @@ async fn web_apps_from_elsewhere_can_use_the_api() {
     let a = s.http.get(format!("{}/admin/api/status", s.base)).header("origin", "http://player.example").send().await.unwrap();
     assert!(a.headers().get("access-control-allow-origin").is_none());
 }
+
+#[tokio::test]
+async fn a_service_account_doesnt_block_the_first_admin() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = db::open(&dir.path().join("c.db")).await.unwrap();
+    let secrets = Secrets::load_or_create(&dir.path().join("secret.key")).unwrap();
+    // Prelude made AudioMuse's account before anyone had an admin
+    auth::create_user(&pool, &secrets, "audiomuse", "service pass", false).await.unwrap();
+    assert_eq!(auth::admin_count(&pool).await.unwrap(), 0);
+    assert!(auth::create_first_admin(&pool, &secrets, "me", "my pass 1").await.unwrap().is_some());
+    // once there's an admin, nobody else can claim it
+    assert!(auth::create_first_admin(&pool, &secrets, "someone", "their pass").await.unwrap().is_none());
+    assert_eq!(auth::admin_count(&pool).await.unwrap(), 1);
+}

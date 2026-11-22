@@ -43,7 +43,7 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | Setting | Default | What it does |
 |---|---|---|
 | `catalog` | true | Songs you don't have (⬇) in searches, albums and artists (from Deezer). When it isn't set, it's on only if something can get those songs (slskd or Lidarr): without downloads, nothing shows that can't be played. |
-| `catalog_skip_clients` | vec!["symfonium"] | Apps that never get ⬇ items (part of the client name, any case). |
+| `catalog_skip_clients` | ["symfonium", "audiomuse"] | Apps that never get ⬇ items (part of the client name, any case). |
 | `deezer_url` | "https://api.deezer.com" | Apps that never get ⬇ items (part of the client name, any case). |
 | `slskd_url` | (not set) | slskd (Soulseek) for downloading songs asked for: its address and API key. |
 | `slskd_api_key` | (not set) | slskd (Soulseek) for downloading songs asked for: its address and API key. |
@@ -108,7 +108,7 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | `listenbrainz_token` | (not set) | ListenBrainz: plays are sent there (as Navidrome did), and its weekly playlists become discovery playlists. |
 | `listenbrainz_for` | (not set) | Whose plays go to ListenBrainz and who owns the discovery playlists (default: the first admin). |
 | `listenbrainz_url` | "https://api.listenbrainz.org" | Whose plays go to ListenBrainz and who owns the discovery playlists (default: the first admin). |
-| `discovery` | vec!["weekly-exploration", "weekly-jams", "daily-jams"] | Which ListenBrainz playlists to turn into discovery playlists ([] = none). |
+| `discovery` | ["weekly-exploration", "weekly-jams", "daily-jams"] | Which ListenBrainz playlists to turn into discovery playlists ([] = none). |
 | `lastfm_url` | "https://ws.audioscrobbler.com/2.0" | Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create). |
 | `lastfm_api_key` | (not set) | Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create). |
 | `spotify_sync` | true | Spotify sync (spotify.py's "songs" mode): your Liked Songs and chosen playlists become playlists here; songs you don't have are asked for. The login and choices come from `import-music-lookup` (spotify/ folder). |

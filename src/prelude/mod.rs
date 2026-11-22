@@ -43,7 +43,7 @@ const VALUE_FLAGS: &[&str] = &[
     "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
     "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service",
 ];
-const SWITCHES: &[&str] = &["yes", "no-downloads", "require-vpn", "no-require-vpn", "port-forwarding", "start", "ai", "scan", "proxy-metadata"];
+const SWITCHES: &[&str] = &["yes", "no-downloads", "require-vpn", "no-require-vpn", "port-forwarding", "start", "pull-model", "ai", "scan", "proxy-metadata"];
 
 /// `conductor setup [SECTION] [--yes] [--flag value …]`.
 #[derive(Debug, Default)]
@@ -204,7 +204,8 @@ Parts: music, server, admin, downloads, vpn, services, import, service (default:
   --vpn proxy --proxy URL [--proxy-metadata]
   --vpn none
   --require-vpn | --no-require-vpn   (pause downloads while the VPN is down)
-  --docker lidarr,audiomuse,pitch,metronome,ai   (set those up for you, in Docker; with --start, started)
+  --docker lidarr,audiomuse,pitch,metronome,ai   (set those up for you, in Docker; with --start, started;
+        --pull-model also fetches the AI model, a few GB)
   --lidarr-url --lidarr-key  --listenbrainz-token  --lastfm-key  --audiomuse-url --audiomuse-token
   --songid-url  --mixinfo-dir  --jam-public-url  --ai --ollama-url --dj-voice-url
   --import-navidrome DB  --import-music-lookup DIR  --transpose EXPORT
@@ -995,7 +996,8 @@ impl Wizard<'_> {
         }
         if made.contains(&"ai") {
             let model = self.d.str("translate_model").unwrap_or_else(|| Config::default().translate_model);
-            if self.ui.yes(&format!("Fetch the AI model now ({model}, a few GB)?"), self.f.has("start")) {
+            // a few GB: only when asked for (--pull-model), never just because the services were started
+            if self.ui.yes(&format!("Fetch the AI model now ({model}, a few GB)?"), self.f.has("pull-model")) {
                 let target = if stack::has_part(&dir, "ai") && std::fs::read_to_string(dir.join("ai.yml")).is_ok_and(|t| t.contains("conductor-ollama")) { "conductor-ollama" } else { "" };
                 if target.is_empty() {
                     self.ui.say(&format!("  On the Ollama already running here: ollama pull {model}"));

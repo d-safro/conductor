@@ -125,9 +125,10 @@ pub fn docker_yaml(d: &Draft) -> String {
     }
     let (uid, gid) = ids();
     let q = |s: &str| serde_json::to_string(s).unwrap_or_default();
-    let mut vols = format!("      - {}\n", q(&format!("{data}:{data}")));
+    let z = super::stack::opts(false);
+    let mut vols = format!("      - {}\n", q(&format!("{data}:{data}{z}")));
     for f in &folders {
-        vols += &format!("      - {}\n", q(&format!("{f}:{f}")));
+        vols += &format!("      - {}\n", q(&format!("{f}:{f}{z}")));
     }
     format!(
         "# Conductor in Docker, made by `conductor setup`. Start: docker compose -f conductor-compose.yml up -d

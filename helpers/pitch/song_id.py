@@ -36,12 +36,18 @@ def log(*a):
 
 def decode(path_or_bytes, seconds=None):
     """Mono 8 kHz floats from a file path or bytes (anything ffmpeg reads)."""
-    src = "pipe:0" if isinstance(path_or_bytes, (bytes, bytearray)) else path_or_bytes
-    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", src]
+    if isinstance(path_or_bytes, (bytes, bytearray)):
+        # a recording: through a file, not a pipe. A phone's M4A keeps its index at the end, which ffmpeg can only
+        # reach in a file it can seek in ("partial file" from a pipe).
+        with tempfile.NamedTemporaryFile(suffix=".rec") as f:
+            f.write(path_or_bytes)
+            f.flush()
+            return decode(f.name, seconds)
+    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", path_or_bytes]
     if seconds:
         cmd += ["-t", str(seconds)]
     cmd += ["-ac", "1", "-ar", str(SR), "-f", "s16le", "-"]
-    r = subprocess.run(cmd, input=path_or_bytes if src == "pipe:0" else None, capture_output=True, timeout=300)
+    r = subprocess.run(cmd, capture_output=True, timeout=300)
     if not r.stdout:
         raise RuntimeError(r.stderr.decode(errors="replace")[:200] or "no audio")
     return np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32) / 32768.0

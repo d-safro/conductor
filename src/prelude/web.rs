@@ -1,4 +1,4 @@
-//! The web side of Prelude: /setup makes the first admin from a browser. It's open only while there are no users,
+//! The web side of Prelude: /setup makes the first admin from a browser. It's open only while there's no admin,
 //! and then only from this computer or with the one-time token Conductor prints when it starts (like Jupyter's), so
 //! nobody else on the network can claim the server first. Once an admin exists it's closed for good. Everything
 //! else is set up with `conductor setup` on the server.
@@ -17,7 +17,7 @@ use crate::api::Shared;
 
 const PAGE: &str = include_str!("../../web/setup/index.html");
 
-/// Open: nobody has an account yet, and the request is from this computer or has the token.
+/// Open: there's no admin yet, and the request is from this computer or has the token.
 pub fn allowed(no_users: bool, local: bool, given: Option<&str>, token: &str) -> bool {
     no_users && (local || given.is_some_and(|g| !g.is_empty() && crate::auth::constant_eq(g, token)))
 }
@@ -50,7 +50,7 @@ fn token_of(req: &Request) -> Option<String> {
 }
 
 async fn no_users(st: &Shared) -> bool {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user").fetch_one(&st.db).await.map(|n| n == 0).unwrap_or(false)
+    crate::auth::admin_count(&st.db).await.map(|n| n == 0).unwrap_or(false)
 }
 
 fn closed() -> Response {

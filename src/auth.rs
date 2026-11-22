@@ -79,7 +79,7 @@ pub async fn create_user(db: &Db, s: &Secrets, name: &str, password: &str, admin
 pub async fn create_first_admin(db: &Db, s: &Secrets, name: &str, password: &str) -> Result<Option<String>> {
     let id = db::random_id();
     let r = sqlx::query(
-        "INSERT INTO user (id, name, password_enc, is_admin, created_at) SELECT ?, ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM user)",
+        "INSERT INTO user (id, name, password_enc, is_admin, created_at) SELECT ?, ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM user WHERE is_admin = 1)",
     )
     .bind(&id)
     .bind(name)
@@ -148,6 +148,12 @@ pub async fn verify_password(db: &Db, s: &Secrets, name: &str, password: &str) -
 
 pub async fn user_count(db: &Db) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM user").fetch_one(db).await?)
+}
+
+/// Admins. With none, the first one can still be made (from the environment, /setup or Prelude), even when a
+/// service's own account (AudioMuse's, which Prelude makes) is already there.
+pub async fn admin_count(db: &Db) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM user WHERE is_admin = 1").fetch_one(db).await?)
 }
 
 /// A new API key for a user (OpenSubsonic apiKeyAuthentication). Only its hash is stored.

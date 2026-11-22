@@ -278,7 +278,7 @@ async fn docker_file_uses_the_same_settings() {
     let text = read(&compose);
     assert!(text.contains("ghcr.io/d-safro/conductor:latest") && text.contains("network_mode: host"), "{text}");
     let music = p.music.to_str().unwrap();
-    assert!(text.contains(&format!("\"{music}:{music}\"")), "the music at the same place: {text}");
+    assert!(text.contains(&format!("\"{music}:{music}")), "the music at the same place: {text}");
     assert!(text.contains(&format!("CONDUCTOR_CONFIG: \"{}\"", p.config.display())), "{text}");
     if prelude::gluetun::has_docker() {
         let ok = std::process::Command::new("docker").args(["compose", "-f"]).arg(&compose).args(["config", "-q"]).status().unwrap().success();

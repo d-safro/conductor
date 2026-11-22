@@ -63,7 +63,7 @@ pub struct AppState {
     pub search_pace: tokio::sync::Mutex<()>,
     /// the VPN downloads go through, as last checked (vpn.rs)
     pub vpn: std::sync::RwLock<crate::vpn::Status>,
-    /// opens /setup from another computer while nobody has an account (printed at start)
+    /// opens /setup from another computer while there's no admin (printed at start)
     pub setup_token: String,
     /// wrong passwords, per user per address
     pub login_fails: crate::auth::Throttle,
@@ -272,13 +272,14 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
     if is_post && method == "importUpload" {
         // the body is the export, whatever it's labelled as; read only once the login is checked (it can be large)
         upload = Some(req.into_body());
+    } else if is_post && method == "identifySong" {
+        // the body is a short recording, whatever it's labelled as (many HTTP libraries call any body a form); the
+        // login is in the query
+        body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
     } else if is_post && is_form {
         if let Ok(b) = to_bytes(req.into_body(), 1 << 20).await {
             pairs.extend(form_urlencoded::parse(&b).into_owned());
         }
-    } else if is_post && method == "identifySong" {
-        // the body is a short recording, not a form (the login is in the query)
-        body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
     }
     let p = Params(pairs);
     let fmt = match p.get("f") {

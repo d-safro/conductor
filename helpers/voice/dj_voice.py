@@ -5,7 +5,7 @@ $VOICES (default en_US-lessac-medium, about 60 MB).
   POST /speak  {"text": "...", "voice": optional}  ->  audio/wav
   GET  /status ->  {"voice": name, "ready": bool}
 """
-import json, os, subprocess, sys, tempfile, threading
+import json, os, shutil, subprocess, sys, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VOICES = os.environ.get("VOICES", "/voices")
@@ -26,15 +26,32 @@ def ready(name=VOICE):
     return os.path.exists(model(name)) and os.path.exists(model(name) + ".json")
 
 
+_download = threading.Lock()
+
+
 def ensure_voice(name=VOICE):
-    """Download the voice the first time (Piper's own downloader, from the official voices repository)."""
+    """Download the voice the first time (Piper's own downloader, from the official voices repository). Into a
+    folder of its own first, then moved into place: a half-downloaded voice never looks ready (Piper would fail on
+    it), and a request that comes during the download waits for it."""
     if ready(name):
         return True
-    os.makedirs(VOICES, exist_ok=True)
-    r = subprocess.run([sys.executable, "-m", "piper.download_voices", "--data-dir", VOICES, name],
-                       capture_output=True, text=True, timeout=600)
-    if r.returncode != 0:
-        log("couldn't download the voice:", (r.stderr or r.stdout)[-300:])
+    with _download:
+        if ready(name):
+            return True
+        os.makedirs(VOICES, exist_ok=True)
+        part = os.path.join(VOICES, ".download-" + name)
+        shutil.rmtree(part, ignore_errors=True)
+        os.makedirs(part)
+        r = subprocess.run([sys.executable, "-m", "piper.download_voices", "--data-dir", part, name],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            log("couldn't download the voice:", (r.stderr or r.stdout)[-300:])
+        else:
+            # the settings first, the model last: ready() needs both
+            for f in [name + ".onnx.json", name + ".onnx"]:
+                if os.path.exists(os.path.join(part, f)):
+                    os.replace(os.path.join(part, f), os.path.join(VOICES, f))
+        shutil.rmtree(part, ignore_errors=True)
     return ready(name)
 
 

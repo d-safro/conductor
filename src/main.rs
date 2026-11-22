@@ -199,14 +199,14 @@ fn read_password() -> Result<String> {
 }
 
 async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>, shutdown: Shutdown) -> Result<()> {
-    if auth::user_count(&pool).await? == 0 {
+    if auth::admin_count(&pool).await? == 0 {
         match (conductor::config::var("ADMIN_USER"), conductor::config::var("ADMIN_PASSWORD")) {
             (Ok(u), Ok(p)) if !u.is_empty() && !p.is_empty() => {
                 auth::create_user(&pool, &secrets, &u, &p, true).await?;
                 info!(user = %u, "first admin created from CONDUCTOR_ADMIN_USER");
             }
             _ => warn!(
-                "no users yet: add one with `conductor user add NAME --admin` or set CONDUCTOR_ADMIN_USER / CONDUCTOR_ADMIN_PASSWORD"
+                "no admin yet: add one with `conductor user add NAME --admin` or set CONDUCTOR_ADMIN_USER / CONDUCTOR_ADMIN_PASSWORD"
             ),
         }
     }
@@ -240,12 +240,12 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         });
     }
 
-    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user").fetch_one(&state.db).await.unwrap_or(1);
-    if users == 0 {
+    let admins: i64 = auth::admin_count(&state.db).await.unwrap_or(1);
+    if admins == 0 {
         let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
         let link = format!("http://{host}:{}/setup?token={}", addr.port(), state.setup_token);
-        info!("No accounts yet. Make the first admin at {link} (or run `conductor setup` here)");
-        println!("No accounts yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
+        info!("No admin yet. Make the first admin at {link} (or run `conductor setup` here)");
+        println!("No admin yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
     }
     let app = api::router(state).layer(api::trace_layer());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;

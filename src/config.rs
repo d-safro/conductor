@@ -174,7 +174,7 @@ impl Default for Config {
             backup_keep: 7,
             backup_dir: None,
             catalog: true,
-            catalog_skip_clients: vec!["symfonium".into()],
+            catalog_skip_clients: vec!["symfonium".into(), "audiomuse".into()],
             deezer_url: "https://api.deezer.com".into(),
             slskd_url: None,
             slskd_api_key: None,
