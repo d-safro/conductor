@@ -342,8 +342,10 @@ pub fn plain(p: PathBuf) -> PathBuf {
 }
 
 /// The drive a path is on (the longest mount point it's under).
+/// (Either may be written the canonical Windows way, \\?\D:\…: both are compared as plain paths.)
 pub fn drive_of<'a>(drives: &'a [Drive], path: &Path) -> Option<&'a Drive> {
-    drives.iter().filter(|d| path.starts_with(&d.mount)).max_by_key(|d| d.mount.as_os_str().len())
+    let path = plain(path.to_path_buf());
+    drives.iter().filter(|d| path.starts_with(plain(d.mount.clone()))).max_by_key(|d| plain(d.mount.clone()).as_os_str().len())
 }
 
 /// Where a new library goes on a drive: Music at its top, or in your home on the system drive (Linux, where / isn't
@@ -478,5 +480,8 @@ mod tests {
         assert_eq!(plain(PathBuf::from(r"\\?\D:\Music")), PathBuf::from(r"D:\Music"));
         assert_eq!(plain(PathBuf::from(r"\\?\UNC\nas\share\Music")), PathBuf::from(r"\\nas\share\Music"));
         assert_eq!(plain(PathBuf::from("/run/media/me/Music")), PathBuf::from("/run/media/me/Music"));
+        // a drive and a path written the two ways still meet
+        let d = vec![Drive { mount: PathBuf::from(r"\\?\E:\"), ..Default::default() }];
+        assert!(drive_of(&d, Path::new(r"E:\Music")).is_some() || !cfg!(windows));
     }
 }

@@ -593,7 +593,8 @@ async fn caddy_points_at_where_conductor_listens() {
 fn drive(mount: &Path, label: &str, free_gb: u64, usb: bool) -> Drive {
     std::fs::create_dir_all(mount).unwrap();
     Drive {
-        mount: std::fs::canonicalize(mount).unwrap(),
+        // as the drives list has them: plain paths (Windows' canonical \\?\C:\… taken off)
+        mount: conductor::prelude::drives::plain(std::fs::canonicalize(mount).unwrap()),
         label: Some(label.into()),
         size: (free_gb * 3) << 30,
         free: free_gb << 30,
