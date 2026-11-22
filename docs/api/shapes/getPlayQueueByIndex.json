@@ -80,6 +80,9 @@
   "playQueueByIndex.entry[].created": [
     "string"
   ],
+  "playQueueByIndex.entry[].displayAlbumArtist": [
+    "string"
+  ],
   "playQueueByIndex.entry[].displayArtist": [
     "string"
   ],
@@ -169,9 +172,6 @@
   ],
   "playQueueByIndex.entry[].year": [
     "number"
-  ],
-  "playQueueByIndex.entry[].{key}": [
-    "string"
   ],
   "playQueueByIndex.position": [
     "number"

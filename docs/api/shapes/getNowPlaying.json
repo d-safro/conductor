@@ -71,6 +71,9 @@
   "nowPlaying.entry[].created": [
     "string"
   ],
+  "nowPlaying.entry[].displayAlbumArtist": [
+    "string"
+  ],
   "nowPlaying.entry[].displayArtist": [
     "string"
   ],
@@ -172,8 +175,5 @@
   ],
   "nowPlaying.entry[].year": [
     "number"
-  ],
-  "nowPlaying.entry[].{key}": [
-    "string"
   ]
 }

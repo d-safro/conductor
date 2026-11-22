@@ -86,6 +86,9 @@
   "playlist.entry[].created": [
     "string"
   ],
+  "playlist.entry[].displayAlbumArtist": [
+    "string"
+  ],
   "playlist.entry[].displayArtist": [
     "string"
   ],
@@ -178,9 +181,6 @@
   ],
   "playlist.entry[].year": [
     "number"
-  ],
-  "playlist.entry[].{key}": [
-    "string"
   ],
   "playlist.id": [
     "string"

@@ -71,6 +71,9 @@
   "randomSongs.song[].created": [
     "string"
   ],
+  "randomSongs.song[].displayAlbumArtist": [
+    "string"
+  ],
   "randomSongs.song[].displayArtist": [
     "string"
   ],
@@ -160,8 +163,5 @@
   ],
   "randomSongs.song[].year": [
     "number"
-  ],
-  "randomSongs.song[].{key}": [
-    "string"
   ]
 }

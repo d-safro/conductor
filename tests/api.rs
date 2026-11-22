@@ -4845,6 +4845,10 @@ mod contract {
 
     type Shape = BTreeMap<String, BTreeSet<String>>;
     static SEEN: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
+    /// What was committed, read before this run writes over it: a field's types are kept (a field that's sometimes
+    /// null, a list that's sometimes empty, seen one way in one run and the other way in another), while the fields
+    /// themselves come from this run alone (so one that's gone shows).
+    static COMMITTED: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
     /// The envelope every answer has (checked by Subsonic apps themselves, and the same for every call).
     const ENVELOPE: &[&str] = &["status", "version", "type", "serverVersion", "openSubsonic", "error"];
 
@@ -4854,7 +4858,8 @@ mod contract {
 
     /// A key that's data, not a field name (a date, an id, a number): one name for all of them.
     fn key(k: &str) -> &str {
-        let id_like = k.len() >= 16 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        // (ids are long and have digits; long field names like displayAlbumArtist don't)
+        let id_like = k.len() >= 16 && k.chars().any(|c| c.is_ascii_digit()) && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
         if k.starts_with(|c: char| c.is_ascii_digit()) || id_like { "{key}" } else { k }
     }
 
@@ -4905,9 +4910,17 @@ mod contract {
         let file = dir().join(format!("{method}.json"));
         if std::env::var_os("CONDUCTOR_BLESS").is_some() {
             let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            let mut committed = COMMITTED.lock().unwrap_or_else(|e| e.into_inner());
+            let before = committed
+                .entry(method.to_string())
+                .or_insert_with(|| std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
             let all = seen.entry(method.to_string()).or_default();
             for (p, t) in shape {
-                all.entry(p).or_default().extend(t);
+                let e = all.entry(p.clone()).or_default();
+                e.extend(t);
+                if let Some(k) = before.get(&p) {
+                    e.extend(k.iter().cloned());
+                }
             }
             std::fs::create_dir_all(dir()).unwrap();
             std::fs::write(&file, serde_json::to_string_pretty(all).unwrap() + "\n").unwrap();

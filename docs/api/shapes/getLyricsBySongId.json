@@ -2,37 +2,37 @@
   "lyricsList": [
     "object"
   ],
-  "lyricsList.{key}": [
+  "lyricsList.structuredLyrics": [
     "array"
   ],
-  "lyricsList.{key}[]": [
+  "lyricsList.structuredLyrics[]": [
     "object"
   ],
-  "lyricsList.{key}[].displayArtist": [
+  "lyricsList.structuredLyrics[].displayArtist": [
     "string"
   ],
-  "lyricsList.{key}[].displayTitle": [
+  "lyricsList.structuredLyrics[].displayTitle": [
     "string"
   ],
-  "lyricsList.{key}[].lang": [
+  "lyricsList.structuredLyrics[].lang": [
     "string"
   ],
-  "lyricsList.{key}[].line": [
+  "lyricsList.structuredLyrics[].line": [
     "array"
   ],
-  "lyricsList.{key}[].line[]": [
+  "lyricsList.structuredLyrics[].line[]": [
     "object"
   ],
-  "lyricsList.{key}[].line[].start": [
+  "lyricsList.structuredLyrics[].line[].start": [
     "number"
   ],
-  "lyricsList.{key}[].line[].value": [
+  "lyricsList.structuredLyrics[].line[].value": [
     "string"
   ],
-  "lyricsList.{key}[].offset": [
+  "lyricsList.structuredLyrics[].offset": [
     "number"
   ],
-  "lyricsList.{key}[].synced": [
+  "lyricsList.structuredLyrics[].synced": [
     "boolean"
   ]
 }

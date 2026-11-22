@@ -88,7 +88,13 @@
   "import.report.changes.playlistsNew": [
     "number"
   ],
+  "import.report.changes.playlistsUpdated": [
+    "number"
+  ],
   "import.report.changes.plays": [
+    "number"
+  ],
+  "import.report.changes.playsAlreadyThere": [
     "number"
   ],
   "import.report.changes.podcasts": [
@@ -101,9 +107,6 @@
     "number"
   ],
   "import.report.changes.skips": [
-    "number"
-  ],
-  "import.report.changes.{key}": [
     "number"
   ],
   "import.report.found": [

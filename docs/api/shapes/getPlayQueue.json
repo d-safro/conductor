@@ -89,6 +89,9 @@
   "playQueue.entry[].discNumber": [
     "number"
   ],
+  "playQueue.entry[].displayAlbumArtist": [
+    "string"
+  ],
   "playQueue.entry[].displayArtist": [
     "string"
   ],
@@ -203,9 +206,6 @@
   ],
   "playQueue.entry[].year": [
     "number"
-  ],
-  "playQueue.entry[].{key}": [
-    "string"
   ],
   "playQueue.position": [
     "number"

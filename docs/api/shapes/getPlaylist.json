@@ -89,6 +89,9 @@
   "playlist.entry[].discNumber": [
     "number"
   ],
+  "playlist.entry[].displayAlbumArtist": [
+    "string"
+  ],
   "playlist.entry[].displayArtist": [
     "string"
   ],
@@ -187,9 +190,6 @@
   ],
   "playlist.entry[].year": [
     "number"
-  ],
-  "playlist.entry[].{key}": [
-    "string"
   ],
   "playlist.id": [
     "string"

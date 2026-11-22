@@ -71,6 +71,9 @@
   "topSongs.song[].created": [
     "string"
   ],
+  "topSongs.song[].displayAlbumArtist": [
+    "string"
+  ],
   "topSongs.song[].displayArtist": [
     "string"
   ],
@@ -160,8 +163,5 @@
   ],
   "topSongs.song[].year": [
     "number"
-  ],
-  "topSongs.song[].{key}": [
-    "string"
   ]
 }

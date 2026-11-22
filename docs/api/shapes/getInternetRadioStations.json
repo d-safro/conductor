@@ -2,19 +2,19 @@
   "internetRadioStations": [
     "object"
   ],
-  "internetRadioStations.{key}": [
+  "internetRadioStations.internetRadioStation": [
     "array"
   ],
-  "internetRadioStations.{key}[]": [
+  "internetRadioStations.internetRadioStation[]": [
     "object"
   ],
-  "internetRadioStations.{key}[].id": [
+  "internetRadioStations.internetRadioStation[].id": [
     "string"
   ],
-  "internetRadioStations.{key}[].name": [
+  "internetRadioStations.internetRadioStation[].name": [
     "string"
   ],
-  "internetRadioStations.{key}[].streamUrl": [
+  "internetRadioStations.internetRadioStation[].streamUrl": [
     "string"
   ]
 }

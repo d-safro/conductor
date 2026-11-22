@@ -80,6 +80,12 @@
   "starred2.album[].name": [
     "string"
   ],
+  "starred2.album[].originalReleaseDate": [
+    "object"
+  ],
+  "starred2.album[].originalReleaseDate.year": [
+    "number"
+  ],
   "starred2.album[].parent": [
     "string"
   ],
@@ -120,12 +126,6 @@
     "string"
   ],
   "starred2.album[].year": [
-    "number"
-  ],
-  "starred2.album[].{key}": [
-    "object"
-  ],
-  "starred2.album[].{key}.year": [
     "number"
   ],
   "starred2.artist": [
@@ -198,6 +198,9 @@
     "string"
   ],
   "starred2.song[].created": [
+    "string"
+  ],
+  "starred2.song[].displayAlbumArtist": [
     "string"
   ],
   "starred2.song[].displayArtist": [
@@ -295,8 +298,5 @@
   ],
   "starred2.song[].year": [
     "number"
-  ],
-  "starred2.song[].{key}": [
-    "string"
   ]
 }

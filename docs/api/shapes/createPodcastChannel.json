@@ -20,6 +20,9 @@
   "podcastChannel.latest": [
     "number"
   ],
+  "podcastChannel.originalImageUrl": [
+    "string"
+  ],
   "podcastChannel.status": [
     "string"
   ],
@@ -30,9 +33,6 @@
     "number"
   ],
   "podcastChannel.url": [
-    "string"
-  ],
-  "podcastChannel.{key}": [
     "string"
   ]
 }

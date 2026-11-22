@@ -71,6 +71,9 @@
   "directory.child[].created": [
     "string"
   ],
+  "directory.child[].displayAlbumArtist": [
+    "string"
+  ],
   "directory.child[].displayArtist": [
     "string"
   ],
@@ -160,9 +163,6 @@
   ],
   "directory.child[].year": [
     "number"
-  ],
-  "directory.child[].{key}": [
-    "string"
   ],
   "directory.id": [
     "string"

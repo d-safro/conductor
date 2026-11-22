@@ -83,6 +83,12 @@
   "searchResult3.album[].name": [
     "string"
   ],
+  "searchResult3.album[].originalReleaseDate": [
+    "object"
+  ],
+  "searchResult3.album[].originalReleaseDate.year": [
+    "number"
+  ],
   "searchResult3.album[].parent": [
     "string"
   ],
@@ -120,12 +126,6 @@
     "string"
   ],
   "searchResult3.album[].year": [
-    "number"
-  ],
-  "searchResult3.album[].{key}": [
-    "object"
-  ],
-  "searchResult3.album[].{key}.year": [
     "number"
   ],
   "searchResult3.artist": [
@@ -236,6 +236,9 @@
   "searchResult3.song[].discNumber": [
     "number"
   ],
+  "searchResult3.song[].displayAlbumArtist": [
+    "string"
+  ],
   "searchResult3.song[].displayArtist": [
     "string"
   ],
@@ -334,8 +337,5 @@
   ],
   "searchResult3.song[].year": [
     "number"
-  ],
-  "searchResult3.song[].{key}": [
-    "string"
   ]
 }

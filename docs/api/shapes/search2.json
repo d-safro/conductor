@@ -77,6 +77,9 @@
   "searchResult2.song[].created": [
     "string"
   ],
+  "searchResult2.song[].displayAlbumArtist": [
+    "string"
+  ],
   "searchResult2.song[].displayArtist": [
     "string"
   ],
@@ -166,8 +169,5 @@
   ],
   "searchResult2.song[].year": [
     "number"
-  ],
-  "searchResult2.song[].{key}": [
-    "string"
   ]
 }

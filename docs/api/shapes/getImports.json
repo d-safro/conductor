@@ -12,10 +12,12 @@
     "number"
   ],
   "imports.import[].done": [
+    "null",
     "number"
   ],
   "imports.import[].error": [
-    "null"
+    "null",
+    "string"
   ],
   "imports.import[].from": [
     "string"
@@ -83,7 +85,13 @@
   "imports.import[].report.changes.playlistsNew": [
     "number"
   ],
+  "imports.import[].report.changes.playlistsUpdated": [
+    "number"
+  ],
   "imports.import[].report.changes.plays": [
+    "number"
+  ],
+  "imports.import[].report.changes.playsAlreadyThere": [
     "number"
   ],
   "imports.import[].report.changes.podcasts": [
@@ -96,9 +104,6 @@
     "number"
   ],
   "imports.import[].report.changes.skips": [
-    "number"
-  ],
-  "imports.import[].report.changes.{key}": [
     "number"
   ],
   "imports.import[].report.found": [

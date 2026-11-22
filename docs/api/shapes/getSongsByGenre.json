@@ -71,6 +71,9 @@
   "songsByGenre.song[].created": [
     "string"
   ],
+  "songsByGenre.song[].displayAlbumArtist": [
+    "string"
+  ],
   "songsByGenre.song[].displayArtist": [
     "string"
   ],
@@ -160,8 +163,5 @@
   ],
   "songsByGenre.song[].year": [
     "number"
-  ],
-  "songsByGenre.song[].{key}": [
-    "string"
   ]
 }

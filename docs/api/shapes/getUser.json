@@ -32,6 +32,9 @@
   "user.podcastRole": [
     "boolean"
   ],
+  "user.scrobblingEnabled": [
+    "boolean"
+  ],
   "user.settingsRole": [
     "boolean"
   ],
@@ -47,7 +50,7 @@
   "user.username": [
     "string"
   ],
-  "user.{key}": [
+  "user.videoConversionRole": [
     "boolean"
   ]
 }

@@ -86,6 +86,12 @@
   "artist.album[].name": [
     "string"
   ],
+  "artist.album[].originalReleaseDate": [
+    "object"
+  ],
+  "artist.album[].originalReleaseDate.year": [
+    "number"
+  ],
   "artist.album[].parent": [
     "string"
   ],
@@ -123,12 +129,6 @@
     "string"
   ],
   "artist.album[].year": [
-    "number"
-  ],
-  "artist.album[].{key}": [
-    "object"
-  ],
-  "artist.album[].{key}.year": [
     "number"
   ],
   "artist.coverArt": [

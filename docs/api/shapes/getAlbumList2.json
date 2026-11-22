@@ -80,6 +80,12 @@
   "albumList2.album[].name": [
     "string"
   ],
+  "albumList2.album[].originalReleaseDate": [
+    "object"
+  ],
+  "albumList2.album[].originalReleaseDate.year": [
+    "number"
+  ],
   "albumList2.album[].parent": [
     "string"
   ],
@@ -120,12 +126,6 @@
     "string"
   ],
   "albumList2.album[].year": [
-    "number"
-  ],
-  "albumList2.album[].{key}": [
-    "object"
-  ],
-  "albumList2.album[].{key}.year": [
     "number"
   ]
 }

@@ -71,6 +71,9 @@
   "sonicMatch[].entry.created": [
     "string"
   ],
+  "sonicMatch[].entry.displayAlbumArtist": [
+    "string"
+  ],
   "sonicMatch[].entry.displayArtist": [
     "string"
   ],
@@ -160,9 +163,6 @@
   ],
   "sonicMatch[].entry.year": [
     "number"
-  ],
-  "sonicMatch[].entry.{key}": [
-    "string"
   ],
   "sonicMatch[].similarity": [
     "number"

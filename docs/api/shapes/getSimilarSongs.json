@@ -71,6 +71,9 @@
   "similarSongs.song[].created": [
     "string"
   ],
+  "similarSongs.song[].displayAlbumArtist": [
+    "string"
+  ],
   "similarSongs.song[].displayArtist": [
     "string"
   ],
@@ -160,8 +163,5 @@
   ],
   "similarSongs.song[].year": [
     "number"
-  ],
-  "similarSongs.song[].{key}": [
-    "string"
   ]
 }

@@ -71,6 +71,9 @@
   "sonicPath[].entry.created": [
     "string"
   ],
+  "sonicPath[].entry.displayAlbumArtist": [
+    "string"
+  ],
   "sonicPath[].entry.displayArtist": [
     "string"
   ],
@@ -160,8 +163,5 @@
   ],
   "sonicPath[].entry.year": [
     "number"
-  ],
-  "sonicPath[].entry.{key}": [
-    "string"
   ]
 }

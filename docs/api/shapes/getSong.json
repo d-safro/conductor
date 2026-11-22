@@ -68,6 +68,9 @@
   "song.discNumber": [
     "number"
   ],
+  "song.displayAlbumArtist": [
+    "string"
+  ],
   "song.displayArtist": [
     "string"
   ],
@@ -166,8 +169,5 @@
   ],
   "song.year": [
     "number"
-  ],
-  "song.{key}": [
-    "string"
   ]
 }

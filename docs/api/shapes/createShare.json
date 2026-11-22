@@ -83,6 +83,9 @@
   "shares.share[].entry[].created": [
     "string"
   ],
+  "shares.share[].entry[].displayAlbumArtist": [
+    "string"
+  ],
   "shares.share[].entry[].displayArtist": [
     "string"
   ],
@@ -172,9 +175,6 @@
   ],
   "shares.share[].entry[].year": [
     "number"
-  ],
-  "shares.share[].entry[].{key}": [
-    "string"
   ],
   "shares.share[].id": [
     "string"
