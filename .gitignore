@@ -5,3 +5,6 @@
 secret.key
 config.toml
 dist
+# the upgrade fixtures: made-up test databases and their test keys (tests/fixtures/upgrade/README.md)
+!tests/fixtures/upgrade/*/*.db
+!tests/fixtures/upgrade/*/secret.key
