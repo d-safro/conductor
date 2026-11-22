@@ -201,10 +201,10 @@ pub async fn tick(st: &AppState) -> Result<()> {
             .fetch_one(&st.db)
             .await?;
             let limit = r.trial_hours.map(|h| (h * 3600.0) as i64).unwrap_or(limit);
+            // hearted or rated 4+ by anyone (it's one file for everyone)
             let liked: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM annotation WHERE user_id = ? AND item_kind = 'track' AND item_id = ? AND (starred_at IS NOT NULL OR rating >= 4)",
+                "SELECT COUNT(*) FROM annotation WHERE item_kind = 'track' AND item_id = ? AND (starred_at IS NOT NULL OR rating >= 4)",
             )
-            .bind(&user)
             .bind(&r.local_id)
             .fetch_one(&st.db)
             .await?;

@@ -4,7 +4,9 @@
 //! that remember ids keep working: users (names, admin flag and passwords: Navidrome keeps them encrypted with its
 //! default key unless it was given its own, --nd-key / CONDUCTOR_ND_PASSWORD_KEY), plays, ratings,
 //! stars, play history, playlists (with their smart rules and uploaded pictures), play queues and radio stations.
-//! The library itself is rescanned from the music folder. Running it again replaces what it brought over before.
+//! The library itself is rescanned from the music folder. It runs only on a server with no plays, hearts,
+//! playlists, play queues or radio stations yet; `--replace` runs it anyway, replacing all of them (what it
+//! brought over before and everything since) with Navidrome's.
 //!
 //! `import-music-lookup <DATA>` adds music-lookup's own records: the listening log (`listening/plays.jsonl`, what
 //! the stats are made from) and the values Encore keeps in step across devices (`encore/sync.json`).
@@ -456,6 +458,9 @@ fn nd_time(s: Option<String>) -> Option<i64> {
     s.and_then(|s| db::parse_iso(&s))
 }
 
+/// `replace`: this server has plays, hearts, playlists… already (from an import before, or since): they're all
+/// replaced by Navidrome's. Without it, the import refuses to run over them.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     cfg: &Config,
     ours: &Db,
@@ -464,7 +469,21 @@ pub async fn run(
     nd_path: &Path,
     artwork: Option<&Path>,
     nd_password_key: Option<&str>,
+    replace: bool,
 ) -> Result<ImportReport> {
+    if !replace {
+        // everything below is replaced, whether it came from Navidrome or was made here since
+        for t in ["annotation", "play", "playlist", "play_queue", "radio", "id_override"] {
+            let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}")).fetch_one(ours).await?;
+            if n > 0 {
+                bail!(
+                    "this server has plays, hearts, playlists or song ids already (from an import before, or since): \
+                     importing replaces them all with Navidrome's. Run it with --replace to do that (a backup first: \
+                     conductor backup)"
+                );
+            }
+        }
+    }
     let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", nd_path.display()))?.read_only(true);
     let nd = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.context("opening the Navidrome database")?;
     let mut rep = ImportReport::default();

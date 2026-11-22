@@ -356,7 +356,8 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
     for q in [format!(r#"artist:"{artist}" album:"{clean}""#), format!("{artist} {clean}")] {
-        for a in st.catalog.dz.list("search/album", &[("q", &q), ("limit", "15")]).await {
+        // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later)
+        for a in st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await? {
             if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
                 cands.push(a);
             }
@@ -401,7 +402,8 @@ pub async fn artist_dz_id(st: &AppState, name: &str) -> Option<String> {
         return hit;
     }
     let mut best: Option<Value> = None;
-    for a in st.catalog.dz.list("search/artist", &[("q", name), ("limit", "10")]).await {
+    // Deezer didn't answer: nothing is kept (it's asked again next time, not a month later)
+    for a in st.catalog.dz.try_list("search/artist", &[("q", name), ("limit", "10")]).await? {
         if ak(s(&a, "name")) == key && best.as_ref().is_none_or(|b| n(&a, "nb_fan") > n(b, "nb_fan")) {
             best = Some(a);
         }
@@ -504,9 +506,11 @@ pub async fn artist_info(st: &AppState, name: &str) -> Option<Value> {
     if let Some(v) = cache_get(st, "artist_info", &key, 7).await {
         return v.and_then(|v| serde_json::from_str(&v).ok());
     }
-    let found = match dz_artist(st, name).await {
+    // Deezer didn't answer: nothing is kept (it's asked again next time)
+    let hits = st.catalog.dz.try_list("search/artist", &[("q", name), ("limit", "1")]).await?;
+    let found = match hits.into_iter().next().filter(|a| same_artist(name, s(a, "name"))) {
         Some(a) => {
-            let related = st.catalog.dz.list(&format!("artist/{}/related", n(&a, "id")), &[("limit", "20")]).await;
+            let related = st.catalog.dz.try_list(&format!("artist/{}/related", n(&a, "id")), &[("limit", "20")]).await?;
             Some(json!({ "artist": a, "related": related }))
         }
         None => None,
@@ -616,20 +620,44 @@ async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool, folde
 /// Ask for this Deezer track. False when Deezer doesn't know it (or, on trial, today's trials are used up).
 /// trial: you played / queued it; it goes to the Trial folder and is deleted unless you keep it.
 pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: Option<&str>, trial: bool) -> Result<bool> {
-    ask_into(st, key, user_id, star, playlist, trial, None).await
+    ask_into(st, key, user_id, star, playlist, trial, By::Someone).await
 }
 
-/// `ask`, filed into `folder` (Discovery/) instead of Songs/ or Trial/. The folder is set before the download
-/// worker can see the request, so it can't be filed anywhere else.
-pub async fn ask_into(
+/// `ask` for a sync that runs by itself (Spotify, ListenBrainz). A new request is filed into `folder` (Discovery/)
+/// instead of Songs/, set before the download worker can see it, so it can't be filed anywhere else; one asked for
+/// before stays where it is filed (someone else may want it). A song Soulseek didn't have is looked for again only
+/// after a week (each sync asks again).
+pub async fn ask_synced(
+    st: &AppState,
+    key: &str,
+    user_id: &str,
+    star: bool,
+    playlist: Option<&str>,
+    folder: Option<&str>,
+) -> Result<bool> {
+    ask_into(st, key, user_id, star, playlist, false, By::Sync(folder)).await
+}
+
+/// Who asks: someone now (a heart, a play, an import), or a sync (with the folder for what it brings).
+#[derive(Clone, Copy)]
+enum By<'a> {
+    Someone,
+    Sync(Option<&'a str>),
+}
+
+async fn ask_into(
     st: &AppState,
     key: &str,
     user_id: &str,
     star: bool,
     playlist: Option<&str>,
     trial: bool,
-    folder: Option<&str>,
+    by: By<'_>,
 ) -> Result<bool> {
+    let (folder, again_after) = match by {
+        By::Someone => (None, 3600),
+        By::Sync(f) => (f, 7 * 86_400),
+    };
     let known: Option<String> =
         sqlx::query_scalar("SELECT status FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
     if trial && known.is_some() && known.as_deref() != Some("notfound") {
@@ -644,7 +672,7 @@ pub async fn ask_into(
         // asked again later: look once more
         sqlx::query("UPDATE request SET status = 'retry', searches = 0, last_search = 0 WHERE key = ? AND last_search < ?")
             .bind(key)
-            .bind(now() - 3600)
+            .bind(now() - again_after)
             .execute(&st.db)
             .await?;
     }
@@ -654,11 +682,13 @@ pub async fn ask_into(
             .bind(key)
             .execute(&st.db)
             .await?;
-        sqlx::query("UPDATE request SET trial = 0, folder = ? WHERE key = ? AND rel IS NULL")
-            .bind(folder.unwrap_or("Songs"))
-            .bind(key)
-            .execute(&st.db)
-            .await?;
+        if folder.is_none() {
+            // (a new one for a folder was filed there already)
+            sqlx::query("UPDATE request SET trial = 0, folder = 'Songs' WHERE key = ? AND rel IS NULL")
+                .bind(key)
+                .execute(&st.db)
+                .await?;
+        }
         sqlx::query("INSERT OR IGNORE INTO request_want (key, user_id, star, playlist_id) VALUES (?, ?, ?, ?)")
             .bind(key)
             .bind(user_id)

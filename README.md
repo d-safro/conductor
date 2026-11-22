@@ -122,8 +122,9 @@ private.
 `conductor import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
-password is carried over from Navidrome's encrypted copy (`--nd-key` if Navidrome had its own key). Running it again
-replaces what it brought over the last time.
+password is carried over from Navidrome's encrypted copy (`--nd-key` if Navidrome had its own key). It runs only on
+a server with no plays, hearts or playlists yet; to run it again, add `--replace`, which replaces all of them (what
+it brought over and everything since) with Navidrome's.
 Then `conductor import-music-lookup <music-lookup DATA folder> [<its state folder with podcasts.json>]` adds
 music-lookup's listening log, Encore's sync values and the podcasts (plays already brought over from Navidrome
 aren't counted twice).

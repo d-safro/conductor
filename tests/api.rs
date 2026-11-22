@@ -672,6 +672,66 @@ async fn podcasts() {
     assert_eq!(s.call("getPodcastEpisode", &[("id", &newer)]).await["error"]["code"], 70);
 }
 
+#[tokio::test]
+async fn podcast_episodes_with_the_same_name_keep_their_own_files() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+        c.podcast_keep = 0;
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    tone(&dir.path().join("a.mp3"), "A", "Host", "Show", 1, 2);
+    tone(&dir.path().join("b.mp3"), "B", "Host", "Show", 2, 4);
+    let (a, b) = (std::fs::read(dir.path().join("a.mp3")).unwrap(), std::fs::read(dir.path().join("b.mp3")).unwrap());
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    // two episodes on one day with one title (a daily show's "News")
+    let feed = format!(
+        r#"<?xml version="1.0"?><rss><channel><title>Daily</title>
+        <item><title>News</title><guid>morning</guid><pubDate>Wed, 11 Nov 2026 08:00:00 +0000</pubDate><enclosure url="{fbase}/a.mp3" type="audio/mpeg"/></item>
+        <item><title>News</title><guid>evening</guid><pubDate>Wed, 11 Nov 2026 18:00:00 +0000</pubDate><enclosure url="{fbase}/b.mp3" type="audio/mpeg"/></item>
+        </channel></rss>"#
+    );
+    let app = axum::Router::new()
+        .route("/feed.xml", axum::routing::get(move || { let f = feed.clone(); async move { ([("content-type", "application/rss+xml")], f) } }))
+        .nest_service("/a.mp3", tower_http::services::ServeFile::new(dir.path().join("a.mp3")))
+        .nest_service("/b.mp3", tower_http::services::ServeFile::new(dir.path().join("b.mp3")));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    tokio::spawn(conductor::api::podcasts::worker(s.st.clone()));
+    s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    let eps = s.ok("getPodcasts", &[]).await["podcasts"]["channel"][0]["episode"].as_array().unwrap().clone();
+    let ids: Vec<String> = eps.iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids.len(), 2);
+    for id in &ids {
+        s.ok("downloadPodcastEpisode", &[("id", id)]).await;
+    }
+    wait_for(
+        async || {
+            let mut all = true;
+            for id in &ids {
+                all &= s.ok("getPodcastEpisode", &[("id", id)]).await["podcastEpisode"]["downloaded"] == true;
+            }
+            all
+        },
+        "both episodes saved",
+    )
+    .await;
+    let body = async |id: &str| s.http.get(s.url("stream", &[("id", id)])).send().await.unwrap().bytes().await.unwrap().to_vec();
+    let (first, second) = (body(&ids[0]).await, body(&ids[1]).await);
+    assert_ne!(first, second, "each has its own file");
+    assert!([&a, &b].contains(&&first) && [&a, &b].contains(&&second));
+    // deleting one leaves the other's file
+    s.ok("deletePodcastEpisode", &[("id", &ids[0])]).await;
+    assert_eq!(body(&ids[1]).await, second);
+    let files: Vec<Option<String>> = sqlx::query_scalar("SELECT file FROM episode").fetch_all(&s.st.db).await.unwrap();
+    let left = files.into_iter().flatten().next().unwrap();
+    assert!(conductor::api::podcasts::folder(&s.st).join(left).is_file());
+}
+
 /// Stand-ins for Deezer (a few songs, albums, artists) and slskd (one peer who has the song).
 async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String, String) {
     use axum::{extract::Request, response::IntoResponse};
@@ -992,6 +1052,72 @@ async fn songs_on_trial_kept() {
     assert!(song["song"]["starred"].is_string());
     let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
     assert_eq!(r["lookupSongs"]["song"][0]["temporary"], false);
+}
+
+#[tokio::test]
+async fn a_trial_song_someone_else_hearted_is_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    s.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
+    let mut local = String::new();
+    wait_for(
+        async || {
+            let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().unwrap_or("").to_string();
+            !local.is_empty()
+        },
+        "the trial song",
+    )
+    .await;
+    // Ann hearts it, not the one who played it
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/star.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&id={local}", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok", "{r}");
+    wait_for(async || s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac").is_file(), "the song to be kept").await;
+}
+
+#[tokio::test]
+async fn a_sync_doesnt_refile_or_search_again_soon() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let me = s.st_user().await;
+    // asked for by someone (filed in Songs), and a song Soulseek didn't have two hours ago
+    for (key, status) in [("dz-t-5", "retry"), ("dz-t-6", "notfound")] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, status, last_search, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', ?, ?, 1)")
+            .bind(key)
+            .bind(status)
+            .bind(conductor::db::now() - 7200)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO request_want (key, user_id, star) VALUES ('dz-t-5', 'someone', 1)").execute(&s.st.db).await.unwrap();
+    let row = async |key: &str| -> (String, String) {
+        sqlx::query_as("SELECT folder, status FROM request WHERE key = ?").bind(key).fetch_one(&s.st.db).await.unwrap()
+    };
+    // a discovery playlist wants them too: they stay where they're filed, and nothing is searched again yet
+    for key in ["dz-t-5", "dz-t-6"] {
+        assert!(conductor::catalog::ask_synced(&s.st, key, &me, false, Some("pl-x"), Some("Discovery")).await.unwrap());
+    }
+    assert_eq!(row("dz-t-5").await, ("Songs".into(), "retry".into()));
+    assert_eq!(row("dz-t-6").await, ("Songs".into(), "notfound".into()));
+    assert!(conductor::catalog::ask_synced(&s.st, "dz-t-6", &me, true, None, None).await.unwrap());
+    assert_eq!(row("dz-t-6").await.1, "notfound", "a Spotify sync doesn't either");
+    // someone asking for it now: looked for again
+    assert!(conductor::catalog::ask(&s.st, "dz-t-6", &me, true, None, false).await.unwrap());
+    assert_eq!(row("dz-t-6").await.1, "retry");
 }
 
 #[tokio::test]
@@ -1409,23 +1535,30 @@ async fn listenbrainz_discovery_and_plays() {
         return;
     }
     let week = Arc::new(std::sync::atomic::AtomicU8::new(1));
+    let jams = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let listens = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let lb = format!("http://{}", l.local_addr().unwrap());
-    let (w2, l2) = (week.clone(), listens.clone());
+    let (w2, j2, l2) = (week.clone(), jams.clone(), listens.clone());
     let app = axum::Router::new().fallback(move |req: Request| {
-        let (week, listens) = (w2.clone(), l2.clone());
+        let (week, jams, listens) = (w2.clone(), j2.clone(), l2.clone());
         async move {
             let w = week.load(std::sync::atomic::Ordering::SeqCst);
+            let j = jams.load(std::sync::atomic::Ordering::SeqCst);
             let path = req.uri().path().to_string();
             let body = match path.as_str() {
-                "/1/user/lbuser/playlists/createdfor" => json!({ "playlists": [
-                    { "playlist": { "title": format!("Weekly Exploration for lbuser, week {w}"), "identifier": format!("https://listenbrainz.org/playlist/pl-{w}"), "date": format!("2026-11-{:02}T00:00:00", 10 + w) } },
-                    { "playlist": { "title": "Weekly Jams for lbuser", "identifier": "https://listenbrainz.org/playlist/jams", "date": "2026-11-01T00:00:00" } }] }),
+                "/1/user/lbuser/playlists/createdfor" => {
+                    let mut lists = vec![json!({ "playlist": { "title": format!("Weekly Exploration for lbuser, week {w}"), "identifier": format!("https://listenbrainz.org/playlist/pl-{w}"), "date": format!("2026-11-{:02}T00:00:00", 10 + w) } })];
+                    if j > 0 {
+                        lists.push(json!({ "playlist": { "title": "Weekly Jams for lbuser", "identifier": format!("https://listenbrainz.org/playlist/jams-{j}"), "date": "2026-11-01T00:00:00" } }));
+                    }
+                    json!({ "playlists": lists })
+                }
                 "/1/playlist/pl-1" => json!({ "playlist": { "track": [
                     { "title": "One", "creator": "Alpha", "album": "First Album" },
                     { "title": "Psycho Killer", "creator": "Talking Heads", "album": "Talking Heads: 77", "duration": 3000 }] } }),
                 "/1/playlist/pl-2" => json!({ "playlist": { "track": [{ "title": "Two", "creator": "Alpha" }] } }),
+                "/1/playlist/jams-1" => json!({ "playlist": { "track": [{ "title": "Two", "creator": "Alpha" }] } }),
                 "/1/submit-listens" => {
                     assert_eq!(req.headers()["authorization"], "Token lbtok");
                     let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
@@ -1442,7 +1575,7 @@ async fn listenbrainz_discovery_and_plays() {
         c.listenbrainz_url = lb.clone();
         c.listenbrainz_user = Some("lbuser".into());
         c.listenbrainz_token = Some("lbtok".into());
-        c.discovery = vec!["weekly-exploration".into()];
+        c.discovery = vec!["weekly-exploration".into(), "weekly-jams".into()];
     })
     .await;
     tokio::spawn(conductor::listenbrainz::worker(s.st.clone()));
@@ -1499,7 +1632,24 @@ async fn listenbrainz_discovery_and_plays() {
     )
     .await;
 
-    // week 2: a new list; last week's song you didn't keep is deleted
+    // another discovery playlist's new list doesn't delete what this one still has
+    jams.store(1, std::sync::atomic::Ordering::SeqCst);
+    wait_for(
+        async || {
+            let r = s.ok("getPlaylists", &[]).await;
+            let Some(p) = r["playlists"]["playlist"].as_array().unwrap().iter().find(|p| p["name"] == "Weekly Jams").cloned() else {
+                return false;
+            };
+            let e = s.ok("getPlaylist", &[("id", p["id"].as_str().unwrap())]).await["playlist"]["entry"].clone();
+            e.as_array().is_some_and(|e| e.len() == 1 && e[0]["title"] == "Two")
+        },
+        "Weekly Jams",
+    )
+    .await;
+    assert!(file.is_file(), "Weekly Exploration still has it");
+    assert_eq!(s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].as_array().map(|e| e.len()), Some(2));
+
+    // week 2: a new list; last week's song nobody kept is deleted
     week.store(2, std::sync::atomic::Ordering::SeqCst);
     wait_for(async || !file.exists(), "last week's song to go").await;
     wait_for(
@@ -1521,28 +1671,33 @@ async fn spotify_sync() {
     }
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let sp = format!("http://{}", l.local_addr().unwrap());
-    let app = axum::Router::new().fallback(move |req: Request| async move {
-        let path = req.uri().path().to_string();
-        if path == "/api/token" {
-            let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
-            let form: Vec<(String, String)> = form_urlencoded::parse(&b).into_owned().collect();
-            // the saved one first, then the new one Spotify handed out
-            let tok = form.iter().find(|(k, _)| k == "refresh_token").map(|(_, v)| v.as_str()).unwrap_or("");
-            assert!((tok == "old-refresh" || tok == "new-refresh") && form.contains(&("client_id".into(), "cid".into())));
-            return axum::Json(json!({ "access_token": "acc", "refresh_token": "new-refresh", "expires_in": 3600 })).into_response();
+    let broken = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let b2 = broken.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let broken = b2.load(std::sync::atomic::Ordering::SeqCst);
+        async move {
+            let path = req.uri().path().to_string();
+            if path == "/api/token" {
+                let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+                let form: Vec<(String, String)> = form_urlencoded::parse(&b).into_owned().collect();
+                // the saved one first, then the new one Spotify handed out
+                let tok = form.iter().find(|(k, _)| k == "refresh_token").map(|(_, v)| v.as_str()).unwrap_or("");
+                assert!((tok == "old-refresh" || tok == "new-refresh") && form.contains(&("client_id".into(), "cid".into())));
+                return axum::Json(json!({ "access_token": "acc", "refresh_token": "new-refresh", "expires_in": 3600 })).into_response();
+            }
+            assert_eq!(req.headers()["authorization"], "Bearer acc");
+            let t = |id: &str, name: &str, artist: &str, isrc: Option<&str>| {
+                json!({ "id": id, "name": name, "type": "track", "artists": [{ "name": artist }], "duration_ms": 3000, "external_ids": { "isrc": isrc } })
+            };
+            let body = match path.as_str() {
+                "/v1/me/tracks" => json!({ "items": [{ "track": t("sp-pk", "Psycho Killer", "Talking Heads", Some("USSI10000001")) },
+                                                     { "track": t("sp-one", "One", "Alpha", None) }], "next": null }),
+                "/v1/me/playlists" => json!({ "items": [{ "id": "car", "name": "Car" }, { "id": "x", "name": "Not chosen" }], "next": null }),
+                "/v1/playlists/car/items" if !broken => json!({ "items": [{ "item": t("sp-two", "Zwei (renamed on Spotify)", "Alpha", None) }], "next": null }),
+                _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            };
+            axum::Json(body).into_response()
         }
-        assert_eq!(req.headers()["authorization"], "Bearer acc");
-        let t = |id: &str, name: &str, artist: &str, isrc: Option<&str>| {
-            json!({ "id": id, "name": name, "type": "track", "artists": [{ "name": artist }], "duration_ms": 3000, "external_ids": { "isrc": isrc } })
-        };
-        let body = match path.as_str() {
-            "/v1/me/tracks" => json!({ "items": [{ "track": t("sp-pk", "Psycho Killer", "Talking Heads", Some("USSI10000001")) },
-                                                 { "track": t("sp-one", "One", "Alpha", None) }], "next": null }),
-            "/v1/me/playlists" => json!({ "items": [{ "id": "car", "name": "Car" }, { "id": "x", "name": "Not chosen" }], "next": null }),
-            "/v1/playlists/car/items" => json!({ "items": [{ "item": t("sp-two", "Zwei (renamed on Spotify)", "Alpha", None) }], "next": null }),
-            _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
-        };
-        axum::Json(body).into_response()
     });
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     let (s, _tmp) = trial_server(|c| {
@@ -1600,6 +1755,10 @@ async fn spotify_sync() {
         .map(|x| x["title"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(order, ["Psycho Killer", "One"]);
+    // Spotify can't give a playlist's songs: it's left as it is, not emptied
+    broken.store(true, std::sync::atomic::Ordering::SeqCst);
+    conductor::spotify::sync_once(&s.st).await.unwrap();
+    assert_eq!(s.ok("getPlaylist", &[("id", &car)]).await["playlist"]["entry"][0]["title"], "Two");
 }
 
 #[tokio::test]
@@ -1746,6 +1905,41 @@ async fn stand_in(
     });
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     (base, hits)
+}
+
+#[tokio::test]
+async fn deezer_failures_arent_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let up = Arc::new(AtomicBool::new(false));
+    let u2 = up.clone();
+    let (dz, _) = stand_in(move |path, _q, _| match path {
+        _ if !u2.load(SeqCst) => None, // Deezer is down: an error page
+        "/search/artist" => Some(json!({ "data": [{ "id": 8, "name": "Alpha", "nb_fan": 50 }] })),
+        "/artist/8/related" => Some(json!({ "data": [] })),
+        _ => Some(json!({ "error": { "code": 800, "message": "no data" } })),
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = true;
+        c.deezer_url = dz.clone();
+    })
+    .await;
+    assert_eq!(conductor::catalog::artist_dz_id(&s.st, "Alpha").await, None);
+    assert!(conductor::catalog::artist_info(&s.st, "Alpha").await.is_none());
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cache WHERE kind IN ('artist', 'artist_info')")
+        .fetch_one(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, 0, "a failed call isn't kept as \"Deezer has nothing\"");
+    // Deezer's own "nothing" is an answer, and kept
+    up.store(true, SeqCst);
+    assert_eq!(conductor::catalog::match_album(&s.st, "Nobody", "Nothing", &[]).await, None);
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cache WHERE kind = 'album'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(kept, 1);
 }
 
 #[tokio::test]
@@ -2392,6 +2586,10 @@ async fn better_copy_swapped_in_same_id() {
     // two songs Conductor downloaded earlier as MP3 from the right album
     tone(&s.music.join("Songs/Alpha/Alpha - Four.mp3"), "Four", "Alpha", "First Album", 4, 2);
     tone(&s.music.join("Songs/Alpha/Alpha - Five.mp3"), "Five", "Alpha", "First Album", 5, 2);
+    // and a song of yours where Four's better copy would go
+    let heaven = s.music.join("Songs/Alpha/Alpha - Four.flac");
+    tone(&heaven, "Heaven", "Alpha", "Fear of Music", 7, 2);
+    let heaven_was = std::fs::read(&heaven).unwrap();
     conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
     let id_of = async |t: &str| s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
     let (four, five) = (id_of("Four").await, id_of("Five").await);
@@ -2422,14 +2620,15 @@ async fn better_copy_swapped_in_same_id() {
         "both songs to be looked at",
     )
     .await;
-    // Four: the FLAC is in, the MP3 gone, the same song id (and heart)
-    assert!(s.music.join("Songs/Alpha/Alpha - Four.flac").is_file());
+    // Four: the FLAC is in (beside your song with its name, untouched), the MP3 gone, the same song id (and heart)
+    assert!(s.music.join("Songs/Alpha/Alpha - Four (2).flac").is_file());
+    assert_eq!(std::fs::read(&heaven).unwrap(), heaven_was, "your song is still there, unchanged");
     assert!(!s.music.join("Songs/Alpha/Alpha - Four.mp3").exists());
     let song = s.ok("getSong", &[("id", &four)]).await["song"].clone();
-    assert_eq!((song["suffix"].as_str(), song["path"].as_str().map(|p| p.ends_with("Four.flac"))), (Some("flac"), Some(true)), "{song}");
+    assert_eq!((song["suffix"].as_str(), song["path"].as_str().map(|p| p.ends_with("Four (2).flac"))), (Some("flac"), Some(true)), "{song}");
     assert!(song["starred"].is_string());
     let rel: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-4'").fetch_one(&s.st.db).await.unwrap();
-    assert_eq!(rel, "Songs/Alpha/Alpha - Four.flac");
+    assert_eq!(rel, "Songs/Alpha/Alpha - Four (2).flac");
     // Five: the download didn't check out, so the MP3 stays and nothing is left behind
     assert!(s.music.join("Songs/Alpha/Alpha - Five.mp3").is_file());
     assert!(!s.music.join("Songs/Alpha/Alpha - Five.flac").exists());
@@ -2683,6 +2882,38 @@ async fn an_import_stopped_part_way_can_be_undone() {
 }
 
 #[tokio::test]
+async fn undo_keeps_what_others_want_and_skips_deleted_playlists() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let uid = s.st_user().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let run = |q: &'static str| sqlx::query(q);
+    sqlx::query("INSERT INTO import_batch (id, user_id, input_json, status, created_at) VALUES ('b1', ?, '{}', 'done', 0)").bind(&uid).execute(&s.st.db).await.unwrap();
+    sqlx::query("INSERT INTO play (user_id, track_id, played_at, client) VALUES (?, ?, 1000000, 'import:b1')").bind(&uid).bind(&one).execute(&s.st.db).await.unwrap();
+    sqlx::query("INSERT INTO annotation (user_id, item_kind, item_id, starred_at) VALUES (?, 'track', ?, 5)").bind(&uid).bind(&one).execute(&s.st.db).await.unwrap();
+    // it hearted a song, filled a playlist deleted since, and asked for two songs (someone else wants one of them now)
+    sqlx::query("INSERT INTO import_change (batch_id, kind, item) VALUES ('b1', 'star', ?)").bind(&one).execute(&s.st.db).await.unwrap();
+    run("INSERT INTO import_change (batch_id, kind, item, before) VALUES ('b1', 'playlist_songs', 'gone-pl', '[\"x\"]')").execute(&s.st.db).await.unwrap();
+    for key in ["dz-t-5", "dz-t-6"] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', 1)").bind(key).execute(&s.st.db).await.unwrap();
+        sqlx::query("INSERT INTO request_want (key, user_id, star) VALUES (?, ?, 1)").bind(key).bind(&uid).execute(&s.st.db).await.unwrap();
+        sqlx::query("INSERT INTO import_change (batch_id, kind, item) VALUES ('b1', 'request', ?)").bind(key).execute(&s.st.db).await.unwrap();
+    }
+    run("INSERT INTO request_want (key, user_id, star) VALUES ('dz-t-5', 'ann', 1)").execute(&s.st.db).await.unwrap();
+    assert_eq!(s.ok("undoImport", &[("id", "b1")]).await["import"]["status"], "undone");
+    let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(plays, 0);
+    assert!(s.ok("getSong", &[("id", &one)]).await["song"]["starred"].is_null(), "its heart is taken back");
+    let left: Vec<(String, String)> = sqlx::query_as("SELECT r.key, w.user_id FROM request r JOIN request_want w ON w.key = r.key")
+        .fetch_all(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [("dz-t-5".to_string(), "ann".to_string())], "Ann's song stays asked for; only the import's want goes");
+}
+
+#[tokio::test]
 async fn import_into_any_subsonic_server() {
     if !have_ffmpeg() {
         return;
@@ -2781,6 +3012,58 @@ async fn import_from_lastfm_and_deezer() {
 }
 
 #[tokio::test]
+async fn online_imports_keep_keys_and_spotify_to_themselves() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // Last.fm can't be reached: the error doesn't show the address with the key in it
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let lfm = format!("http://{}/lfm", l.local_addr().unwrap());
+    drop(l);
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.lastfm_url = lfm.clone();
+        c.lastfm_api_key = Some("secret-lfm-key-123".into());
+    })
+    .await;
+    let id = s.ok("importOnline", &[("source", "lastfm"), ("account", "bob")]).await["import"]["id"].as_str().unwrap().to_string();
+    let mut error = String::new();
+    for _ in 0..400 {
+        let b = s.ok("getImport", &[("id", &id)]).await["import"].clone();
+        if b["status"] == "failed" {
+            error = b["error"].as_str().unwrap_or("").to_string();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!error.is_empty(), "no failure");
+    assert!(!error.contains("secret-lfm-key-123") && !error.contains("api_key"), "{error}");
+    // the server's Spotify login is the admin's: someone else can't import from it
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/importOnline.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&source=spotify", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["error"]["code"], 50, "{r}");
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/importOnline.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&source=deezer&account=42", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok", "other sources are for everyone: {r}");
+    s.ok("importOnline", &[("source", "spotify")]).await;
+}
+
+#[tokio::test]
 async fn import_upload_of_one_file_labelled_as_a_form() {
     if !have_ffmpeg() {
         return;
@@ -2865,6 +3148,98 @@ async fn kill_switch_pauses_downloads_while_the_vpn_is_down() {
     // down again: paused again
     up.store(false, SeqCst);
     wait_for(async || conductor::vpn::paused(&s.st), "the pause").await;
+}
+
+#[tokio::test]
+async fn kill_switch_stops_a_round_when_the_vpn_drops() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let state: Arc<std::sync::OnceLock<Arc<AppState>>> = Arc::default();
+    let (searches, queued) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (st2, s2, q2) = (state.clone(), searches.clone(), queued.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/searches" if !body.is_empty() => {
+                s2.fetch_add(1, SeqCst);
+                // the tunnel drops while the first search runs
+                st2.get().unwrap().vpn.write().unwrap().up = Some(false);
+                json!({})
+            }
+            p if p.ends_with("/responses") => json!([{ "username": "peer", "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000,
+                "files": [{ "filename": r"Music\Alpha\Album\01 Five.flac", "size": 1, "bitRate": 0, "extension": "flac" }] }]),
+            p if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+            p if p.starts_with("/api/v0/transfers/downloads/") && !body.is_empty() => {
+                q2.fetch_add(1, SeqCst);
+                json!({})
+            }
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+        c.downloads_require_vpn = true;
+    })
+    .await;
+    state.set(s.st.clone()).ok();
+    s.st.vpn.write().unwrap().up = Some(true);
+    for key in ["dz-t-5", "dz-t-6"] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, album, status, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', 'Album', 'retry', 1)")
+            .bind(key)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    wait_for(async || searches.load(SeqCst) > 0, "the first search").await;
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!((searches.load(SeqCst), queued.load(SeqCst)), (1, 0), "nothing more is searched or fetched once the VPN is down");
+}
+
+#[tokio::test]
+async fn a_filed_song_whose_file_is_gone_stops_the_scans() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let (base, _) = stand_in(|path, _q, _| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+    })
+    .await;
+    // filed, then the file went before it was scanned in
+    sqlx::query("INSERT INTO request (key, title, artists_json, status, rel, arrived_at, asked_at) VALUES ('dz-t-5', 'Five', '[\"Alpha\"]', 'done', 'Songs/Alpha/Alpha - Five.flac', 1, 1)")
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    wait_for(
+        async || sqlx::query_scalar::<_, String>("SELECT status FROM request WHERE key = 'dz-t-5'").fetch_one(&s.st.db).await.unwrap() == "notfound",
+        "the song to be given up on",
+    )
+    .await;
+    let generation = || s.st.catalog.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let before = generation();
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!(generation(), before, "no more scans for it");
 }
 
 #[tokio::test]
@@ -3047,7 +3422,7 @@ async fn navidrome_passwords_come_over() {
         let tmp = tempfile::tempdir().unwrap();
         let nd = tmp.path().join("navidrome.db");
         navidrome_db(&nd).await;
-        let rep = conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, key).await.unwrap();
+        let rep = conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, key, false).await.unwrap();
         assert_eq!((rep.users_imported, rep.passwords_carried), (2, 1));
         assert_eq!(rep.users, [reset.to_string()], "the other one is to be set again");
         let shown = serde_json::to_string(&rep).unwrap();
@@ -3058,6 +3433,27 @@ async fn navidrome_passwords_come_over() {
         let other = if reset == "nd-default" { "test-pw-default-1" } else { "test-pw-custom-2" };
         assert_eq!(signs_in(&s, reset, other).await, (false, false), "a password that didn't open isn't guessed");
     }
+}
+
+#[tokio::test]
+async fn navidrome_again_only_with_replace() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let nd = tmp.path().join("navidrome.db");
+    navidrome_db(&nd).await;
+    let run = async |replace: bool| conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, None, replace).await;
+    run(false).await.unwrap();
+    // used since: a playlist of yours
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    s.ok("createPlaylist", &[("name", "Made since"), ("songId", &one)]).await;
+    let e = run(false).await.unwrap_err().to_string();
+    assert!(e.contains("--replace"), "{e}");
+    assert!(s.ok("getPlaylists", &[]).await.to_string().contains("Made since"), "nothing was replaced");
+    run(true).await.unwrap();
+    assert!(!s.ok("getPlaylists", &[]).await.to_string().contains("Made since"), "asked for: replaced");
 }
 
 #[tokio::test]

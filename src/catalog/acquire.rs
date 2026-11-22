@@ -209,6 +209,9 @@ pub fn score_file(r: &Req, resp: &Value, f: &Value, tried: &[String]) -> Option<
 pub(crate) async fn search(st: &AppState, sl: &Slskd, text: &str) -> Result<Vec<Value>> {
     // one search at a time, at most one every 12 s: much faster and the Soulseek server ignores you
     let _turn = st.search_pace.lock().await;
+    if crate::vpn::paused(st) {
+        bail!("the VPN is down: downloads wait"); // the kill switch, checked before each search (it can go down mid-round)
+    }
     let id = crate::db::random_id();
     let id = format!("{}-{}-{}-{}-{}", &id[..8], &id[8..12], &id[12..16], &id[16..20], &id[20..32]);
     let mut started = false;
@@ -300,6 +303,9 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
         .await?;
     let mut tried = tried;
     for (_, user, f) in cands.iter().take(5) {
+        if crate::vpn::paused(st) {
+            return Ok("the VPN went down: it's fetched later".into());
+        }
         let body = json!([{ "filename": f["filename"], "size": f["size"] }]);
         let path = format!("/transfers/downloads/{}", urlencode(user));
         if sl.call(reqwest::Method::POST, &path, Some(body)).await.is_err() {
@@ -548,18 +554,34 @@ pub async fn apply_wants(st: &AppState, key: &str, local: &str) -> Result<()> {
     Ok(())
 }
 
-/// Filed songs: scan, find them in the library, apply what was asked.
+/// Filed songs: scan, find them in the library, apply what was asked. One whose file is gone, or that a scan
+/// still doesn't see an hour after it was filed, is given up on (shown as not found; asking again looks again),
+/// so it doesn't make a scan every round.
 async fn adopt(st: &AppState) -> Result<()> {
-    let done: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, rel FROM request WHERE status = 'done' AND local_id IS NULL AND rel IS NOT NULL")
+    let done: Vec<(String, String, Option<i64>)> =
+        sqlx::query_as("SELECT key, rel, arrived_at FROM request WHERE status = 'done' AND local_id IS NULL AND rel IS NOT NULL")
             .fetch_all(&st.db)
             .await?;
     if done.is_empty() {
         return Ok(());
     }
+    let (lib_id, root) = import_root(st).ok_or_else(|| anyhow!("no music folder"))?;
+    if st.libs.iter().any(|(id, l)| *id == lib_id && !library::is_online(l)) {
+        return Ok(()); // the music drive isn't connected: wait for it
+    }
+    let mut waiting = vec![];
+    for (key, rel, at) in done {
+        if root.join(&rel).is_file() {
+            waiting.push((key, rel, at));
+        } else {
+            give_up(st, &key, "its file is gone").await?;
+        }
+    }
+    if waiting.is_empty() {
+        return Ok(());
+    }
     library::scan(&st.db, &st.libs, &st.scan, false).await?;
-    let (lib_id, _) = import_root(st).ok_or_else(|| anyhow!("no music folder"))?;
-    for (key, rel) in done {
+    for (key, rel, at) in waiting {
         let local: Option<String> =
             sqlx::query_scalar("SELECT id FROM track WHERE library_id = ? AND rel_path = ? AND missing_since IS NULL")
                 .bind(lib_id)
@@ -569,9 +591,20 @@ async fn adopt(st: &AppState) -> Result<()> {
         if let Some(id) = local {
             sqlx::query("UPDATE request SET local_id = ? WHERE key = ?").bind(&id).bind(&key).execute(&st.db).await?;
             apply_wants(st, &key, &id).await?;
+        } else if now() - at.unwrap_or(0) > 3600 {
+            give_up(st, &key, "the scan doesn't see its file").await?;
         }
     }
     st.catalog.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+async fn give_up(st: &AppState, key: &str, why: &str) -> Result<()> {
+    sqlx::query("UPDATE request SET status = 'notfound', rel = NULL WHERE key = ? AND status = 'done' AND local_id IS NULL")
+        .bind(key)
+        .execute(&st.db)
+        .await?;
+    warn!(key, "a downloaded song wasn't added: {why}");
     Ok(())
 }
 
@@ -630,6 +663,9 @@ async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
     let due: Vec<Req> = waiting.into_iter().filter(|r| now() - r.last_search >= retry_wait(r)).collect();
     let idle = due.is_empty() && in_flight == 0;
     for r in due.into_iter().take((IN_FLIGHT - in_flight) as usize) {
+        if crate::vpn::paused(st) {
+            return Ok(()); // the VPN went down during this round
+        }
         match find_and_queue(st, sl, &r).await {
             Ok(note) => info!(song = %r.title, "Soulseek: {note}"),
             Err(e) => {
@@ -697,6 +733,9 @@ async fn upgrade_one(st: &AppState, sl: &Slskd) -> Result<()> {
         .filter(|c| better(&u.req, u.same_album, &have, c.2["filename"].as_str().unwrap_or("")))
         .collect();
     for (_, user, f) in cands.iter().take(5) {
+        if crate::vpn::paused(st) {
+            return Ok(()); // looked at again later
+        }
         let body = json!([{ "filename": f["filename"], "size": f["size"] }]);
         if sl.call(reqwest::Method::POST, &format!("/transfers/downloads/{}", urlencode(user)), Some(body)).await.is_err() {
             continue;
@@ -778,44 +817,66 @@ async fn swap_in(st: &AppState, u: &Upgrade, src: &Path) -> Result<String> {
         bail!("the old file isn't there");
     }
     let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let new_rel = match u.rel.rsplit_once('.') {
-        Some((stem, _)) => format!("{stem}.{ext}"),
-        None => format!("{}.{ext}", u.rel),
-    };
+    let stem = u.rel.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&u.rel).to_string();
+    let mut new_rel = format!("{stem}.{ext}");
+    // another file may have the new name (a song of yours, another version): it stays, and this one goes beside it
+    let mut n = 2;
+    while new_rel != u.rel && taken(st, lib, &root, &new_rel).await? {
+        if n > 99 {
+            bail!("{new_rel} and 98 others like it are there already");
+        }
+        new_rel = format!("{stem} ({n}).{ext}");
+        n += 1;
+    }
     let new = root.join(&new_rel);
     let dir = old.parent().ok_or_else(|| anyhow!("no folder"))?.to_path_buf();
     let tmp = dir.join(format!(".conductor-upgrade-{}.{ext}", u.req.key));
-    if tokio::fs::rename(src, &tmp).await.is_err() {
-        tokio::fs::copy(src, &tmp).await.with_context(|| format!("copying to {}", tmp.display()))?;
-        let _ = tokio::fs::remove_file(src).await;
+    let done = put_in_place(st, u, src, &tmp, lib, &new_rel, &new).await;
+    if done.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await; // never left behind
     }
-    let t2 = tmp.clone();
-    let m = tokio::task::spawn_blocking(move || library::read_meta(&t2)).await?;
-    let want = u.req.duration_ms;
-    if m.duration_ms <= 0 || (want > 0 && (m.duration_ms - want).abs() > 8000) {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        bail!("the new file doesn't read as this song ({} ms, wanted {want} ms)", m.duration_ms);
-    }
-    let Some(_hold) = library::hold_scans(&st.scan).await else {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        bail!("a scan kept running");
-    };
-    let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE track SET rel_path = ? WHERE id = ?").bind(&new_rel).bind(&u.local_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT OR REPLACE INTO id_override (kind, key, id) VALUES ('track', ?, ?)")
-        .bind(library::track_key(lib, &new_rel))
-        .bind(&u.local_id)
-        .execute(&mut *tx)
-        .await?;
-    if let Err(e) = tokio::fs::rename(&tmp, &new).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(e).context("moving the new file into place"); // the transaction is dropped: nothing changed
-    }
-    tx.commit().await?;
+    done?;
     if new != old {
         let _ = tokio::fs::remove_file(&old).await;
     }
     Ok(new_rel)
+}
+
+/// A file or a library song has this name already.
+async fn taken(st: &AppState, lib: i64, root: &Path, rel: &str) -> Result<bool> {
+    let song: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track WHERE library_id = ? AND rel_path = ?")
+        .bind(lib)
+        .bind(rel)
+        .fetch_one(&st.db)
+        .await?;
+    Ok(song > 0 || tokio::fs::try_exists(root.join(rel)).await.unwrap_or(true))
+}
+
+/// `swap_in`'s steps from the hidden copy on: check it, move the song's row, rename it into place.
+async fn put_in_place(st: &AppState, u: &Upgrade, src: &Path, tmp: &Path, lib: i64, new_rel: &str, new: &Path) -> Result<()> {
+    if tokio::fs::rename(src, tmp).await.is_err() {
+        tokio::fs::copy(src, tmp).await.with_context(|| format!("copying to {}", tmp.display()))?;
+        let _ = tokio::fs::remove_file(src).await;
+    }
+    let t2 = tmp.to_path_buf();
+    let m = tokio::task::spawn_blocking(move || library::read_meta(&t2)).await?;
+    let want = u.req.duration_ms;
+    if m.duration_ms <= 0 || (want > 0 && (m.duration_ms - want).abs() > 8000) {
+        bail!("the new file doesn't read as this song ({} ms, wanted {want} ms)", m.duration_ms);
+    }
+    let Some(_hold) = library::hold_scans(&st.scan).await else {
+        bail!("a scan kept running");
+    };
+    let mut tx = st.db.begin().await?;
+    sqlx::query("UPDATE track SET rel_path = ? WHERE id = ?").bind(new_rel).bind(&u.local_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT OR REPLACE INTO id_override (kind, key, id) VALUES ('track', ?, ?)")
+        .bind(library::track_key(lib, new_rel))
+        .bind(&u.local_id)
+        .execute(&mut *tx)
+        .await?;
+    tokio::fs::rename(tmp, new).await.context("moving the new file into place")?; // on error the transaction is dropped: nothing changed
+    tx.commit().await?;
+    Ok(())
 }
 
 #[cfg(test)]

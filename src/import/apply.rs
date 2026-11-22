@@ -395,7 +395,7 @@ fn seen_near(have: &mut HashMap<String, Vec<i64>>, id: &str, at: i64) -> bool {
     false
 }
 
-async fn followed(db: &Db, user: &str) -> Result<Vec<Value>> {
+async fn followed(db: impl sqlx::SqliteExecutor<'_>, user: &str) -> Result<Vec<Value>> {
     let raw: Option<String> = sqlx::query_scalar("SELECT value_json FROM sync_kv WHERE user_id = ? AND key = 'followedArtists'")
         .bind(user)
         .fetch_optional(db)
@@ -403,7 +403,7 @@ async fn followed(db: &Db, user: &str) -> Result<Vec<Value>> {
     Ok(raw.and_then(|r| serde_json::from_str::<Vec<Value>>(&r).ok()).unwrap_or_default())
 }
 
-async fn set_followed(db: &Db, user: &str, list: &[Value]) -> Result<()> {
+async fn set_followed(db: impl sqlx::SqliteExecutor<'_>, user: &str, list: &[Value]) -> Result<()> {
     sqlx::query(
         "INSERT INTO sync_kv (user_id, key, value_json, at, by_device) VALUES (?, 'followedArtists', ?, ?, 'conductor-import')
          ON CONFLICT(user_id, key) DO UPDATE SET value_json = excluded.value_json, at = excluded.at, by_device = excluded.by_device",
@@ -726,13 +726,15 @@ pub async fn apply(st: &AppState, batch: &str, user: &str, plan: &Plan, opts: &O
 }
 
 /// Put back what a batch changed. Plays you've played since stay; hearts, follows, playlists, ratings and counts
-/// it added go; playlists it updated get their songs back; songs it asked for that haven't arrived are cancelled.
+/// it added go; playlists it updated get their songs back (unless they were deleted since); songs it asked for that
+/// haven't arrived are cancelled, unless someone else wants them too. All or nothing: a batch is never left half
+/// undone.
 pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
     let db = &st.db;
     let user: String = sqlx::query_scalar("SELECT user_id FROM import_batch WHERE id = ?").bind(batch).fetch_one(db).await?;
     let client = format!("import:{batch}");
-    // plays: counts back down, then the plays go
     let mut tx = db.begin().await?;
+    // plays: counts back down, then the plays go
     for (kind, col) in [("track", "p.track_id"), ("album", "t.album_id"), ("artist", "t.artist_id")] {
         sqlx::query(&format!(
             "UPDATE annotation SET play_count = MAX(0, play_count - (SELECT COUNT(*) FROM play p JOIN track t ON t.id = p.track_id
@@ -758,59 +760,83 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
         .await?;
     }
     sqlx::query("DELETE FROM skip WHERE client = ?").bind(&client).execute(&mut *tx).await?;
-    tx.commit().await?;
     let changes: Vec<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT kind, item, before FROM import_change WHERE batch_id = ? ORDER BY rowid DESC").bind(batch).fetch_all(db).await?;
+        sqlx::query_as("SELECT kind, item, before FROM import_change WHERE batch_id = ? ORDER BY rowid DESC").bind(batch).fetch_all(&mut *tx).await?;
+    // the playlists it made or filled (songs it asked for were to go into them)
+    let lists: HashSet<&str> = changes.iter().filter(|c| c.0 == "playlist" || c.0 == "playlist_songs").map(|c| c.1.as_str()).collect();
     let mut unfollow = HashSet::new();
-    for (kind, item, before) in changes {
+    let mut podcasts = vec![];
+    for (kind, item, before) in &changes {
         match kind.as_str() {
             "star" | "album_star" => {
                 let k = if kind == "star" { "track" } else { "album" };
-                sqlx::query("UPDATE annotation SET starred_at = NULL WHERE user_id = ? AND item_kind = ? AND item_id = ?").bind(&user).bind(k).bind(&item).execute(db).await?;
+                sqlx::query("UPDATE annotation SET starred_at = NULL WHERE user_id = ? AND item_kind = ? AND item_id = ?").bind(&user).bind(k).bind(item).execute(&mut *tx).await?;
             }
             "follow" => {
-                unfollow.insert(item);
+                unfollow.insert(item.clone());
             }
             "playlist" => {
-                sqlx::query("DELETE FROM playlist WHERE id = ? AND owner_id = ?").bind(&item).bind(&user).execute(db).await?;
+                sqlx::query("DELETE FROM playlist WHERE id = ? AND owner_id = ?").bind(item).bind(&user).execute(&mut *tx).await?;
             }
             "playlist_songs" => {
-                let ids: Vec<String> = before.and_then(|b| serde_json::from_str(&b).ok()).unwrap_or_default();
-                let mut tx = db.begin().await?;
-                sqlx::query("DELETE FROM playlist_entry WHERE playlist_id = ?").bind(&item).execute(&mut *tx).await?;
-                for (i, t) in ids.iter().enumerate() {
-                    sqlx::query("INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES (?, ?, ?)").bind(&item).bind(i as i64).bind(t).execute(&mut *tx).await?;
+                let there: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE id = ?").bind(item).fetch_one(&mut *tx).await?;
+                if there == 0 {
+                    continue; // deleted since: nothing to put back
                 }
-                tx.commit().await?;
+                let ids: Vec<String> = before.as_deref().and_then(|b| serde_json::from_str(b).ok()).unwrap_or_default();
+                sqlx::query("DELETE FROM playlist_entry WHERE playlist_id = ?").bind(item).execute(&mut *tx).await?;
+                for (i, t) in ids.iter().enumerate() {
+                    sqlx::query("INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES (?, ?, ?)").bind(item).bind(i as i64).bind(t).execute(&mut *tx).await?;
+                }
             }
             "rating" => {
-                let b: i64 = before.and_then(|b| b.parse().ok()).unwrap_or(0);
-                sqlx::query("UPDATE annotation SET rating = ? WHERE user_id = ? AND item_kind = 'track' AND item_id = ?").bind(b).bind(&user).bind(&item).execute(db).await?;
+                let b: i64 = before.as_deref().and_then(|b| b.parse().ok()).unwrap_or(0);
+                sqlx::query("UPDATE annotation SET rating = ? WHERE user_id = ? AND item_kind = 'track' AND item_id = ?").bind(b).bind(&user).bind(item).execute(&mut *tx).await?;
             }
             "count" => {
-                let b: Value = before.and_then(|b| serde_json::from_str(&b).ok()).unwrap_or_default();
+                let b: Value = before.as_deref().and_then(|b| serde_json::from_str(b).ok()).unwrap_or_default();
                 sqlx::query("UPDATE annotation SET play_count = MAX(0, play_count - ?), last_played = ? WHERE user_id = ? AND item_kind = 'track' AND item_id = ?")
                     .bind(b["n"].as_i64().unwrap_or(0))
                     .bind(b["last"].as_i64())
                     .bind(&user)
-                    .bind(&item)
-                    .execute(db)
+                    .bind(item)
+                    .execute(&mut *tx)
                     .await?;
             }
             "request" => {
-                sqlx::query("DELETE FROM request WHERE key = ? AND local_id IS NULL").bind(&item).execute(db).await?;
+                // only what this import wanted goes; the song stays asked for if anyone else wants it now
+                let arrived: Option<Option<String>> =
+                    sqlx::query_scalar("SELECT local_id FROM request WHERE key = ?").bind(item).fetch_optional(&mut *tx).await?;
+                if arrived.is_none_or(|l| l.is_some()) {
+                    continue;
+                }
+                let wants: Vec<(String, String)> =
+                    sqlx::query_as("SELECT user_id, playlist_id FROM request_want WHERE key = ?").bind(item).fetch_all(&mut *tx).await?;
+                for (u, pl) in &wants {
+                    if *u == user && (pl.is_empty() || lists.contains(pl.as_str())) {
+                        sqlx::query("DELETE FROM request_want WHERE key = ? AND user_id = ? AND playlist_id = ?").bind(item).bind(u).bind(pl).execute(&mut *tx).await?;
+                    }
+                }
+                sqlx::query("DELETE FROM request WHERE key = ? AND local_id IS NULL AND NOT EXISTS (SELECT 1 FROM request_want WHERE key = ?)")
+                    .bind(item)
+                    .bind(item)
+                    .execute(&mut *tx)
+                    .await?;
             }
-            "podcast" => {
-                let _ = crate::api::podcasts::unsubscribe(st, &item).await;
-            }
+            "podcast" => podcasts.push(item.clone()),
             _ => {}
         }
     }
     if !unfollow.is_empty() {
-        let list: Vec<Value> = followed(db, &user).await?.into_iter().filter(|f| !f["id"].as_str().is_some_and(|i| unfollow.contains(i))).collect();
-        set_followed(db, &user, &list).await?;
+        let list: Vec<Value> = followed(&mut *tx, &user).await?.into_iter().filter(|f| !f["id"].as_str().is_some_and(|i| unfollow.contains(i))).collect();
+        set_followed(&mut *tx, &user, &list).await?;
     }
-    sqlx::query("DELETE FROM import_change WHERE batch_id = ?").bind(batch).execute(db).await?;
-    sqlx::query("UPDATE import_batch SET status = 'undone', done_at = ? WHERE id = ?").bind(now()).bind(batch).execute(db).await?;
+    sqlx::query("DELETE FROM import_change WHERE batch_id = ?").bind(batch).execute(&mut *tx).await?;
+    sqlx::query("UPDATE import_batch SET status = 'undone', done_at = ? WHERE id = ?").bind(now()).bind(batch).execute(&mut *tx).await?;
+    tx.commit().await?;
+    // shows (and their saved files) last, once the rest is undone
+    for id in podcasts {
+        let _ = crate::api::podcasts::unsubscribe(st, &id).await;
+    }
     Ok(())
 }

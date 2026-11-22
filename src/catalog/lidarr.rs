@@ -185,6 +185,9 @@ async fn look_for(st: &AppState, sl: &Slskd, lid: &Lidarr, g: &Grab) -> Result<(
         info!(album = %format!("{} - {}", g.artist, g.title), "Lidarr album: no complete copy on Soulseek yet");
         return Ok(());
     };
+    if crate::vpn::paused(st) {
+        return Ok(()); // the VPN went down while it searched: fetched another time
+    }
     let body: Vec<Value> = files.iter().map(|f| json!({ "filename": f["filename"], "size": f["size"] })).collect();
     sl.call(reqwest::Method::POST, &format!("/transfers/downloads/{}", urlencode(&user)), Some(Value::Array(body))).await?;
     let names: Vec<&str> = files.iter().filter_map(|f| f["filename"].as_str()).collect();
@@ -340,6 +343,9 @@ pub async fn tick(st: &AppState, sl: &Slskd, lid: &Lidarr, last_wanted: &mut i64
         .fetch_all(&st.db)
         .await?;
     for g in waiting.into_iter().filter(|g| now() - g.last_search >= retry_wait(g)) {
+        if crate::vpn::paused(st) {
+            break; // the VPN went down during this round
+        }
         if let Err(e) = look_for(st, sl, lid, &g).await {
             warn!(album = %g.title, "Lidarr album search failed: {e:#}");
             break;
