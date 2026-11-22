@@ -57,7 +57,18 @@ pub async fn device_hello(c: &Ctx) -> Result<Reply, ApiError> {
         .filter(|s| Value::Object(s.clone()).to_string().len() <= MAX_STATE);
     let devices = {
         let mut g = c.st.live.lock();
-        let d = g.devices.entry((c.user.id.clone(), id.to_string())).or_insert_with(|| Device {
+        let key = (c.user.id.clone(), id.to_string());
+        if !g.devices.contains_key(&key) {
+            // a new device: past the limit, the one heard from longest ago makes room
+            let mine: Vec<(i64, String)> =
+                g.devices.iter().filter(|((o, _), _)| *o == c.user.id).map(|((_, i), d)| (d.seen_ms, i.clone())).collect();
+            if mine.len() >= live::MAX_DEVICES
+                && let Some((_, oldest)) = mine.into_iter().min()
+            {
+                g.devices.remove(&(c.user.id.clone(), oldest));
+            }
+        }
+        let d = g.devices.entry(key).or_insert_with(|| Device {
             name: "Encore".into(),
             kind: "phone".into(),
             client: String::new(),
@@ -127,6 +138,11 @@ pub async fn device_command(c: &Ctx) -> Result<Reply, ApiError> {
         let n = d.cmds.len();
         if n > 100 {
             d.cmds.drain(..n - 100);
+        }
+        // and not more than MAX_CMD_BYTES waiting in all: the oldest go first
+        let mut total: usize = d.cmds.iter().map(|x| x.to_string().len()).sum();
+        while total > live::MAX_CMD_BYTES && d.cmds.len() > 1 {
+            total -= d.cmds.remove(0).to_string().len();
         }
         json!({ "seq": d.seq, "online": now_ms() - d.seen_ms < live::ONLINE_SECS * 1000 })
     };
@@ -287,6 +303,9 @@ pub async fn pair_poll(st: &super::Shared, token: &str, wait: u64) -> Result<Val
         .await
 }
 
+/// Wrong sign-in codes one account may try per 15 minutes.
+const PAIR_TRIES: usize = 10;
+
 /// The phone (signed in) hands its login to the device showing `code`.
 pub async fn pair_approve(c: &Ctx) -> Result<Reply, ApiError> {
     let code: String = c.p.get("code").unwrap_or("").chars().filter(char::is_ascii_digit).collect();
@@ -295,10 +314,17 @@ pub async fn pair_approve(c: &Ctx) -> Result<Reply, ApiError> {
     if !field("user").eq_ignore_ascii_case(&c.user.name) || field("pass").is_empty() || field("server").is_empty() {
         return Err(bad("That isn't this account's login"));
     }
+    // Wrong codes are counted per account, and a right one doesn't clear the count (anyone can ask for a code and
+    // approve it), so codes can't be guessed in bulk.
+    if c.st.login_fails.blocked("pair", "", &c.user.id, PAIR_TRIES) {
+        return Err(ApiError::new(10, "Too many wrong codes. Try again in a few minutes."));
+    }
     let name = {
         let mut g = c.st.live.lock();
         expire_pairs(&mut g);
         let Some(p) = g.pairs.values_mut().find(|p| p.code == code && p.login.is_none()) else {
+            drop(g);
+            c.st.login_fails.failed("pair", "", &c.user.id);
             return Err(ApiError::new(70, "That code isn't right, or it has run out. Check the code on the computer."));
         };
         let mut l = Map::new();
@@ -354,34 +380,43 @@ fn stat_song(s: &StatSong, plays: i64) -> Value {
     v
 }
 
-/// [start, end) of this week / month / year (offset 1 = the one before), local time, in seconds.
-fn period_range(period: &str, offset: i64) -> (i64, i64) {
-    let today = Local::now().date_naive();
+/// How far back the stats go: 1000 years (or as many months or weeks).
+const MAX_OFFSET: i64 = 1000;
+
+/// [start, end) of this week / month / year (offset 1 = the one before), local time, in seconds. None when the
+/// offset is negative or too far back.
+fn period_range(period: &str, offset: i64) -> Option<(i64, i64)> {
+    period_range_from(Local::now().date_naive(), period, offset)
+}
+
+fn period_range_from(today: NaiveDate, period: &str, offset: i64) -> Option<(i64, i64)> {
+    if !(0..=MAX_OFFSET).contains(&offset) {
+        return None;
+    }
     let (start, end): (NaiveDate, NaiveDate) = match period {
         "week" => {
-            let s = today - CDuration::days(today.weekday().num_days_from_monday() as i64) - CDuration::weeks(offset);
-            (s, s + CDuration::weeks(1))
+            let monday = today - CDuration::days(today.weekday().num_days_from_monday() as i64);
+            let s = monday.checked_sub_signed(CDuration::try_weeks(offset)?)?;
+            (s, s.checked_add_signed(CDuration::weeks(1))?)
         }
         "month" => {
-            let mut y = today.year();
-            let mut m = today.month() as i64 - offset;
-            while m <= 0 {
-                y -= 1;
-                m += 12;
-            }
-            let s = NaiveDate::from_ymd_opt(y, m as u32, 1).unwrap();
-            let e =
-                if m == 12 { NaiveDate::from_ymd_opt(y + 1, 1, 1) } else { NaiveDate::from_ymd_opt(y, m as u32 + 1, 1) }.unwrap();
-            (s, e)
+            // months since year 0, so going back is one subtraction
+            let n = today.year() as i64 * 12 + today.month0() as i64 - offset;
+            let first = |n: i64| NaiveDate::from_ymd_opt(i32::try_from(n.div_euclid(12)).ok()?, n.rem_euclid(12) as u32 + 1, 1);
+            (first(n)?, first(n + 1)?)
         }
         _ => {
-            let y = today.year() - offset as i32;
-            (NaiveDate::from_ymd_opt(y, 1, 1).unwrap(), NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap())
+            let y = i32::try_from(today.year() as i64 - offset).ok()?;
+            (NaiveDate::from_ymd_opt(y, 1, 1)?, NaiveDate::from_ymd_opt(y.checked_add(1)?, 1, 1)?)
         }
     };
     let ts =
         |d: NaiveDate| Local.from_local_datetime(&d.and_hms_opt(0, 0, 0).unwrap()).earliest().map(|t| t.timestamp()).unwrap_or(0);
-    (ts(start), ts(end))
+    Some((ts(start), ts(end)))
+}
+
+fn bad_offset() -> ApiError {
+    bad("offset is too far back")
 }
 
 pub async fn listening_stats(c: &Ctx) -> Result<Reply, ApiError> {
@@ -403,7 +438,7 @@ async fn compute_stats(c: &Ctx, period: &str, offset: i64) -> Result<Value, ApiE
             sqlx::query_as(&format!("{STAT_SELECT} WHERE an.play_count > 0")).bind(uid).fetch_all(&c.st.db).await?;
         counted = rows.into_iter().map(|s| (s.clone(), s.play_count.unwrap_or(0))).collect();
     } else {
-        let (start, end) = period_range(period, offset);
+        let (start, end) = period_range(period, offset).ok_or_else(bad_offset)?;
         range = Some((start, end));
         let rows: Vec<(i64, String)> = sqlx::query_as(
             "SELECT played_at, track_id FROM play WHERE user_id = ? AND played_at >= ? AND played_at < ? ORDER BY played_at",
@@ -494,7 +529,7 @@ pub async fn listening_review(c: &Ctx) -> Result<Reply, ApiError> {
             a.truncate(5);
         }
     }
-    let (start, end) = period_range(period, offset);
+    let (start, end) = period_range(period, offset).ok_or_else(bad_offset)?;
     let rows: Vec<(i64, String)> = sqlx::query_as(
         "SELECT played_at, track_id FROM play WHERE user_id = ? AND played_at >= ? AND played_at < ? ORDER BY played_at",
     )
@@ -733,4 +768,30 @@ pub async fn is_duplicate_play(c: &Ctx, track: &str, at: i64) -> Result<bool, Ap
             .fetch_one(&c.st.db)
             .await?;
     Ok(n > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn periods_far_back_are_refused_not_a_hang_or_panic() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 18).unwrap();
+        for p in ["week", "month", "year"] {
+            assert!(period_range_from(today, p, i64::MAX).is_none(), "{p}");
+            assert!(period_range_from(today, p, 300_000).is_none(), "{p}");
+            assert!(period_range_from(today, p, 1_000_000_000_000_000).is_none(), "{p}");
+            assert!(period_range_from(today, p, -1).is_none(), "{p}");
+            assert!(period_range_from(today, p, MAX_OFFSET).is_some(), "{p}");
+        }
+        let day = |y, m, d| {
+            let t = NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(0, 0, 0).unwrap();
+            Local.from_local_datetime(&t).earliest().unwrap().timestamp()
+        };
+        assert_eq!(period_range_from(today, "month", 0), Some((day(2026, 3, 1), day(2026, 4, 1))));
+        assert_eq!(period_range_from(today, "month", 3), Some((day(2025, 12, 1), day(2026, 1, 1))));
+        assert_eq!(period_range_from(today, "month", 14), Some((day(2025, 1, 1), day(2025, 2, 1))));
+        assert_eq!(period_range_from(today, "year", 1), Some((day(2025, 1, 1), day(2026, 1, 1))));
+        assert_eq!(period_range_from(today, "week", 1), Some((day(2026, 3, 9), day(2026, 3, 16))));
+    }
 }

@@ -10,6 +10,11 @@
 //! status: reading → preview (report: what was found, matchRate, changes it would make) → running → done
 //! (report.changes: what it changed) → undone; or failed (error).
 
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+
 use serde_json::json;
 
 use super::{ApiError, Ctx, Reply, ok};
@@ -30,10 +35,46 @@ fn failed(e: anyhow::Error) -> ApiError {
     ApiError::new(0, format!("{e:#}"))
 }
 
+/// Uploads still arriving, per user: they count as waiting imports, so several sent at once can't all pass the
+/// check before any of them is made an import.
+static ARRIVING: LazyLock<Mutex<HashMap<String, i64>>> = LazyLock::new(Default::default);
+
+/// One upload's place among the arriving ones, given back when it's dropped (made an import, or failed).
+struct Arriving(String);
+
+impl Arriving {
+    /// Takes a place: how many others were arriving already.
+    fn take(user: &str) -> (Self, i64) {
+        let mut g = ARRIVING.lock().unwrap_or_else(|e| e.into_inner());
+        let n = g.entry(user.to_string()).or_default();
+        *n += 1;
+        (Self(user.to_string()), *n - 1)
+    }
+}
+
+impl Drop for Arriving {
+    fn drop(&mut self) {
+        let mut g = ARRIVING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = g.get_mut(&self.0) {
+            *n -= 1;
+            if *n <= 0 {
+                g.remove(&self.0);
+            }
+        }
+    }
+}
+
 pub async fn upload(st: &crate::api::Shared, user: &User, name: &str, body: axum::body::Body) -> Result<Reply, ApiError> {
-    jobs::room_for_another(st, &user.id).await.map_err(failed)?; // before taking the upload
+    let (_place, others) = Arriving::take(&user.id);
+    jobs::room_besides(st, &user.id, others).await.map_err(failed)?; // before taking the upload
     let file = jobs::save_upload_stream(st, name, body).await.map_err(failed)?;
-    let id = jobs::create(st, &user.id, json!({ "file": file, "name": name })).await.map_err(failed)?;
+    let id = match jobs::create(st, &user.id, json!({ "file": file, "name": name })).await {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(crate::import::upload_dir(&st.cfg.data_dir).join(&file)).await;
+            return Err(failed(e));
+        }
+    };
     let b = jobs::get(st, &id).await?.ok_or_else(|| ApiError::not_found("Import"))?;
     ok(json!({ "import": jobs::batch_json(&b) }))
 }

@@ -505,6 +505,17 @@ async fn encore_extensions() {
     let st: Value = s.http.get(format!("{jbase}/jam/{tok}/state?g=guest1&n=Bob")).send().await.unwrap().json().await.unwrap();
     assert_eq!(st["guests"], 1);
     assert_eq!(st["host"], "Tester");
+    // a Jam counts at most 1000 guests: made-up ones can't fill the memory
+    {
+        let mut g = s.st.live.lock();
+        let j = g.jams.get_mut(&tok).unwrap();
+        for i in 0..999 {
+            j.guests.insert(format!("made-up-{i}"), (String::new(), conductor::db::now_ms()));
+        }
+    }
+    let st: Value = s.http.get(format!("{jbase}/jam/{tok}/state?g=one-more")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["guests"], 1000);
+    s.st.live.lock().jams.get_mut(&tok).unwrap().guests.retain(|k, _| k == "guest1");
     let found: Value = s.http.get(format!("{jbase}/jam/{tok}/search?q=thr")).send().await.unwrap().json().await.unwrap();
     assert_eq!(found["songs"][0]["title"], "Three");
     let cover = found["songs"][0]["cover"].as_str().unwrap().to_string();
@@ -525,6 +536,13 @@ async fn encore_extensions() {
     assert_eq!(s.http.get(format!("{jbase}/jam/{tok}/cover/{alpha_album}?s=120")).send().await.unwrap().status(), 200);
     assert_eq!(s.http.get(format!("{jbase}/jam/{tok}/cover/someother")).send().await.unwrap().status(), 404);
     assert_eq!(s.http.get(format!("{jbase}/rest/ping")).send().await.unwrap().status(), 404); // nothing else on this port
+    // the state is limited too (generously: the page asks every 2.5 s, and a party may share one address)
+    let mut n = 0;
+    while s.http.get(format!("{jbase}/jam/{tok}/state")).send().await.unwrap().status() == 200 {
+        n += 1;
+        assert!(n <= 600, "no limit on the Jam's state");
+    }
+    assert!(n >= 590, "limited after {n}");
     s.ok("jamEnd", &[("token", &tok)]).await;
     assert_eq!(s.http.get(format!("{jbase}/jam/{tok}")).send().await.unwrap().status(), 410);
     assert_eq!(s.call("jamPoll", &[("token", &tok), ("ack", "0"), ("wait", "0")]).await["error"]["code"], 70);
@@ -1279,9 +1297,17 @@ async fn audiomuse_bridge() {
     assert_eq!(r["queries"][0], "rainy piano");
     assert_eq!(s.http.get(s.url("audiomuse/admin/delete_everything", &[])).send().await.unwrap().status(), 404);
     assert_eq!(s.http.get(format!("{}/rest/audiomuse/clap/top_queries?u=x&p=y", s.base)).send().await.unwrap().status(), 401);
-    // not set up: "not available", so apps fall back
+    // wrong passwords are limited here as on /rest: guessing gets nowhere
+    let guess = format!("{}/rest/audiomuse/clap/top_queries?u={USER}&p=guess", s.base);
+    for _ in 0..auth::APP_TRIES {
+        assert_eq!(s.http.get(&guess).send().await.unwrap().status(), 401);
+    }
+    assert_eq!(s.http.get(&guess).send().await.unwrap().status(), 429);
+    assert_eq!(s.http.get(s.url("audiomuse/clap/top_queries", &[])).send().await.unwrap().status(), 429);
+    // not set up: "not available", so apps fall back (and no login is tried)
     let s2 = Server::start().await;
     assert_eq!(s2.call("getSonicSimilarTracks", &[("id", "x")]).await["error"]["code"], 70);
+    assert_eq!(s2.http.get(format!("{}/rest/audiomuse/clap/top_queries?u=x&p=y", s2.base)).send().await.unwrap().status(), 404);
 }
 
 #[tokio::test]
@@ -1660,10 +1686,15 @@ async fn listening_review_and_shared_playlists() {
     assert_eq!(post("remove", serde_json::json!({"id": one, "index": 0, "guest": "g-bob"})).await.status(), 403);
     assert_eq!(post("remove", serde_json::json!({"id": two, "index": 2, "guest": "g-bob"})).await.status(), 409);
     assert_eq!(post("remove", serde_json::json!({"id": two, "index": 1, "guest": "g-bob"})).await.status(), 200);
-    let st: Value = s.http.get(format!("{jbase}/state")).send().await.unwrap().json().await.unwrap();
+    let st: Value = s.http.get(format!("{jbase}/state?g=g-ann")).send().await.unwrap().json().await.unwrap();
     let songs = st["song"].as_array().unwrap();
     assert_eq!(songs.len(), 2);
     assert_eq!(songs[1]["by"], "Ann");
+    // each friend sees which songs are theirs, never the others' guest ids (they'd let anyone take those out)
+    assert_eq!((songs[0]["mine"].as_bool(), songs[1]["mine"].as_bool()), (Some(false), Some(true)));
+    assert!(songs.iter().all(|x| x.get("guest").is_none()), "{st}");
+    let st: Value = s.http.get(format!("{jbase}/state")).send().await.unwrap().json().await.unwrap();
+    assert!(st["song"].as_array().unwrap().iter().all(|x| x["mine"] == false));
     let r = s.ok("playlistShares", &[]).await;
     assert_eq!(r["playlistShares"]["share"][0]["added"].as_array().unwrap().len(), 1);
     // the owner takes Ann's song out in the app, then Bob adds it again: it's Bob's now, not Ann's
@@ -3754,4 +3785,142 @@ async fn waiting_imports_are_capped() {
     // discarding one makes room again
     s.ok("deleteImport", &[("id", &ids[0])]).await;
     assert_eq!(upload().await["status"], "ok");
+}
+
+#[tokio::test]
+async fn limits_on_what_apps_send() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+
+    // stats far back: refused at once, not a stuck worker or a crash
+    for p in ["week", "month", "year"] {
+        let r = s.call("getListeningStats", &[("period", p), ("offset", "9223372036854775807")]).await;
+        assert_eq!(r["error"]["code"], 10, "{p}: {r}");
+        let r = s.call("getListeningStats", &[("period", p), ("offset", "300000")]).await;
+        assert_eq!(r["error"]["code"], 10, "{p}: {r}");
+    }
+    s.ok("getListeningStats", &[("period", "month"), ("offset", "14")]).await;
+
+    // a form past the 1 MB that used to be the limit is read; one past the limit is refused, and the queue stays
+    s.ok("savePlayQueue", &[("id", &one)]).await;
+    let pad = "x".repeat(1_500_000);
+    let r: Value = s
+        .http
+        .post(s.url("savePlayQueue", &[]))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("id={one}&current={one}&pad={pad}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok", "{r}");
+    assert_eq!(s.ok("getPlayQueue", &[]).await["playQueue"]["current"], one.as_str());
+    let huge = "x".repeat(9 << 20);
+    let sent = s
+        .http
+        .post(s.url("savePlayQueue", &[]))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("pad={huge}"))
+        .send()
+        .await;
+    if let Ok(r) = sent {
+        let r: Value = r.json().await.unwrap();
+        assert_eq!(r["subsonic-response"]["status"], "failed", "{r}");
+    }
+    let q = s.ok("getPlayQueue", &[]).await;
+    assert_eq!(q["playQueue"]["entry"].as_array().map(Vec::len), Some(1), "the queue wasn't emptied: {q}");
+
+    // devices: at most 20 per account, the one heard from longest ago makes room
+    for i in 0..25 {
+        s.ok("deviceHello", &[("id", &format!("device-{i:04}"))]).await;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    let list = s.ok("deviceList", &[]).await;
+    let ids: Vec<&str> = list["devices"]["device"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+    assert_eq!(ids.len(), 20);
+    assert!(!ids.contains(&"device-0000") && ids.contains(&"device-0024"), "{ids:?}");
+    // and the commands waiting for one device are kept to 512 KB, newest kept
+    let big = format!(r#"{{"type":"queue","pad":"{}"}}"#, "y".repeat(60_000));
+    for _ in 0..12 {
+        let r: Value = s
+            .http
+            .post(s.url("deviceCommand", &[]))
+            .form(&[("id", "device-0023"), ("target", "device-0024"), ("command", &big)])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(r["subsonic-response"]["status"], "ok", "{r}");
+    }
+    let r = s.ok("devicePoll", &[("id", "device-0024"), ("ack", "0"), ("since", "0"), ("wait", "0")]).await;
+    let cmds = r["devicePoll"]["commands"].as_array().unwrap();
+    let bytes: usize = cmds.iter().map(|c| c.to_string().len()).sum();
+    assert!(bytes <= 512 * 1024 && cmds.len() < 12, "{} commands, {bytes} bytes", cmds.len());
+    assert_eq!(cmds.last().unwrap()["seq"], 12);
+
+    // sign-in codes: 10 wrong ones an account, then even the right one waits
+    let start: Value =
+        s.http.get(format!("{}/rest/pairStart?f=json&c=test&name=Laptop", s.base)).send().await.unwrap().json().await.unwrap();
+    let code = start["subsonic-response"]["pair"]["code"].as_str().unwrap().to_string();
+    let wrong = if code == "000001" { "000002" } else { "000001" };
+    let login = serde_json::json!({"server": "https://music.example", "user": USER, "pass": PASS}).to_string();
+    for _ in 0..10 {
+        assert_eq!(s.call("pairApprove", &[("code", wrong), ("login", &login)]).await["error"]["code"], 70);
+    }
+    let r = s.call("pairApprove", &[("code", &code), ("login", &login)]).await;
+    assert!(r["error"]["message"].as_str().unwrap_or("").contains("Too many"), "{r}");
+
+    // API keys: an app with a revoked key that keeps trying doesn't lock out the other apps at the same address
+    let key = auth::create_api_key(&s.st.db, USER, "phone").await.unwrap();
+    let ping = |k: String| {
+        let u = format!("{}/rest/ping?apiKey={k}&f=json", s.base);
+        let h = s.http.clone();
+        async move { h.get(u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() }
+    };
+    for _ in 0..auth::APP_TRIES {
+        assert_eq!(ping("enc_revoked".into()).await["error"]["code"], 44);
+    }
+    assert_eq!(ping(key.clone()).await["status"], "ok", "a right key still gets in");
+    assert_eq!(ping("enc_revoked".into()).await["error"]["code"], 40, "the wrong one is held back");
+}
+
+#[tokio::test]
+async fn uploads_sent_at_once_still_wait_their_turn() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let body = r#"[{"ts":"2024-03-01T10:00:00Z","ms_played":180000,"master_metadata_track_name":"One","master_metadata_album_artist_name":"Alpha","spotify_track_uri":"spotify:track:1111111111111111111111"}]"#;
+    let addr = s.base.trim_start_matches("http://").to_string();
+    let path = s.url("importUpload", &[("name", "Streaming_History_Audio_2024.json")]).trim_start_matches(&s.base).to_string();
+    // every upload is under way (its first byte sent) before any of them is done
+    let mut conns = vec![];
+    for _ in 0..conductor::import::jobs::MAX_WAITING + 3 {
+        let mut c = tokio::net::TcpStream::connect(&addr).await.unwrap();
+        let head = format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        c.write_all(head.as_bytes()).await.unwrap();
+        c.write_all(&body.as_bytes()[..1]).await.unwrap();
+        conns.push(c);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let mut taken = 0;
+    for mut c in conns {
+        let _ = c.write_all(&body.as_bytes()[1..]).await;
+        let mut out = String::new();
+        let _ = c.read_to_string(&mut out).await;
+        if out.contains(r#""status":"ok""#) {
+            taken += 1;
+        }
+    }
+    assert_eq!(taken, conductor::import::jobs::MAX_WAITING);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batch").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(n, conductor::import::jobs::MAX_WAITING);
 }

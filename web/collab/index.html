@@ -81,7 +81,7 @@ async function api(path, body) {
 let ids = new Set();
 async function refresh() {
   try {
-    const s = await api('/state');
+    const s = await api('/state?g=' + encodeURIComponent(me));
     $('title').textContent = s.name || 'Playlist';
     document.title = s.name ? `Add to ${s.name}` : 'Add to the playlist';
     $('who').textContent = s.owner ? `${s.owner}'s playlist: add songs from their library` : 'Add songs from the library';
@@ -89,7 +89,7 @@ async function refresh() {
     $('count').textContent = `${s.song.length} song${s.song.length === 1 ? '' : 's'}`;
     $('songs').innerHTML = s.song.length ? s.song.map(x => `<div class="row">${img(x.cover)}<div class="grow"><div class="t">${esc(x.title)}</div>
       <div class="a">${esc(x.artist)}${x.by ? ` · <span class="tag">added by ${esc(x.by)}</span>` : ''}</div></div>
-      ${x.guest === me ? `<div class="acts"><button class="icon" title="Take out" data-rm="${x.index}" data-id="${esc(x.id)}">✕</button></div>` : ''}</div>`).join('')
+      ${x.mine ? `<div class="acts"><button class="icon" title="Take out" data-rm="${x.index}" data-id="${esc(x.id)}">✕</button></div>` : ''}</div>`).join('')
       : '<div class="empty">No songs yet: add the first one</div>';
   } catch (e) {}
 }

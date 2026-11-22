@@ -64,7 +64,8 @@ The safest way is a private network such as **Tailscale**: install it on the ser
 server's Tailscale address. Nothing is open to the internet.
 
 For a public address, put Conductor behind a reverse proxy **on the same computer** (so the proxy's
-`X-Forwarded-For` is trusted for rate limits). With Caddy:
+`X-Forwarded-For` is trusted for rate limits). A proxy on another computer isn't trusted: every app and guest
+then has the proxy's address, and they share one limit on wrong passwords. With Caddy:
 
 ```
 music.example.com {
