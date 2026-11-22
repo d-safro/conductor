@@ -4,7 +4,7 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased (0.5.0)
+## 0.5.0 (2026-11-22)
 
 ### New
 - **Sounds like, without AI**: song radio, similar songs and similar artists are worked out from your library and what
