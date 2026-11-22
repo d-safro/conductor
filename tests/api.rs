@@ -76,6 +76,8 @@ impl Server {
     }
 
     fn no_network(c: &mut Config) {
+        // a test that turns online info on without its own stand-in for Deezer still never reaches the real one
+        c.deezer_url = "http://127.0.0.1:9".into();
         c.lyrics_online = false;
         c.covers_fetch = false;
         c.concerts = false;
@@ -2209,7 +2211,8 @@ async fn artist_info_and_similar_songs() {
     let alpha = one["artistId"].as_str().unwrap().to_string();
     let info = &s.ok("getArtistInfo2", &[("id", &alpha), ("count", "12")]).await["artistInfo2"];
     let sim = info["similarArtist"].as_array().unwrap();
-    assert_eq!(sim.len(), 1, "only artists you have: {sim:?}");
+    // Deezer's related artist you have first, then Conductor's own picks; only artists you have
+    assert!(sim.iter().all(|a| !a["id"].as_str().unwrap().starts_with("dz-")), "only artists you have: {sim:?}");
     assert_eq!(sim[0]["name"], "The Beta Band");
     assert_eq!(sim[0]["id"], three["artistId"]);
     let all = &s.ok("getArtistInfo2", &[("id", &alpha), ("includeNotPresent", "true")]).await["artistInfo2"];
@@ -4575,9 +4578,11 @@ async fn every_user_scrobbles_to_their_own_accounts() {
         let by = |who: &str, kind: &str| listens.iter().filter(|(a, b)| a == who && b["listen_type"] == kind).count();
         assert_eq!((by("Token samtok", "playing_now"), by("Token samtok", "single"), by("Token lbtok", "single")), (1, 1, 1));
         let lfm = fake.lastfm.lock().unwrap();
-        assert_eq!(lfm[0]["method"], "track.updateNowPlaying");
-        assert_eq!((lfm[1]["method"].as_str(), lfm[1]["track"].as_str(), lfm[1]["artist"].as_str()), ("track.scrobble", "One", "Alpha"));
-        assert_eq!((lfm[1]["timestamp"].as_str(), lfm[1]["album"].as_str()), ("1700000000", "First Album"));
+        // (two requests from the app: which reaches Last.fm first isn't fixed)
+        assert!(lfm.iter().any(|p| p["method"] == "track.updateNowPlaying"), "{lfm:?}");
+        let sc = lfm.iter().find(|p| p["method"] == "track.scrobble").unwrap();
+        assert_eq!((sc["track"].as_str(), sc["artist"].as_str()), ("One", "Alpha"));
+        assert_eq!((sc["timestamp"].as_str(), sc["album"].as_str()), ("1700000000", "First Album"));
     }
 
     // Last.fm down: plays are kept, and later ones wait behind them, then all go in order
@@ -4763,4 +4768,49 @@ async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_toke
     assert!(fake.listens.lock().unwrap().iter().any(|(a, t)| a == "Token lbtok" && t == "Owner's"));
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lb_queue").fetch_one(&s.st.db).await.unwrap();
     assert_eq!(left, 600, "sam's wait for later, in order");
+}
+
+#[tokio::test]
+async fn song_radio_without_audiomuse_stays_close() {
+    // no AudioMuse, no online info: the artists that go with a song come from the library and its plays
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| c.catalog = false).await;
+    let m = &s.music;
+    tone_genre(&m.join("Kino/Gruppa/01.mp3"), "Группа крови", "Кино", "Группа крови", 1, 2, "Russian Rock");
+    tone_genre(&m.join("Kino/Gruppa/02.mp3"), "Кукушка", "Кино", "Группа крови", 2, 2, "Russian Rock");
+    tone_genre(&m.join("DDT/Osen/01.mp3"), "Осень", "ДДТ", "Актриса Весна", 1, 2, "Rock; Russian Rock");
+    tone_genre(&m.join("Chaif/Arg/01.mp3"), "Аргентина", "Чайф", "Шекогали", 1, 2, "Rock");
+    tone_genre(&m.join("Zemfira/Z/01.mp3"), "Искала", "Земфира", "Земфира", 1, 2, "Pop");
+    tone_genre(&m.join("Oasis/Morning/01.mp3"), "Wonderwall", "Oasis", "Morning Glory", 1, 2, "Britpop");
+    tone_genre(&m.join("Rimsky/Sch/01.mp3"), "Scheherazade", "Rimsky-Korsakov", "Scheherazade", 1, 2, "Classical");
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let id = |t: &'static str| {
+        let s = &s;
+        async move { s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string() }
+    };
+    let (kino, zemfira) = (id("Группа крови").await, id("Искала").await);
+    // Кино and Земфира are played in the same sittings
+    for day in 0..3i64 {
+        let t = 1_700_000_000_000 + day * 86_400_000;
+        s.ok("scrobble", &[("id", &kino), ("time", &t.to_string())]).await;
+        s.ok("scrobble", &[("id", &zemfira), ("time", &(t + 240_000).to_string())]).await;
+    }
+    let r = s.ok("getSimilarSongs2", &[("id", &kino), ("count", "20")]).await;
+    let artists: Vec<String> =
+        r["similarSongs2"]["song"].as_array().unwrap().iter().map(|x| x["artist"].as_str().unwrap().to_string()).collect();
+    let at = |a: &str| artists.iter().position(|x| x == a);
+    // Кино's other song, the artist played with it, then Russian rock before Britpop; classical not at all
+    assert!(artists.contains(&"Кино".to_string()), "{artists:?}");
+    assert!(at("Земфира").is_some_and(|z| at("Oasis").is_none_or(|o| z < o)), "{artists:?}");
+    assert!(at("ДДТ").is_some_and(|d| at("Oasis").is_none_or(|o| d < o)), "{artists:?}");
+    assert!(at("Чайф").is_some(), "Rock shares a word with Russian Rock: {artists:?}");
+    assert!(at("Rimsky-Korsakov").is_none(), "{artists:?}");
+    // and the same artists as Кино's similar artists, without any online info
+    let a = s.ok("getSong", &[("id", &kino)]).await["song"]["artistId"].as_str().unwrap().to_string();
+    let info = s.ok("getArtistInfo2", &[("id", &a), ("count", "3")]).await;
+    let names: Vec<&str> = info["artistInfo2"]["similarArtist"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert!(names.contains(&"Земфира") && names.contains(&"ДДТ"), "{names:?}");
 }

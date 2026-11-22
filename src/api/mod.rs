@@ -70,6 +70,8 @@ pub struct AppState {
     pub login_fails: crate::auth::Throttle,
     /// Last.fm links started and not finished yet
     pub lastfm_pending: crate::scrobble::Pending,
+    /// which artists go with which (built from the library and plays; see `crate::similar`)
+    pub similar: crate::similar::Cache,
 }
 
 impl AppState {
@@ -93,6 +95,7 @@ impl AppState {
             setup_token: crate::db::random_id(),
             login_fails: Default::default(),
             lastfm_pending: Default::default(),
+            similar: Default::default(),
         }
     }
 }

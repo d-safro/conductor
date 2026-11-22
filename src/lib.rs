@@ -22,6 +22,7 @@ pub mod online;
 pub mod player;
 pub mod prelude;
 pub mod scrobble;
+pub mod similar;
 pub mod spotify;
 pub mod vpn;
 pub mod wiki;

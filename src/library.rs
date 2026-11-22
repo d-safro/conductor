@@ -683,7 +683,8 @@ pub fn track_path(libs: &[(i64, LibraryConfig)], library_id: i64, rel: &str) -> 
 /// The genres in a genre tag: split at ";", "/" and "," (as Navidrome does), trimmed, without doubles.
 pub fn split_genres(s: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
-    for g in s.split([';', '/', ',']).map(str::trim).filter(|g| !g.is_empty()) {
+    // ("|" too: some taggers write "Rock | Blues | Hard Rock")
+    for g in s.split([';', '/', ',', '|']).map(str::trim).filter(|g| !g.is_empty()) {
         if !out.iter().any(|o| o.eq_ignore_ascii_case(g)) {
             out.push(g.to_string());
         }
@@ -714,7 +715,7 @@ pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
     let mut changed = 0;
     for table in ["track", "album"] {
         let rows: Vec<(String, String)> = sqlx::query_as(&format!(
-            "SELECT id, genre FROM {table} WHERE genre LIKE '%,%' OR genre LIKE '%/%' OR genre LIKE '%;%'"
+            "SELECT id, genre FROM {table} WHERE genre LIKE '%,%' OR genre LIKE '%/%' OR genre LIKE '%;%' OR genre LIKE '%|%'"
         ))
         .fetch_all(db)
         .await?;

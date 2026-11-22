@@ -16,8 +16,8 @@ The detailed list. The [README](../README.md) has the short version.
   `getOpenSubsonicExtensions`, `getMusicFolders`, `getArtists`, `getIndexes`, `getArtist`, `getAlbum`, `getSong`,
   `getMusicDirectory`, `getAlbumList(2)` (all list types), `getRandomSongs`, `getSongsByGenre`, `getGenres`,
   `search2/3`, `getStarred(2)`, `star`, `unstar`, `setRating`, `scrobble`, `reportPlayback`, `getNowPlaying`,
-  `getTopSongs`, `getSimilarSongs(2)` (AudioMuse's sound-alikes, then songs by the artist and Deezer's related
-  artists that you have, then the genre), `getArtistInfo(2)` (Wikipedia biography through MusicBrainz and
+  `getTopSongs`, `getSimilarSongs(2)` (AudioMuse's sound-alikes, then the artist's songs in turns with those of the
+  artists that go with it, closest first, then the genre), `getArtistInfo(2)` (Wikipedia biography through MusicBrainz and
   Wikidata, pictures and similar artists from Deezer), `getAlbumInfo(2)` (Wikipedia notes, Cover Art Archive
   pictures; both looked up once when first asked, then kept; `info_online`, `info_lang`),
   playlists (all), play queue, `getUser`, internet radio (all), `getScanStatus`, `startScan`, `stream`
@@ -28,6 +28,11 @@ The detailed list. The [README](../README.md) has the short version.
   picture get a `cover.jpg` from iTunes, then Deezer; nothing is ever overwritten (`covers_fetch`).
 - **Works with web apps** served from another address (Feishin's web version, Airsonic-refix…): the Subsonic API
   answers them (CORS, as Navidrome does; the admin page doesn't). In Feishin, add Conductor as "OpenSubsonic".
+- **Sounds like, without AI**: which artists go with which is worked out from the library itself, so song radio,
+  `getSimilarSongs` and similar artists are good without AudioMuse-AI or any online service: the artists played in
+  the same sittings, related artists from online info (when on), the same genres and genres sharing a word ("Russian
+  Rock" and "Rock"), the script of names and titles (Cyrillic with Cyrillic…), and the era. Kept for ten minutes and
+  after each scan; ~10-20 ms an answer. Songs you've hearted or played come first.
 - **Big libraries**: measured with 100,000 songs (`cargo run --release --example bench_library -- DIR 100000` makes
   one in seconds): first scan ~10 s, a rescan ~1 s, ~75 MB of memory; lists and albums in ~1-25 ms; an app fetching
   the whole library 500 songs at a time ~10 s in all (stable paging, nothing skipped or repeated).

@@ -29,7 +29,9 @@ fn catalog_for(c: &Ctx) -> bool {
 
 /// Your artists among Deezer's related artists for `name`, in Deezer's order, and the ones you don't have.
 async fn related(c: &Ctx, name: &str) -> (Option<Value>, Vec<items::ArtistRow>, Vec<Value>) {
-    if !c.st.cfg.catalog {
+    // with online info, or the catalog (which asks Deezer anyway): related artists you have are worth knowing
+    // without a downloader too (the ones you don't have are only offered with the catalog; see artist_info)
+    if !c.st.cfg.info_online && !c.st.cfg.catalog {
         return (None, vec![], vec![]);
     }
     let Some(info) = catalog::artist_info(&c.st, name).await else { return (None, vec![], vec![]) };
@@ -84,7 +86,26 @@ pub async fn artist_info(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
         }
     }
     let mut similar: Vec<Value> = mine.iter().filter(|x| x.id != a.id).take(count).map(items::artist_json).collect();
-    if c.p.bool("includeNotPresent") == Some(true) && catalog_for(c) {
+    // and Conductor's own picks from the library (played together, genres, script, era) to fill the list, leaving
+    // room (up to half) for the artists you don't have when the app asks for them too
+    let include_theirs = c.p.bool("includeNotPresent") == Some(true) && catalog_for(c);
+    let room_for_theirs = if include_theirs { theirs.len().min(count / 2) } else { 0 };
+    let count_own = count.saturating_sub(room_for_theirs);
+    if similar.len() < count_own {
+        let related: Vec<String> = mine.iter().map(|x| x.id.clone()).collect();
+        for (id, _) in crate::similar::artists(&c.st, &a.id, &related, count).await {
+            if similar.len() >= count_own {
+                break;
+            }
+            if similar.iter().any(|s| s["id"] == id.as_str()) {
+                continue;
+            }
+            if let Some(x) = items::artists_where(c, "ar.id = ?", &[&id], "").await?.into_iter().next() {
+                similar.push(items::artist_json(&x));
+            }
+        }
+    }
+    if include_theirs {
         let room = count.saturating_sub(similar.len());
         similar.extend(theirs.iter().take(room).map(catalog::ss_artist));
     }
@@ -163,32 +184,41 @@ pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
             push(&mut ids, x);
         }
     }
-    // 2. songs by related artists you have (Deezer), mixed with the artist's own
+    // 2. the artist's own songs, in turns with those of the artists that go with it: played together, related
+    //    online, the same genres, the same script, the same era (crate::similar). Within each artist, the songs
+    //    you've hearted or played come first.
     if ids.len() < count {
         let (_, mine, _) = related(c, &artist_name).await;
+        let related_ids: Vec<String> = mine.into_iter().map(|a| a.id).collect();
         let mut artist_ids: Vec<String> = vec![artist_id.clone()];
-        artist_ids.extend(mine.into_iter().map(|a| a.id).take(10));
+        artist_ids.extend(crate::similar::artists(&c.st, &artist_id, &related_ids, 25).await.into_iter().map(|(id, _)| id));
         let marks = vec!["?"; artist_ids.len()].join(",");
         let binds: Vec<&str> = artist_ids.iter().map(String::as_str).collect();
         let rows = items::tracks_where(
             c,
             &format!("(t.artist_id IN ({marks}) OR al.artist_id IN ({marks}))"),
             &[binds.as_slice(), binds.as_slice()].concat(),
-            "ORDER BY RANDOM() LIMIT 1000",
+            "ORDER BY RANDOM() LIMIT 3000",
         )
         .await?;
-        // in turns: one song from each artist, then the next round
-        let mut groups: Vec<Vec<String>> = vec![vec![]; artist_ids.len()];
-        for t in rows {
+        let mut groups: Vec<Vec<&items::TrackRow>> = vec![vec![]; artist_ids.len()];
+        for t in &rows {
             if let Some(i) = artist_ids.iter().position(|a| *a == t.artist_id || *a == t.album_artist_id) {
-                groups[i].push(t.id);
+                groups[i].push(t);
             }
         }
-        let rounds = groups.iter().map(Vec::len).max().unwrap_or(0);
-        for r in 0..rounds {
-            for g in &groups {
-                if let Some(x) = g.get(r) {
-                    push(&mut ids, x.clone());
+        for g in &mut groups {
+            // hearted, then played, then the rest (each kept in its random order)
+            g.sort_by_key(|t| (t.starred_at.is_none(), t.play_count.unwrap_or(0) == 0));
+        }
+        // in turns, the closest artists first: the first round takes the artist and its 8 closest, the next 16, …
+        // so what plays first goes best with it, and the list still reaches further as it goes on
+        let mut next = vec![0usize; groups.len()];
+        for r in 0..groups.iter().map(Vec::len).max().unwrap_or(0) + groups.len() / 8 + 1 {
+            for (i, g) in groups.iter().enumerate().take(8 * (r + 1) + 1) {
+                if let Some(t) = g.get(next[i]) {
+                    push(&mut ids, t.id.clone());
+                    next[i] += 1;
                 }
             }
         }

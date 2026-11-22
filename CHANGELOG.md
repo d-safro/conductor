@@ -4,6 +4,18 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased (0.5.0)
+
+### New
+- **Sounds like, without AI**: song radio, similar songs and similar artists are worked out from your library and what
+  you play (played together, genres and their words, the script of names and titles, era), so they stay close
+  without AudioMuse-AI or any online service. On a real library, radio after a Russian rock song now stays with
+  Russian rock instead of wandering off after two songs.
+
+### Fixed
+- Related artists from Deezer were only looked up with downloads on; they're used with online info too.
+- Genres written with "|" between them ("Rock | Blues | Hard Rock") are split like the others.
+
 ## 0.4.0 (2026-11-22)
 
 ### New
