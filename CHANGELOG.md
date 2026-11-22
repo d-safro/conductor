@@ -27,7 +27,8 @@ What changed in each release, newest first. The full notes for each are on the
 
 ### Fixed
 - MP3s whose Cyrillic tags were written as Windows-1251 but marked Latin-1 showed garbled names ("Àêâàðèóì" for
-  «Аквариум»); they're read as Cyrillic now, songs already scanned too (read again once). Western accents stay.
+  «Аквариум»), and the same for UTF-8 tags marked Latin-1 ("ÐÐ½Ð´ÑÐµÐ¹" for «Андрей»); they're read right now, songs
+  already scanned too (read again once). Western accents stay.
 - Plays an app hands in together (made offline) are sent to ListenBrainz and Last.fm in order, one after another.
 - A ListenBrainz token that ListenBrainz stops accepting is shown as needing a new link, as Last.fm's are.
 - Plays waiting to be sent again: one user's long wait (500 or more, their service turning them away for now) no

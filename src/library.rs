@@ -203,6 +203,17 @@ fn first_num(s: &str) -> Option<i64> {
     s.split('/').next()?.trim().parse().ok()
 }
 
+/// ID3 text that is really UTF-8 but marked as Latin-1, as some taggers wrote it: «Андрей» shows as "Ð\u{90}Ð½Ð´ÑÐµÐ¹".
+/// Taken back to its bytes and read as UTF-8 when every character fits in a byte, some are past ASCII, and the
+/// bytes are valid UTF-8 (text that really is Latin-1 almost never is: "é" alone isn't, it needs "Ã©").
+fn utf8_mojibake(s: &str) -> Option<String> {
+    if s.is_ascii() || s.chars().any(|c| c as u32 > 0xff) {
+        return None;
+    }
+    let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
+    String::from_utf8(bytes).ok()
+}
+
 /// ID3 text that is really Windows-1251 (Cyrillic) but marked as Latin-1, as many older Russian taggers wrote it:
 /// read as Latin-1 it shows as "Àêâàðèóì" for «Аквариум». Taken back to its bytes and read as Windows-1251 when
 /// nothing in it is past U+00FF, every non-ASCII character is one that Latin-1 shows for a Cyrillic letter
@@ -258,7 +269,9 @@ pub fn read_meta(path: &Path) -> Meta {
     if let Some(tag) = tf.primary_tag().or_else(|| tf.first_tag()) {
         // only ID3 has text marked Latin-1 (Vorbis comments, MP4 and APE tags are always Unicode)
         let id3 = matches!(tag.tag_type(), lofty::tag::TagType::Id3v2 | lofty::tag::TagType::Id3v1);
-        let fix = |s: &str| -> String { id3.then(|| cp1251_mojibake(s)).flatten().unwrap_or_else(|| s.to_string()) };
+        let fix = |s: &str| -> String {
+            id3.then(|| utf8_mojibake(s).or_else(|| cp1251_mojibake(s))).flatten().unwrap_or_else(|| s.to_string())
+        };
         let get = |k: ItemKey| tag.get_string(&k).map(|s| fix(s.trim())).filter(|s| !s.is_empty());
         if let Some(t) = get(ItemKey::TrackTitle) {
             m.title = t;
@@ -732,6 +745,18 @@ mod genre_tests {
             "Café del Mar", "Plain ASCII", "", "Café © 2001", "Ӝ Àêâàðèóì"]
         {
             assert_eq!(cp1251_mojibake(s), None, "{s}");
+        }
+    }
+
+    #[test]
+    fn utf8_read_as_latin1_is_read_again() {
+        // UTF-8 bytes shown as Latin-1, as one ID3 tagger in the wild wrote them
+        let latin1 = |s: &str| -> String { s.bytes().map(char::from).collect() };
+        assert_eq!(utf8_mojibake(&latin1("Андрей Макаревич")).as_deref(), Some("Андрей Макаревич"));
+        assert_eq!(utf8_mojibake(&latin1("Sigur Rós")).as_deref(), Some("Sigur Rós"));
+        // real Latin-1 text stays: a lone accented letter isn't valid UTF-8
+        for s in ["Beyoncé", "Sigur Rós", "Mötley Crüe", "Ça plane pour moi", "Björk", "Plain ASCII", "Àêâàðèóì", "Аквариум"] {
+            assert_eq!(utf8_mojibake(s), None, "{s}");
         }
     }
 

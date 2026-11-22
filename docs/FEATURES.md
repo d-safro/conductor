@@ -4,8 +4,8 @@ The detailed list. The [README](../README.md) has the short version.
 
 - **Library**: scans music folders (FLAC, MP3, Opus, Ogg, M4A/AAC, WAV, AIFF, APE, WavPack, …), reads tags
   (title, artists, album artist, track/disc, year, genres — every genre tag, split at `;` `/` `,` as Navidrome
-  does — MusicBrainz ids; Cyrillic ID3 text that an old tagger wrote as Windows-1251 but marked Latin-1 is read
-  as Cyrillic), and gives each song, album and artist an
+  does — MusicBrainz ids; Cyrillic ID3 text that an old tagger wrote as Windows-1251, or as UTF-8, but marked
+  Latin-1 is read as it was meant), and gives each song, album and artist an
   id that stays the same across scans. One album per album artist + album name. Unchanged files are skipped, so a
   rescan takes milliseconds.
 - **Drive guard**: a music folder that's gone, empty, or missing its sentinel file counts as *not connected*.
