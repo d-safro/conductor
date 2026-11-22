@@ -6,6 +6,8 @@
 //!   conductor [--config FILE] user add NAME [--admin]     password from CONDUCTOR_PASSWORD or stdin
 //!   conductor [--config FILE] user passwd NAME
 //!   conductor [--config FILE] apikey NAME [LABEL]          prints a new API key
+//!   conductor [--config FILE] backup [FILE]                 everything needed to come back, in one zip
+//!   conductor [--config FILE] restore FILE [--force]        put a backup back (Conductor stopped; see src/backup.rs)
 //!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR] [--nd-key KEY]   (a copy of the database)
 //!   conductor [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
 //!   conductor [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
@@ -91,6 +93,16 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     let config_path = if first_start { Some(conductor::prelude::cli(None, &[]).await?) } else { config_path };
     let cfg = Config::load(config_path)?;
     conductor::config::move_old_names(&cfg);
+    // before the database is opened: it's what gets replaced
+    if let ["restore", file, rest @ ..] = a.as_slice() {
+        let r = conductor::backup::restore(&cfg, std::path::Path::new(file), rest.contains(&"--force"))?;
+        if let Some(d) = &r.moved_aside {
+            println!("What was here is in {}", d.display());
+        }
+        println!("Restored a backup from Conductor {}: {} files.", r.version, r.files.len());
+        println!("Start Conductor as usual; it brings the database up to date if the backup is older.");
+        return Ok(());
+    }
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let pool = db::open(&cfg.data_dir.join("conductor.db")).await?;
     let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
@@ -116,6 +128,12 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
                 bail!("no user {name}");
             }
             println!("password changed");
+            Ok(())
+        }
+        ["backup", rest @ ..] => {
+            let out = rest.first().map(PathBuf::from).unwrap_or_else(conductor::backup::default_name);
+            let n = conductor::backup::make(&cfg, &pool, &out).await?;
+            println!("Backup: {} ({} KB). It holds your passwords' key and secrets: keep it somewhere safe.", out.display(), n / 1024);
             Ok(())
         }
         ["apikey", name, rest @ ..] => {
@@ -211,6 +229,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(conductor::spotify::worker(state.clone()));
     tokio::spawn(conductor::concerts::worker(state.clone()));
     tokio::spawn(conductor::mixes::worker(state.clone()));
+    tokio::spawn(conductor::backup::worker(state.cfg.clone(), state.db.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();

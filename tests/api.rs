@@ -3416,3 +3416,55 @@ async fn users_over_the_api() {
     s.ok("deleteUser", &[("username", "sam")]).await;
     assert_eq!(get(as_sam("ping", "new sam pass", "")).await["error"]["code"], 40);
 }
+
+#[tokio::test]
+async fn backup_and_restore() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    s.ok("createPlaylist", &[("name", "Keep me")]).await;
+    let out = s._dir.path().join("b/backup.zip");
+    let n = conductor::backup::make(&s.st.cfg, &s.st.db, &out).await.unwrap();
+    assert!(n > 1000);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o077, 0, "only you can read it");
+    }
+
+    // somewhere new: it all comes back, and the password still works (the key came too)
+    let fresh = tempfile::tempdir().unwrap();
+    let cfg = Config { data_dir: fresh.path().join("data"), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    let r = conductor::backup::restore(&cfg, &out, false).unwrap();
+    assert!(r.files.contains(&"conductor.db".to_string()) && r.files.contains(&"secret.key".to_string()), "{r:?}");
+    let pool = db::open(&cfg.data_dir.join("conductor.db")).await.unwrap();
+    let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
+    assert!(auth::verify_password(&pool, &secrets, USER, PASS).await.unwrap().is_some());
+    let pls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE name = 'Keep me'").fetch_one(&pool).await.unwrap();
+    let songs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track").fetch_one(&pool).await.unwrap();
+    assert_eq!((pls, songs), (1, 3));
+    pool.close().await;
+
+    // over a database that's there: only with --force, and what was there is kept aside
+    assert!(conductor::backup::restore(&cfg, &out, false).unwrap_err().to_string().contains("already a database"));
+    let r = conductor::backup::restore(&cfg, &out, true).unwrap();
+    let aside = r.moved_aside.unwrap();
+    assert!(aside.join("conductor.db").is_file() && aside.join("secret.key").is_file());
+
+    // not a backup
+    std::fs::write(fresh.path().join("x.zip"), b"nope").unwrap();
+    assert!(conductor::backup::restore(&cfg, &fresh.path().join("x.zip"), true).is_err());
+
+    // the daily ones: only the newest kept, other files left alone
+    let d = fresh.path().join("daily");
+    std::fs::create_dir_all(&d).unwrap();
+    for n in ["conductor-20260101-000000.zip", "conductor-20260102-000000.zip", "conductor-20260103-000000.zip", "conductor-backup-mine.zip", "notes.txt"] {
+        std::fs::write(d.join(n), b"x").unwrap();
+    }
+    conductor::backup::prune(&d, 2);
+    let mut left: Vec<String> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    left.sort();
+    assert_eq!(left, ["conductor-20260102-000000.zip", "conductor-20260103-000000.zip", "conductor-backup-mine.zip", "notes.txt"]);
+}

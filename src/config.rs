@@ -33,6 +33,9 @@ pub struct Config {
     pub podcast_clean_days: i64,
     /// Let podcast feeds, episodes and pictures come from this computer or your own network (off: internet only).
     pub podcast_local: bool,
+    /// Daily backups kept (0: none) and where (default: <data_dir>/backups). See src/backup.rs.
+    pub backup_keep: usize,
+    pub backup_dir: Option<PathBuf>,
     /// Songs you don't have (⬇) in searches, albums and artists (from Deezer). When it isn't set, it's on only if
     /// something can get those songs (slskd or Lidarr): without downloads, nothing shows that can't be played.
     pub catalog: bool,
@@ -168,6 +171,8 @@ impl Default for Config {
             podcast_keep: 0,
             podcast_clean_days: 7,
             podcast_local: false,
+            backup_keep: 7,
+            backup_dir: None,
             catalog: true,
             catalog_skip_clients: vec!["symfonium".into()],
             deezer_url: "https://api.deezer.com".into(),
@@ -424,6 +429,12 @@ impl Config {
         }
         if let Ok(v) = var("PODCAST_CLEAN_DAYS") {
             c.podcast_clean_days = v.parse().context("CONDUCTOR_PODCAST_CLEAN_DAYS")?;
+        }
+        if let Ok(v) = var("BACKUP_KEEP") {
+            c.backup_keep = v.parse().context("CONDUCTOR_BACKUP_KEEP")?;
+        }
+        if let Some(v) = var_os("BACKUP_DIR") {
+            c.backup_dir = Some(v.into());
         }
         if let Ok(v) = var("PODCAST_LOCAL") {
             c.podcast_local = v == "1" || v == "true";
