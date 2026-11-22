@@ -3892,6 +3892,47 @@ async fn limits_on_what_apps_send() {
 }
 
 #[tokio::test]
+async fn places_count_only_songs_shown() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let found = s.ok("search3", &[("query", "\"\""), ("songCount", "10")]).await;
+    let songs = found["searchResult3"]["song"].as_array().unwrap().clone();
+    let id = |t: &str| songs.iter().find(|x| x["title"] == t).unwrap()["id"].as_str().unwrap().to_string();
+    let (one, two, three) = (id("One"), id("Two"), id("Three"));
+    // a playlist whose first song is missing (its drive is out): getPlaylist shows Two, Three
+    let pl = s.ok("createPlaylist", &[("name", "P"), ("songId", &one), ("songId", &two), ("songId", &three)]).await;
+    let pid = pl["playlist"]["id"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE track SET missing_since = 1 WHERE id = ?").bind(&one).execute(&s.st.db).await.unwrap();
+    let shown = |r: Value| -> Vec<String> {
+        r["playlist"]["entry"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(shown(s.ok("getPlaylist", &[("id", &pid)]).await), [two.clone(), three.clone()]);
+    // taking out place 0 (as shown: Two) takes out Two, and the missing song stays for when it's back
+    s.ok("updatePlaylist", &[("playlistId", &pid), ("songIndexToRemove", "0")]).await;
+    assert_eq!(shown(s.ok("getPlaylist", &[("id", &pid)]).await), std::slice::from_ref(&three));
+    sqlx::query("UPDATE track SET missing_since = NULL WHERE id = ?").bind(&one).execute(&s.st.db).await.unwrap();
+    assert_eq!(shown(s.ok("getPlaylist", &[("id", &pid)]).await), [one.clone(), three.clone()]);
+
+    // a queue with a song that's gone: the place given back is the current song's among those sent
+    s.ok("savePlayQueueByIndex", &[("id", "gone-song"), ("id", &two), ("id", &three), ("currentIndex", "2")]).await;
+    let q = s.ok("getPlayQueueByIndex", &[]).await["playQueueByIndex"].clone();
+    let i = q["currentIndex"].as_u64().unwrap() as usize;
+    assert_eq!(q["entry"][i]["id"], three.as_str(), "{q}");
+    // the current one itself gone: no place rather than the wrong song
+    s.ok("savePlayQueueByIndex", &[("id", &two), ("id", "gone-song"), ("currentIndex", "1")]).await;
+    assert!(s.ok("getPlayQueueByIndex", &[]).await["playQueueByIndex"]["currentIndex"].is_null());
+
+    // an album that's emptied (all its songs gone) is "not found", not a crash
+    let album = s.ok("getSong", &[("id", &three)]).await["song"]["albumId"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE album SET song_count = 0 WHERE id = ?").bind(&album).execute(&s.st.db).await.unwrap();
+    assert_eq!(s.call("getMusicDirectory", &[("id", &album)]).await["error"]["code"], 70);
+    assert_eq!(s.call("getSimilarSongs", &[("id", &album)]).await["error"]["code"], 70);
+    s.ok("ping", &[]).await;
+}
+
+#[tokio::test]
 async fn uploads_sent_at_once_still_wait_their_turn() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if !have_ffmpeg() {

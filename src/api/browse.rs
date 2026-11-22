@@ -72,7 +72,11 @@ pub async fn directory(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("id")?;
     match items::kind_of(c, id).await? {
         Some("artist") => {
-            let a = items::artists_where(c, "ar.id = ?", &[id], "").await?.remove(0);
+            let a = items::artists_where(c, "ar.id = ?", &[id], "")
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::not_found("Artist"))?;
             let albums = items::albums_where(c, "al.artist_id = ?", &[id], "ORDER BY al.year, al.sort_name").await?;
             let mut d = json!({ "id": a.id, "name": a.name, "albumCount": a.album_count, "userRating": a.rating.unwrap_or(0),
                 "child": albums.iter().map(album_json).collect::<Vec<_>>() });
@@ -82,7 +86,11 @@ pub async fn directory(c: &Ctx) -> Result<Reply, ApiError> {
             ok(json!({ "directory": d }))
         }
         Some("album") => {
-            let a = items::albums_where(c, "al.id = ?", &[id], "").await?.remove(0);
+            let a = items::albums_where(c, "al.id = ?", &[id], "")
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::not_found("Album"))?;
             let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number").await?;
             let mut d = json!({ "id": a.id, "name": a.name, "parent": a.artist_id, "songCount": a.song_count,
                 "playCount": a.play_count.unwrap_or(0), "userRating": a.rating.unwrap_or(0),
