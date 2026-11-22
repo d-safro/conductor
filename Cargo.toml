@@ -36,6 +36,7 @@ strsim = "0.11"
 sha1 = "0.10"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

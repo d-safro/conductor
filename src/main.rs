@@ -7,6 +7,8 @@
 //!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
 //!   maestro [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
+//!   maestro [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
+//!                                                         (your music from another service; see src/import/cli.rs)
 //!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, mixes, shares,
 //!                                                         concerts; podcasts and songs asked for from STATE's
 //!                                                         podcasts.json and requests.json; after import-navidrome)
@@ -128,6 +130,10 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             }
             println!("{}", serde_json::to_string_pretty(&rep)?);
             Ok(())
+        }
+        ["import", rest @ ..] => {
+            let st = Arc::new(maestro::api::AppState::new(pool, secrets, cfg, libs));
+            maestro::import::cli::run(st, rest).await
         }
         _ => bail!("unknown command; see the top of src/main.rs"),
     }

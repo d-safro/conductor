@@ -43,6 +43,12 @@ pub fn routes() -> Router<Shared> {
         .route("/admin/api/pick/{key}/search", post(pick_search))
         .route("/admin/api/pick/{key}/skip", post(pick_skip))
         .route("/admin/api/pick/{key}", post(pick_file))
+        .route("/admin/api/import", get(import_list))
+        .route("/admin/api/import/upload", post(import_upload))
+        .route("/admin/api/import/online", post(import_online))
+        .route("/admin/api/import/{id}", get(import_get).delete(import_discard))
+        .route("/admin/api/import/{id}/start", post(import_start))
+        .route("/admin/api/import/{id}/undo", post(import_undo))
         .route("/admin/api/lidarr", get(lidarr))
         .route("/admin/api/lidarr/{id}/retry", post(lidarr_retry))
         .route("/admin/api/users", get(users).post(add_user))
@@ -389,6 +395,110 @@ async fn pick_skip(State(st): State<Shared>, h: HeaderMap, Path(key): Path<Strin
     };
     let _ = sqlx::query(q).bind(&key).execute(&st.db).await;
     Json(json!({ "ok": true })).into_response()
+}
+
+// ───────────── imports from other services ─────────────
+
+async fn user_by_name(st: &Shared, name: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT id FROM user WHERE name = ?").bind(name).fetch_optional(&st.db).await.ok().flatten()
+}
+
+async fn import_list(State(st): State<Shared>, h: HeaderMap) -> Response {
+    need_admin!(st, h, false);
+    let names: std::collections::HashMap<String, String> =
+        sqlx::query_as("SELECT id, name FROM user").fetch_all(&st.db).await.unwrap_or_default().into_iter().collect();
+    let mut all = crate::import::jobs::list(&st, None).await.unwrap_or_default();
+    for b in &mut all {
+        b["user"] = names.get(b["userId"].as_str().unwrap_or("")).cloned().unwrap_or_default().into();
+    }
+    let spotify: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM setting WHERE key = 'spotify_token'").fetch_one(&st.db).await.unwrap_or(0);
+    Json(json!({ "imports": all, "spotify": spotify > 0, "lastfm": st.cfg.lastfm_api_key.is_some(), "readOnly": st.cfg.read_only })).into_response()
+}
+
+#[derive(Deserialize)]
+struct UploadQ {
+    user: String,
+    name: Option<String>,
+}
+
+async fn import_upload(
+    State(st): State<Shared>,
+    h: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<UploadQ>,
+    body: axum::body::Body,
+) -> Response {
+    need_admin!(st, h, true);
+    let Some(uid) = user_by_name(&st, &q.user).await else { return err(StatusCode::NOT_FOUND, "no such user") };
+    let file = match crate::import::jobs::save_upload_stream(&st, q.name.as_deref().unwrap_or("export.zip"), body).await {
+        Ok(f) => f,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &format!("{e:#}")),
+    };
+    match crate::import::jobs::create(&st, &uid, json!({ "file": file, "name": q.name })).await {
+        Ok(id) => Json(json!({ "id": id })).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    }
+}
+
+#[derive(Deserialize)]
+struct OnlineB {
+    user: String,
+    source: String,
+    #[serde(default)]
+    account: String,
+}
+
+async fn import_online(State(st): State<Shared>, h: HeaderMap, Json(b): Json<OnlineB>) -> Response {
+    need_admin!(st, h, true);
+    let Some(uid) = user_by_name(&st, &b.user).await else { return err(StatusCode::NOT_FOUND, "no such user") };
+    if !["spotify", "lastfm", "deezer"].contains(&b.source.as_str()) {
+        return err(StatusCode::BAD_REQUEST, "source is spotify, lastfm or deezer");
+    }
+    match crate::import::jobs::create(&st, &uid, json!({ "online": b.source, "user": b.account.trim() })).await {
+        Ok(id) => Json(json!({ "id": id })).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    }
+}
+
+async fn import_get(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    need_admin!(st, h, false);
+    match crate::import::jobs::get(&st, &id).await {
+        Ok(Some(b)) => Json(crate::import::jobs::batch_json(&b)).into_response(),
+        _ => err(StatusCode::NOT_FOUND, "no such import"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartB {
+    kinds: Vec<String>,
+    #[serde(default)]
+    ask_missing: usize,
+}
+
+async fn import_start(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>, Json(b): Json<StartB>) -> Response {
+    need_admin!(st, h, true);
+    let mut opts = crate::import::apply::Options::only(&b.kinds.join(","));
+    opts.ask_missing = b.ask_missing.min(500);
+    match crate::import::jobs::start(&st, &id, opts).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(StatusCode::CONFLICT, &format!("{e:#}")),
+    }
+}
+
+async fn import_undo(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    need_admin!(st, h, true);
+    match crate::import::jobs::undo(&st, &id).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(StatusCode::CONFLICT, &format!("{e:#}")),
+    }
+}
+
+async fn import_discard(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    need_admin!(st, h, true);
+    match crate::import::jobs::discard(&st, &id).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(StatusCode::CONFLICT, &format!("{e:#}")),
+    }
 }
 
 async fn lidarr(State(st): State<Shared>, h: HeaderMap) -> Response {

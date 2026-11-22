@@ -5,6 +5,7 @@ mod browse;
 mod catalog_api;
 mod dj;
 mod encore;
+mod imports;
 mod info;
 mod items;
 pub(crate) mod media;
@@ -204,11 +205,16 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("application/x-www-form-urlencoded"));
     let mut body = axum::body::Bytes::new();
-    if req.method() == Method::POST && is_form {
+    let is_post = req.method() == Method::POST;
+    let mut upload: Option<Body> = None;
+    if is_post && method == "importUpload" {
+        // the body is the export, whatever it's labelled as; read only once the login is checked (it can be large)
+        upload = Some(req.into_body());
+    } else if is_post && is_form {
         if let Ok(b) = to_bytes(req.into_body(), 1 << 20).await {
             pairs.extend(form_urlencoded::parse(&b).into_owned());
         }
-    } else if req.method() == Method::POST && method == "identifySong" {
+    } else if is_post && method == "identifySong" {
         // the body is a short recording, not a form (the login is in the query)
         body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
     }
@@ -239,6 +245,10 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         }
     };
     let client = p.get("c").unwrap_or("").to_string();
+    if let Some(b) = upload {
+        let r = imports::upload(&st, &user, p.get("name").unwrap_or("export.zip"), b).await;
+        return render(fmt, r);
+    }
     let ctx = Ctx { st, user, p, headers, client, body };
     let r = dispatch(&ctx, &method).await;
     render(fmt, r)
@@ -275,6 +285,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.collabPlaylists", "versions": [1] },
             { "name": "encore.lyricsTranslation", "versions": [1] },
             { "name": "encore.dj", "versions": [1] },
+            { "name": "encore.import", "versions": [1] },
             { "name": "encore.songId", "versions": [1] },
             { "name": "encore.automix", "versions": [1] },
             { "name": "encore.concerts", "versions": [1] },
@@ -303,6 +314,12 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getArtistInfo" => info::artist_info(c, false).await,
         "getAlbumInfo2" | "getAlbumInfo" => info::album_info(c).await,
         "getDjLine" => dj::line(c).await,
+        "importOnline" => imports::online(c).await,
+        "getImports" => imports::list(c).await,
+        "getImport" => imports::get(c).await,
+        "startImport" => imports::start(c).await,
+        "undoImport" => imports::undo(c).await,
+        "deleteImport" => imports::delete(c).await,
         "djAudio" => dj::audio(c).await,
         "getScanStatus" => browse::scan_status(c).await,
         "startScan" => browse::start_scan(c).await,

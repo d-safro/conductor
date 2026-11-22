@@ -99,6 +99,19 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   become playlists here ("Synced from Spotify"), in Spotify's order, Liked Songs hearted; songs you don't have are
   matched on Deezer (ISRC first) and asked for. The login and choices come from spotify.py's folder via
   `import-music-lookup`.
+- **Imports from other services** (`maestro import`, the admin page's Import tab, `encore.import`): your liked songs
+  (→ hearts), saved albums (→ starred), followed artists (→ follows), playlists (in order), listening history (→ plays
+  with their times; under 30 s → skips), ratings, play counts and podcasts, from:
+  Spotify (account data, extended streaming history, Exportify CSVs, or the signed-in account), Apple Music / iTunes
+  (Library.xml, Apple's privacy export), YouTube Music (Google Takeout; history as JSON), Last.fm (by user name;
+  `lastfm_api_key`), ListenBrainz's export, Deezer (a public profile), and M3U / CSV playlists. The format is told
+  from the files. Songs are matched by Spotify id, ISRC, MusicBrainz id or path first, then by name; you see what
+  was found, the match rate and what would change before anything does; plays already there aren't added twice;
+  each import can be undone; songs you don't have can be asked for (off unless you give a number). Only music data is
+  read: IP addresses, countries, devices and searches in the exports are never stored, and an upload is deleted
+  once imported. `--to URL --as USER` sends an import to any Subsonic server instead (stars, playlists, past plays
+  as scrobbles with their time: checked with Navidrome 0.64); note that such a server passes the plays on to
+  ListenBrainz / Last.fm if you linked them there.
 - **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).

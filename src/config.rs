@@ -98,6 +98,9 @@ pub struct Config {
     /// Artist biographies and album notes (MusicBrainz → Wikidata → Wikipedia, pictures from the Cover Art
     /// Archive): looked up when an app first asks, then kept. `info_lang` is Wikipedia's language code.
     pub info_online: bool,
+    /// Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create).
+    pub lastfm_url: String,
+    pub lastfm_api_key: Option<String>,
     /// Look for a better copy of songs it downloaded (the album asked from, FLAC over lossy) when there's nothing
     /// else to do, and swap it in (same song id).
     pub upgrades: bool,
@@ -177,6 +180,8 @@ impl Default for Config {
             musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
             concerts: true,
             info_online: true,
+            lastfm_url: "https://ws.audioscrobbler.com/2.0".into(),
+            lastfm_api_key: None,
             upgrades: true,
             info_lang: "en".into(),
             wikidata_url: "https://www.wikidata.org".into(),
@@ -293,6 +298,9 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_UPGRADES") {
             c.upgrades = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_LASTFM_API_KEY") {
+            c.lastfm_api_key = Some(v).filter(|v| !v.is_empty());
         }
         if let Ok(v) = std::env::var("MAESTRO_INFO_LANG") {
             c.info_lang = v;

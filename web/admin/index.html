@@ -70,6 +70,7 @@
       <button data-tab="status" aria-current="page">Status</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="pick">Pick by hand</button>
+      <button data-tab="import">Import</button>
       <button data-tab="lidarr">Lidarr albums</button>
       <button data-tab="users">Users</button>
     </nav>
@@ -95,6 +96,23 @@
         <div id="pickList"></div></div>
       <div class="card"><h2>On their way</h2><table id="pickDl"></table></div>
       <div class="card"><h2>Set aside</h2><table id="pickSkipped"></table></div>
+    </section>
+    <section id="import" hidden>
+      <div class="card"><h2>Bring your music in</h2>
+        <p class="muted">From Spotify (account data or extended streaming history zip, Exportify CSVs), Apple Music / iTunes
+          (Library.xml, or Apple's privacy export), YouTube Music (Google Takeout, history as JSON), ListenBrainz's export,
+          or M3U / CSV playlists. Nothing changes until you've seen what was found and start it; every import can be undone.
+          The uploaded file is deleted once it's imported.</p>
+        <form class="row" id="impUp"><label>Into <select id="impUser"></select></label>
+          <input type="file" id="impFile" aria-label="Export file" accept=".zip,.json,.jsonl,.csv,.xml,.m3u,.m3u8" required>
+          <button>Upload and look</button> <span class="muted" id="impUpNote"></span></form>
+        <form class="row" id="impOnline" style="margin-top:10px">Or from:
+          <button type="button" class="act" data-online="spotify" id="impSpotify">Spotify (signed in)</button>
+          <input id="impLfm" placeholder="Last.fm user" aria-label="Last.fm user name"><button type="button" class="act" data-online="lastfm" id="impLfmBtn">Last.fm</button>
+          <input id="impDz" placeholder="Deezer user number" aria-label="Deezer user number"><button type="button" class="act" data-online="deezer">Deezer</button></form>
+        <p class="err" id="impErr" role="alert"></p></div>
+      <div class="card" id="impDetail" hidden></div>
+      <div class="card"><h2>Imports</h2><table id="impList"></table></div>
     </section>
     <section id="lidarr" hidden>
       <div class="card"><h2>Albums Lidarr wants</h2><table id="grabs"></table></div>
@@ -122,7 +140,7 @@ async function api(path, opts = {}) {
 function show(signedIn) { $('login').hidden = signedIn; $('app').hidden = !signedIn; }
 const when = (t) => t ? new Date(t * 1000).toLocaleString() : '–';
 const pill = (s) => {
-  const cls = { done: 'ok', ready: 'ok', queued: 'warn', retry: 'warn', downloading: 'warn', importing: 'warn', notfound: 'bad' }[s] || '';
+  const cls = { done: 'ok', ready: 'ok', preview: 'warn', reading: 'warn', running: 'warn', queued: 'warn', retry: 'warn', downloading: 'warn', importing: 'warn', notfound: 'bad', failed: 'bad' }[s] || '';
   return `<span class="pill ${cls}">${esc(s)}</span>`;
 };
 async function loadStatus() {
@@ -215,6 +233,105 @@ document.addEventListener('click', async (e) => {
     loadPick();
   } catch (x) { $('pickErr').textContent = x.message; e.target.disabled = false; }
 });
+const KINDS = [['liked', 'Liked songs → hearts', 'liked'], ['albums', 'Saved albums → starred', 'albums'], ['artists', 'Followed artists → follows', 'artists'],
+  ['playlists', 'Playlists', 'playlists'], ['plays', 'Listening history → plays (and skips)', 'plays'], ['ratings', 'Ratings', 'ratings'],
+  ['counts', 'Play counts (iTunes / Apple)', 'counts'], ['podcasts', 'Podcasts → subscriptions', 'podcasts']];
+let impOpen = null;
+const pct = (x) => `${Math.round((x || 0) * 100)}%`;
+function impSummary(b) {
+  const r = b.report || {}, c = r.changes || {};
+  if (b.status === 'failed') return `<span class="err">${esc(b.error || 'failed')}</span>`;
+  if (b.status === 'reading') return 'reading and matching…';
+  if (b.status === 'running') return `importing… <span class="bar"><i style="width:${pct(b.progress)}"></i></span>`;
+  const bits = [r.matchRate != null ? `${pct(r.matchRate)} of songs matched` : '', c.plays ? `${c.plays} plays` : '', c.hearts ? `${c.hearts} hearts` : '',
+    (c.playlistsNew || c.playlistsUpdated) ? `${(c.playlistsNew || 0) + (c.playlistsUpdated || 0)} playlists` : ''].filter(Boolean);
+  return esc(bits.join(' · '));
+}
+async function loadImport() {
+  const d = await api('import');
+  const users = await api('users');
+  const sel = $('impUser'), was = sel.value;
+  sel.innerHTML = users.map((u) => `<option>${esc(u.name)}</option>`).join('');
+  if (was) sel.value = was;
+  $('impSpotify').disabled = !d.spotify;
+  $('impSpotify').title = d.spotify ? '' : 'Spotify sync isn\'t signed in';
+  $('impLfmBtn').disabled = !d.lastfm;
+  $('impLfmBtn').title = d.lastfm ? '' : 'set lastfm_api_key in the config';
+  $('impList').innerHTML = d.imports.length ? '<tr><th>From</th><th>Into</th><th>State</th><th>When</th><th>Result</th><th></th></tr>' + d.imports.map((b) => {
+    const acts = [b.status === 'preview' ? `<button class="act primary" data-iopen="${esc(b.id)}">Review</button>` : `<button class="act" data-iopen="${esc(b.id)}">Details</button>`,
+      b.status === 'done' ? `<button class="act" data-iundo="${esc(b.id)}">Undo</button>` : '',
+      ['preview', 'failed'].includes(b.status) ? `<button class="act" data-idel="${esc(b.id)}">Discard</button>` : ''].join(' ');
+    return `<tr><td>${esc(b.source || b.from)}</td><td>${esc(b.user)}</td><td>${pill(b.status)}</td><td>${when(b.created)}</td><td>${impSummary(b)}</td><td>${acts}</td></tr>`;
+  }).join('') : '<tr><td class="muted">Nothing imported yet.</td></tr>';
+  if (impOpen) showImport(impOpen).catch(() => {});
+  if (d.imports.some((b) => ['reading', 'running'].includes(b.status))) setTimeout(() => current === 'import' && loadImport().catch(() => {}), 2000);
+}
+async function showImport(id) {
+  const b = await api(`import/${encodeURIComponent(id)}`);
+  impOpen = id;
+  const r = b.report || {}, f = r.found || {}, m = r.matched || {}, c = r.changes || {};
+  const rows = [['Liked songs', f.liked, m.liked, c.hearts], ['Saved albums', f.albums, m.albums, c.albums], ['Followed artists', f.artists, m.artists, c.follows],
+    ['Playlists', f.playlists, m.playlists, (c.playlistsNew || 0) + (c.playlistsUpdated || 0)], ['Playlist songs', f.playlistSongs, m.playlistSongs, ''],
+    ['Plays', f.plays, m.plays, c.plays], ['Skips (under 30 s)', f.skips, m.skips, c.skips], ['Ratings', f.ratings, m.ratings, c.ratings],
+    ['Play counts', f.counts, m.counts, c.counts], ['Podcasts', f.podcasts, m.podcasts, c.podcasts]].filter((x) => x[1]);
+  const by = Object.entries(r.by || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+  const done = b.status !== 'preview';
+  const miss = (r.missing || []).slice(0, 50).map((x) => `<tr><td>${esc(x.artist)} – ${esc(x.title)}</td><td class="muted">${x.liked ? 'liked' : x.playlists && x.playlists.length ? 'in ' + esc(x.playlists.join(', ')) : `played ${x.plays}×`}</td></tr>`).join('');
+  $('impDetail').hidden = false;
+  $('impDetail').innerHTML = `<h2>${esc(b.source || 'Import')} ${pill(b.status)}</h2>
+    ${(r.notes || []).map((n) => `<p class="muted">${esc(n)}</p>`).join('')}
+    ${b.error ? `<p class="err">${esc(b.error)}</p>` : ''}
+    ${rows.length ? `<table><tr><th>What</th><th>Found</th><th>In your library</th><th>${done ? 'Changed' : 'Would change'}</th></tr>${rows.map((x) => `<tr><td>${x[0]}</td><td class="num">${x[1] ?? ''}</td><td class="num">${x[2] ?? ''}</td><td class="num">${x[3] ?? ''}</td></tr>`).join('')}</table>
+    <p>${r.songsMatched ?? 0} of ${r.songs ?? 0} different songs are in your library (${pct(r.matchRate)}${by ? '; found by ' + esc(by) : ''}).
+       ${c.playsAlreadyThere ? `${c.playsAlreadyThere} plays are already here and won't be added again.` : ''}</p>` : ''}
+    ${b.status === 'preview' ? `<form id="impStart"><fieldset style="border:0;padding:0"><legend>Bring in</legend>
+        ${KINDS.filter(([k]) => (f[k === 'playlists' ? 'playlists' : k] || 0) > 0 || (k === 'plays' && f.skips)).map(([k, label]) => `<label style="display:block"><input type="checkbox" name="k" value="${k}" checked> ${label}</label>`).join('')}
+        <label style="display:block;margin-top:8px">Ask for (download) up to <input type="number" id="impAsk" min="0" max="500" value="0" style="width:5em"> of the ${r.missingTotal || 0} songs you don't have
+          <span class="muted">(the most wanted first; ones not found show up under Pick by hand)</span></label></fieldset>
+        <p><button>Import</button> <button type="button" class="act" data-idel="${esc(b.id)}">Discard</button></p></form>` : ''}
+    ${b.status === 'done' ? `<p><button class="act" data-iundo="${esc(b.id)}">Undo this import</button></p>` : ''}
+    ${miss ? `<details><summary>Songs you don't have (${r.missingTotal}; the first 50)</summary><table>${miss}</table></details>` : ''}`;
+}
+$('impUp').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const file = $('impFile').files[0];
+  if (!file) return;
+  $('impErr').textContent = '';
+  const x = new XMLHttpRequest();
+  x.open('POST', `/admin/api/import/upload?user=${encodeURIComponent($('impUser').value)}&name=${encodeURIComponent(file.name)}`);
+  x.setRequestHeader('X-Maestro', '1');
+  x.upload.onprogress = (p) => { if (p.lengthComputable) $('impUpNote').textContent = `uploading ${pct(p.loaded / p.total)}`; };
+  x.onload = () => {
+    let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+    if (x.status !== 200) { $('impErr').textContent = j.error || x.statusText; $('impUpNote').textContent = ''; return; }
+    $('impUpNote').textContent = 'reading…'; impOpen = j.id; e.target.reset(); loadImport();
+  };
+  x.onerror = () => { $('impErr').textContent = 'the upload failed'; };
+  x.send(file);
+});
+document.addEventListener('submit', async (e) => {
+  if (e.target.id !== 'impStart') return;
+  e.preventDefault();
+  const kinds = [...e.target.querySelectorAll('input[name=k]:checked')].map((i) => i.value);
+  try { await api(`import/${encodeURIComponent(impOpen)}/start`, { method: 'POST', body: JSON.stringify({ kinds, askMissing: +$('impAsk').value || 0 }) }); loadImport(); }
+  catch (x) { $('impErr').textContent = x.message; }
+});
+document.addEventListener('click', async (e) => {
+  const d = e.target.dataset || {};
+  if (!(d.online || d.iopen || d.iundo || d.idel)) return;
+  $('impErr').textContent = '';
+  try {
+    if (d.online) {
+      const account = d.online === 'lastfm' ? $('impLfm').value : d.online === 'deezer' ? $('impDz').value : '';
+      const r = await api('import/online', { method: 'POST', body: JSON.stringify({ user: $('impUser').value, source: d.online, account }) });
+      impOpen = r.id;
+    }
+    if (d.iopen) await showImport(d.iopen);
+    if (d.iundo && confirm('Undo this import? Hearts, follows, playlists, plays and ratings it added go again.')) await api(`import/${encodeURIComponent(d.iundo)}/undo`, { method: 'POST' });
+    if (d.idel) { await api(`import/${encodeURIComponent(d.idel)}`, { method: 'DELETE' }); if (impOpen === d.idel) { impOpen = null; $('impDetail').hidden = true; } }
+    loadImport();
+  } catch (x) { $('impErr').textContent = x.message; }
+});
 async function loadGrabs() {
   const rows = await api('lidarr');
   $('grabs').innerHTML = '<tr><th>Album</th><th>State</th><th>From</th><th>Searches</th><th></th></tr>' + rows.map((g) =>
@@ -227,7 +344,7 @@ async function loadUsers() {
   $('userList').innerHTML = '<tr><th>Name</th><th>Role</th><th></th></tr>' + rows.map((u) =>
     `<tr><td>${esc(u.name)}</td><td>${u.admin ? 'admin' : 'user'}</td><td><button class="act" data-pw="${esc(u.name)}">Set password</button> <button class="act" data-key="${esc(u.name)}">New API key</button></td></tr>`).join('');
 }
-const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, lidarr: loadGrabs, users: loadUsers };
+const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, import: loadImport, lidarr: loadGrabs, users: loadUsers };
 let current = 'status';
 function go(tab) {
   current = tab;
@@ -280,6 +397,7 @@ document.addEventListener('submit', (e) => { if (e.target.dataset.search) { sear
 setInterval(() => {
   if ($('app').hidden || current === 'users') return;
   if (current === 'pick' && (searching > 0 || $('pickList').contains(document.activeElement))) return;
+  if (current === 'import' && $('import').contains(document.activeElement)) return;
   loaders[current]().catch(() => {});
 }, 15000);
 </script>

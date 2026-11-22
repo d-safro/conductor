@@ -491,6 +491,34 @@ pub async fn get_episode(c: &Ctx) -> Result<Reply, ApiError> {
     ok(json!({ "podcastEpisode": ep_json(&e) }))
 }
 
+/// Subscribe to a feed (for imports): its id, and whether it's new.
+pub async fn subscribe(st: &AppState, url: &str) -> Result<(String, bool)> {
+    let f = parse_feed(url, &fetch_text(url).await?)?;
+    let had: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM podcast WHERE id = ? OR url = ?").bind(&f.id).bind(url).fetch_one(&st.db).await?;
+    if had > 0 {
+        return Ok((f.id, false));
+    }
+    store(st, url, &f, true).await?;
+    st.podcast_wake.notify_one();
+    Ok((f.id, true))
+}
+
+/// Remove a show, its downloaded episodes and everyone's progress in it.
+pub async fn unsubscribe(st: &AppState, id: &str) -> Result<()> {
+    let files: Vec<String> =
+        sqlx::query_scalar("SELECT file FROM episode WHERE podcast_id = ? AND file IS NOT NULL").bind(id).fetch_all(&st.db).await?;
+    for f in files {
+        let _ = tokio::fs::remove_file(folder(st).join(f)).await;
+    }
+    let title: Option<String> = sqlx::query_scalar("SELECT title FROM podcast WHERE id = ?").bind(id).fetch_optional(&st.db).await?;
+    sqlx::query("DELETE FROM podcast_progress WHERE episode_id IN (SELECT id FROM episode WHERE podcast_id = ?)").bind(id).execute(&st.db).await?;
+    sqlx::query("DELETE FROM podcast WHERE id = ?").bind(id).execute(&st.db).await?;
+    if let Some(t) = title {
+        let _ = tokio::fs::remove_dir(folder(st).join(safe(&t))).await; // only if it's empty now
+    }
+    Ok(())
+}
+
 pub async fn create(c: &Ctx) -> Result<Reply, ApiError> {
     let url = c.p.get("url").unwrap_or("").trim().to_string();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -508,24 +536,7 @@ pub async fn create(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 pub async fn delete_show(c: &Ctx) -> Result<Reply, ApiError> {
-    let id = c.p.req("id")?;
-    let files: Vec<String> = sqlx::query_scalar("SELECT file FROM episode WHERE podcast_id = ? AND file IS NOT NULL")
-        .bind(id)
-        .fetch_all(&c.st.db)
-        .await?;
-    for f in files {
-        let _ = tokio::fs::remove_file(folder(&c.st).join(f)).await;
-    }
-    let title: Option<String> =
-        sqlx::query_scalar("SELECT title FROM podcast WHERE id = ?").bind(id).fetch_optional(&c.st.db).await?;
-    sqlx::query("DELETE FROM podcast_progress WHERE episode_id IN (SELECT id FROM episode WHERE podcast_id = ?)")
-        .bind(id)
-        .execute(&c.st.db)
-        .await?;
-    sqlx::query("DELETE FROM podcast WHERE id = ?").bind(id).execute(&c.st.db).await?;
-    if let Some(t) = title {
-        let _ = tokio::fs::remove_dir(folder(&c.st).join(safe(&t))).await; // only if it's empty now
-    }
+    unsubscribe(&c.st, c.p.req("id")?).await?;
     empty()
 }
 

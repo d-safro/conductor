@@ -62,6 +62,8 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 # mixinfo_dir = "/srv/mixinfo"
 # Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
 # concerts = true
+# Imports from Last.fm (scrobbles and loved songs by user name) need a free API key: last.fm/api/account/create
+# lastfm_api_key = "…"                       # or MAESTRO_LASTFM_API_KEY
 # Artist biographies and album notes from MusicBrainz → Wikidata → Wikipedia (no key), kept once found
 # info_online = true
 # info_lang = "en"                         # Wikipedia's language; English when there's no page in it

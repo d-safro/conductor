@@ -85,7 +85,7 @@ pub async fn import_from(st_db: &db::Db, dir: &std::path::Path, lib_id: Option<i
     Ok((login, mapped))
 }
 
-struct Client {
+pub struct Client {
     api: String,
     accounts: String,
     client_id: String,
@@ -111,7 +111,7 @@ impl Client {
         Ok(())
     }
 
-    async fn get(&self, url: &str) -> Result<Value> {
+    pub(crate) async fn get(&self, url: &str) -> Result<Value> {
         let url = if url.starts_with("http") { url.to_string() } else { format!("{}{url}", self.api) };
         for _ in 0..5 {
             let r = http().get(&url).bearer_auth(&self.access).send().await?;
@@ -129,7 +129,7 @@ impl Client {
         bail!("Spotify keeps saying slow down for {url}")
     }
 
-    async fn pages(&self, url: &str) -> Result<Vec<Value>> {
+    pub(crate) async fn pages(&self, url: &str) -> Result<Vec<Value>> {
         let mut out = vec![];
         let mut next = Some(url.to_string());
         while let Some(u) = next {
@@ -234,11 +234,7 @@ async fn playlist(st: &AppState, owner: &str, name: &str) -> Result<String> {
     Ok(id)
 }
 
-/// One sync. Returns (lists, songs you have, songs asked for).
-pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
-    let Some(tok) = setting(st, "spotify_token").await else { return Ok((0, 0, 0)) };
-    let choices = setting(st, "spotify_settings").await.unwrap_or(json!({ "liked": true, "playlists": [] }));
-    let Some(owner) = crate::listenbrainz::owner(st).await else { return Ok((0, 0, 0)) };
+async fn signed_in(st: &AppState, tok: &Value) -> Result<Client> {
     let mut c = Client {
         api: st.cfg.spotify_api_url.trim_end_matches('/').to_string(),
         accounts: st.cfg.spotify_accounts_url.trim_end_matches('/').to_string(),
@@ -247,6 +243,23 @@ pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
         access: String::new(),
     };
     c.token(st).await?;
+    Ok(c)
+}
+
+/// The Spotify account Spotify sync is signed in to (for imports), if any.
+pub async fn client(st: &AppState) -> Result<Option<Client>> {
+    match setting(st, "spotify_token").await {
+        Some(tok) => Ok(Some(signed_in(st, &tok).await?)),
+        None => Ok(None),
+    }
+}
+
+/// One sync. Returns (lists, songs you have, songs asked for).
+pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
+    let Some(tok) = setting(st, "spotify_token").await else { return Ok((0, 0, 0)) };
+    let choices = setting(st, "spotify_settings").await.unwrap_or(json!({ "liked": true, "playlists": [] }));
+    let Some(owner) = crate::listenbrainz::owner(st).await else { return Ok((0, 0, 0)) };
+    let c = signed_in(st, &tok).await?;
     let wanted: Vec<String> =
         choices["playlists"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
     let mut lists: Vec<(String, Vec<Song>)> = vec![];

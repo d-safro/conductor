@@ -2359,6 +2359,240 @@ async fn dj_lines() {
     assert_eq!(s.ok("getDjLine", &[("next", "nope")]).await["djLine"]["error"], "unknown song");
 }
 
+fn zip_of(files: &[(&str, String)]) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, body) in files {
+        z.start_file(*name, o).unwrap();
+        z.write_all(body.as_bytes()).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+async fn wait_import(s: &Server, id: &str, until: &str) -> Value {
+    for _ in 0..200 {
+        let b = s.ok("getImport", &[("id", id)]).await["import"].clone();
+        if b["status"] == until {
+            return b;
+        }
+        assert_ne!(b["status"], "failed", "{b}");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("import {id} never got to {until}");
+}
+
+#[tokio::test]
+async fn import_a_spotify_export() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0].clone();
+    let one_id = one["id"].as_str().unwrap().to_string();
+    let t = |name: &str, artist: &str, album: &str, uri: &str| json!({ "trackName": name, "artistName": artist, "albumName": album, "trackUri": uri });
+    let play = |ts: &str, ms: i64, name: &str, artist: &str| json!({ "ts": ts, "platform": "secret-phone", "ms_played": ms, "conn_country": "ZZ",
+        "ip_addr": "203.0.113.9", "master_metadata_track_name": name, "master_metadata_album_artist_name": artist,
+        "master_metadata_album_album_name": "", "spotify_track_uri": format!("spotify:track:{:0>22}", name.bytes().map(u64::from).sum::<u64>()), "skipped": false });
+    let export = zip_of(&[
+        ("Spotify Account Data/YourLibrary.json", json!({
+            "tracks": [{ "artist": "Alpha", "album": "First Album", "track": "One", "uri": "spotify:track:1111111111111111111111" }],
+            "albums": [{ "artist": "Alpha", "album": "First Album", "uri": "x" }],
+            "artists": [{ "name": "Alpha", "uri": "x" }, { "name": "Nobody Here", "uri": "y" }], "shows": [] }).to_string()),
+        ("Spotify Account Data/Playlist1.json", json!({ "playlists": [{ "name": "Road", "lastModifiedDate": "2024-01-01", "items": [
+            { "track": t("Three", "The Beta Band", "Second", "spotify:track:3333333333333333333333") },
+            { "track": t("One", "Alpha", "First Album", "spotify:track:1111111111111111111111") },
+            { "track": t("Not Here", "Alpha", "First Album", "spotify:track:9999999999999999999999") }] }] }).to_string()),
+        ("Spotify Account Data/SearchQueries.json", json!([{ "searchQuery": "a secret search" }]).to_string()),
+        ("Spotify Extended Streaming History/Streaming_History_Audio_2024.json", json!([
+            play("2024-03-01T10:00:00Z", 180000, "One", "Alpha"), play("2024-03-02T10:00:00Z", 180000, "One", "Alpha"),
+            play("2024-03-02T11:00:00Z", 5000, "Two", "Alpha"), play("2024-03-03T10:00:00Z", 200000, "Not Here At All", "Alpha")]).to_string()),
+    ]);
+    let upload = async |body: Vec<u8>| -> Value {
+        let r: Value = s.http.post(s.url("importUpload", &[("name", "my_spotify_data.zip")])).body(body).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r["subsonic-response"]["status"], "ok", "{r}");
+        r["subsonic-response"]["import"].clone()
+    };
+    let b = upload(export.clone()).await;
+    let id = b["id"].as_str().unwrap().to_string();
+    // the preview: found, matched, what it would change; nothing changed yet
+    let p = wait_import(&s, &id, "preview").await;
+    let r = &p["report"];
+    assert_eq!((r["found"]["liked"].as_i64(), r["matched"]["liked"].as_i64()), (Some(1), Some(1)), "{r}");
+    assert_eq!((r["found"]["plays"].as_i64(), r["found"]["skips"].as_i64(), r["matched"]["plays"].as_i64()), (Some(3), Some(1), Some(2)));
+    assert_eq!(r["changes"]["plays"], 2);
+    assert_eq!(r["missingTotal"], 2, "the playlist's song and the played one");
+    assert_eq!(r["artistsMissing"], json!(["Nobody Here"]));
+    let dump = p.to_string();
+    assert!(!dump.contains("203.0.113.9") && !dump.contains("secret") && !dump.contains("ZZ\""), "nothing private kept: {dump}");
+    assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()));
+    // import it
+    s.ok("startImport", &[("id", &id)]).await;
+    let done = wait_import(&s, &id, "done").await;
+    assert_eq!(done["report"]["changes"]["hearts"], 1, "{done}");
+    let starred = s.ok("getStarred2", &[]).await["starred2"].clone();
+    assert_eq!(starred["song"][0]["id"], one_id.as_str());
+    assert_eq!(starred["album"][0]["name"], "First Album");
+    let follows: String = sqlx::query_scalar("SELECT value_json FROM sync_kv WHERE key = 'followedArtists'").fetch_one(&s.st.db).await.unwrap();
+    assert!(follows.contains("\"name\":\"Alpha\""), "{follows}");
+    let lists = s.ok("getPlaylists", &[]).await["playlists"]["playlist"].clone();
+    let road = lists.as_array().unwrap().iter().find(|p| p["name"] == "Road").unwrap().clone();
+    assert!(road["comment"].as_str().unwrap().contains("Imported from Spotify"));
+    let songs = s.ok("getPlaylist", &[("id", road["id"].as_str().unwrap())]).await["playlist"]["entry"].clone();
+    let titles: Vec<&str> = songs.as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["Three", "One"], "in Spotify's order");
+    let song = s.ok("getSong", &[("id", &one_id)]).await["song"].clone();
+    assert_eq!(song["playCount"], 2);
+    assert_eq!(song["played"].as_str().map(|p| p.starts_with("2024-03-02")), Some(true), "{song}");
+    let skips: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM skip").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(skips, 1);
+    let left = std::fs::read_dir(s.st.cfg.data_dir.join("imports")).map(|d| d.count()).unwrap_or(0);
+    assert_eq!(left, 0, "the upload is deleted once imported");
+    // the same export again: nothing new
+    let again = upload(export).await;
+    let a = wait_import(&s, again["id"].as_str().unwrap(), "preview").await;
+    let c = &a["report"]["changes"];
+    assert_eq!((c["plays"].as_i64(), c["playsAlreadyThere"].as_i64(), c["hearts"].as_i64(), c["playlistsUpdated"].as_i64()), (Some(0), Some(2), Some(0), Some(1)), "{c}");
+    s.ok("deleteImport", &[("id", again["id"].as_str().unwrap())]).await;
+    assert_eq!(s.ok("getImports", &[]).await["imports"]["import"].as_array().unwrap().len(), 1);
+    // undo: everything it added goes
+    s.ok("undoImport", &[("id", &id)]).await;
+    assert_eq!(s.ok("getImport", &[("id", &id)]).await["import"]["status"], "undone");
+    assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()));
+    assert!(!s.ok("getPlaylists", &[]).await.to_string().contains("\"Road\""));
+    let song = s.ok("getSong", &[("id", &one_id)]).await["song"].clone();
+    assert!(song["playCount"].as_i64().unwrap_or(0) == 0, "{song}");
+    let left: (i64, i64) = sqlx::query_as("SELECT (SELECT COUNT(*) FROM skip), (SELECT COUNT(*) FROM play)").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(left, (0, 0));
+    let follows: String = sqlx::query_scalar("SELECT value_json FROM sync_kv WHERE key = 'followedArtists'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(follows, "[]");
+    // someone else can't see or touch it
+    assert_eq!(s.call("undoImport", &[("id", "nope")]).await["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn import_into_any_subsonic_server() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let lib = r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Tracks</key><dict>
+      <key>1</key><dict><key>Track ID</key><integer>1</integer><key>Name</key><string>Two</string><key>Artist</key><string>Alpha</string>
+        <key>Album</key><string>First Album</string><key>Loved</key><true/><key>Rating</key><integer>100</integer>
+        <key>Play Count</key><integer>7</integer><key>Play Date UTC</key><date>2021-06-01T12:00:00Z</date></dict>
+      <key>2</key><dict><key>Track ID</key><integer>2</integer><key>Name</key><string>Three</string><key>Artist</key><string>The Beta Band</string></dict>
+    </dict><key>Playlists</key><array><dict><key>Name</key><string>Old iPod</string><key>Playlist Items</key><array>
+      <dict><key>Track ID</key><integer>2</integer></dict><dict><key>Track ID</key><integer>1</integer></dict></array></dict></array></dict></plist>"#;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Library.xml"), lib).unwrap();
+    let parsed = maestro::import::parse_path(&dir.path().join("Library.xml")).unwrap();
+    // this test's server stands in for any Subsonic server (Navidrome before a switch)
+    let server = maestro::import::subsonic::Server::new(&s.base, USER, PASS);
+    let library = server.library().await.unwrap();
+    assert_eq!(library.len(), 3);
+    let plan = maestro::import::apply::plan(&parsed, &library, &Default::default(), &Default::default());
+    let state_path = dir.path().join("sent.json");
+    let mut state = maestro::import::subsonic::State::default();
+    let dry = server.apply(&plan, "Imported from iTunes", &mut state, &state_path, true).await.unwrap();
+    assert_eq!((dry.hearts, dry.plays, dry.playlists_new), (1, 1, 1));
+    assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()), "a dry run sends nothing");
+    let c = server.apply(&plan, "Imported from iTunes", &mut state, &state_path, false).await.unwrap();
+    assert_eq!((c.hearts, c.ratings, c.playlists_new), (1, 1, 1));
+    let two = s.ok("search3", &[("query", "Two")]).await["searchResult3"]["song"][0].clone();
+    assert!(two["starred"].is_string());
+    assert_eq!(two["userRating"], 5);
+    assert_eq!(two["played"].as_str().map(|p| p.starts_with("2021-06-01")), Some(true), "the last play, at its time: {two}");
+    let lists = s.ok("getPlaylists", &[]).await.to_string();
+    assert!(lists.contains("Old iPod") && lists.contains("Imported from iTunes"));
+    // again: nothing new is sent; undo takes the hearts and the playlist back
+    let mut state = maestro::import::subsonic::State::load(&state_path);
+    let again = server.apply(&plan, "Imported from iTunes", &mut state, &state_path, false).await.unwrap();
+    assert_eq!((again.hearts, again.plays, again.playlists_new, again.playlists_updated), (0, 0, 0, 1));
+    server.undo(&mut state, &state_path).await.unwrap();
+    assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()));
+    assert!(!s.ok("getPlaylists", &[]).await.to_string().contains("Old iPod"));
+}
+
+#[tokio::test]
+async fn import_from_lastfm_and_deezer() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let (base, _) = stand_in(|path, q, _| {
+        let tr = |name: &str, uts: &str| json!({ "name": name, "artist": { "#text": "Alpha", "name": "Alpha" }, "album": { "#text": "First Album" }, "date": { "uts": uts } });
+        let dz = |id: i64, title: &str, artist: &str| json!({ "id": id, "title": title, "duration": 3, "artist": { "name": artist }, "album": { "title": "x" }, "time_add": 1650000000 });
+        Some(match path {
+            "/lfm" if q.contains("getlovedtracks") => json!({ "lovedtracks": { "track": [tr("One", "1600000000")], "@attr": { "totalPages": "1" } } }),
+            "/lfm" if q.contains("page=1") => json!({ "recenttracks": { "@attr": { "totalPages": "2" }, "track": [
+                { "name": "Two", "artist": { "#text": "Alpha" }, "@attr": { "nowplaying": "true" } }, tr("One", "1700000000")] } }),
+            "/lfm" => json!({ "recenttracks": { "@attr": { "totalPages": "2" }, "track": [tr("Two", "1700000500")] } }),
+            "/dz/user/42" => json!({ "id": 42, "name": "x" }),
+            "/dz/user/42/tracks" => json!({ "data": [dz(801, "One", "Alpha")] }),
+            "/dz/user/42/playlists" => json!({ "data": [{ "id": 5, "title": "Dz list", "is_loved_track": false }, { "id": 6, "title": "Loved", "is_loved_track": true }] }),
+            "/dz/playlist/5/tracks" => json!({ "data": [dz(901, "Three", "The Beta Band"), dz(902, "Missing", "Nobody")] }),
+            "/dz/user/42/podcasts" => json!({ "data": [{ "id": 1, "title": "Song Exploder" }] }),
+            p if p.starts_with("/dz/user/42/") => json!({ "data": [] }),
+            "/itunes/search" => json!({ "results": [{ "collectionName": "Song Exploder", "artistName": "Hrishikesh Hirway", "feedUrl": "http://feeds.example/se" }] }),
+            _ => return None,
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.lastfm_url = format!("{base}/lfm");
+        c.lastfm_api_key = Some("k".into());
+        c.deezer_url = format!("{base}/dz");
+        c.itunes_url = format!("{base}/itunes");
+    })
+    .await;
+    let lfm = s.ok("importOnline", &[("source", "lastfm"), ("account", "bob")]).await["import"]["id"].as_str().unwrap().to_string();
+    let r = wait_import(&s, &lfm, "preview").await["report"].clone();
+    assert_eq!((r["found"]["liked"].as_i64(), r["found"]["plays"].as_i64(), r["matched"]["plays"].as_i64()), (Some(1), Some(2), Some(2)), "{r}");
+    assert_eq!(r["sources"], json!(["Last.fm"]));
+    let dz = s.ok("importOnline", &[("source", "deezer"), ("account", "https://www.deezer.com/profile/42")]).await["import"]["id"].as_str().unwrap().to_string();
+    let r = wait_import(&s, &dz, "preview").await["report"].clone();
+    assert_eq!((r["found"]["liked"].as_i64(), r["found"]["playlists"].as_i64(), r["matched"]["playlistSongs"].as_i64(), r["found"]["podcasts"].as_i64()), (Some(1), Some(1), Some(1), Some(1)), "{r}");
+    assert_eq!(maestro::import::online::podcast_feed(&format!("{base}/itunes"), "Song Exploder", "").await.as_deref(), Some("http://feeds.example/se"));
+    // without a key, Last.fm says why
+    let off = Server::start().await;
+    let id = off.ok("importOnline", &[("source", "lastfm"), ("account", "bob")]).await["import"]["id"].as_str().unwrap().to_string();
+    for _ in 0..100 {
+        let b = off.ok("getImport", &[("id", &id)]).await["import"].clone();
+        if b["status"] == "failed" {
+            assert!(b["error"].as_str().unwrap().contains("lastfm_api_key"));
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no failure");
+}
+
+#[tokio::test]
+async fn import_upload_of_one_file_labelled_as_a_form() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    // curl --data-binary and some apps label any body as a form; the format is told from the name it was sent with
+    let body = r#"[{"ts":"2024-03-01T10:00:00Z","ms_played":180000,"master_metadata_track_name":"One","master_metadata_album_artist_name":"Alpha","spotify_track_uri":"spotify:track:1111111111111111111111"}]"#;
+    let r: Value = s
+        .http
+        .post(s.url("importUpload", &[("name", "Streaming_History_Audio_2024.json")]))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = r["subsonic-response"]["import"]["id"].as_str().unwrap_or_else(|| panic!("{r}")).to_string();
+    let b = wait_import(&s, &id, "preview").await;
+    assert_eq!(b["report"]["matched"]["plays"], 1, "{b}");
+}
+
 #[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {
