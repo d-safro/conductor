@@ -192,6 +192,8 @@ pub struct Files {
 }
 
 const MAX_FILE: u64 = 512 << 20;
+/// All the files of one export together, unpacked (a small zip can unpack to far more than it is).
+const MAX_TOTAL: u64 = 1 << 30;
 const WANTED: &[&str] = &["json", "jsonl", "csv", "xml", "m3u", "m3u8", "txt", "zip"];
 
 fn wanted(name: &str) -> bool {
@@ -207,6 +209,7 @@ impl Files {
     /// `name`: what a single file was called when it was sent (its format is told partly from its name).
     pub fn load_as(path: &Path, name: Option<&str>) -> Result<Files> {
         let mut f = Files::default();
+        let mut left = MAX_TOTAL;
         if path.is_dir() {
             for e in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
                 if !e.file_type().is_file() || !wanted(&e.file_name().to_string_lossy()) {
@@ -216,7 +219,7 @@ impl Files {
                     continue;
                 }
                 let rel = e.path().strip_prefix(path).unwrap_or(e.path()).to_string_lossy().replace('\\', "/");
-                f.add(rel, std::fs::read(e.path())?, 0)?;
+                f.add(rel, std::fs::read(e.path())?, 0, &mut left)?;
             }
         } else {
             if std::fs::metadata(path)?.len() > 4 * MAX_FILE {
@@ -224,25 +227,34 @@ impl Files {
             }
             let name = name.map(|n| base(&n.replace('\\', "/")).to_string())
                 .unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
-            f.add(name, std::fs::read(path).with_context(|| format!("reading {}", path.display()))?, 0)?;
+            f.add(name, std::fs::read(path).with_context(|| format!("reading {}", path.display()))?, 0, &mut left)?;
         }
         Ok(f)
     }
 
-    /// One file; a zip is opened (and zips in it, as Apple's export has).
-    pub fn add(&mut self, name: String, bytes: Vec<u8>, depth: usize) -> Result<()> {
+    /// One file; a zip is opened (and zips in it, as Apple's export has). `left`: how much more may be unpacked
+    /// in all; a zip that unpacks to more (a zip bomb, or a size its listing understates) is refused, rather than
+    /// filling the memory until the server is killed.
+    pub fn add(&mut self, name: String, bytes: Vec<u8>, depth: usize, left: &mut u64) -> Result<()> {
+        *left = left.checked_sub(bytes.len() as u64).context("that export unpacks to more than 1 GB")?;
         if bytes.starts_with(b"PK\x03\x04") && depth < 3 {
+            *left += bytes.len() as u64; // counted as what it unpacks to instead
             let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).context("opening the zip")?;
             for i in 0..z.len() {
-                let mut e = z.by_index(i)?;
+                let e = z.by_index(i)?;
                 let inner = e.name().map(|n| n.replace('\\', "/")).unwrap_or_default();
                 if e.is_dir() || e.size() > MAX_FILE || !wanted(&inner) {
                     continue;
                 }
+                if e.size() > *left {
+                    bail!("that export unpacks to more than 1 GB");
+                }
                 let mut b = Vec::with_capacity(e.size() as usize);
-                e.read_to_end(&mut b)?;
-                drop(e);
-                self.add(inner, b, depth + 1)?;
+                e.take(MAX_FILE.min(*left) + 1).read_to_end(&mut b)?;
+                if b.len() as u64 > MAX_FILE.min(*left) {
+                    bail!("{inner} unpacks to more than its zip says (or more than 1 GB in all)");
+                }
+                self.add(inner, b, depth + 1, left)?;
             }
             return Ok(());
         }
@@ -348,6 +360,29 @@ pub fn upload_dir(data_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zip_that_unpacks_too_big_is_refused() {
+        use std::io::Write;
+        let zip_of = |files: &[(&str, Vec<u8>)]| {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            for (n, b) in files {
+                w.start_file(*n, zip::write::SimpleFileOptions::default()).unwrap();
+                w.write_all(b).unwrap();
+            }
+            w.finish().unwrap().into_inner()
+        };
+        let big = vec![b' '; 4000]; // packs down to almost nothing
+        let z = zip_of(&[("a.json", big.clone()), ("b.json", big.clone()), ("c.json", big.clone())]);
+        assert!(z.len() < 1000);
+        assert!(Files::default().add("x.zip".into(), z.clone(), 0, &mut 10_000).is_err(), "3 × 4000 unpacked is over 10 000");
+        let mut f2 = Files::default();
+        f2.add("x.zip".into(), z.clone(), 0, &mut 20_000).unwrap();
+        assert_eq!(f2.files.len(), 3);
+        // a zip in a zip counts what the inner one unpacks to
+        let outer = zip_of(&[("inner.zip", z)]);
+        assert!(Files::default().add("y.zip".into(), outer, 0, &mut 10_000).is_err());
+    }
 
     #[test]
     fn times_ids_and_keys() {
