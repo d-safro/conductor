@@ -19,7 +19,7 @@ rename), and an older install's data folder and database are moved to the new na
 |---|---|
 | Prelude | the setup wizard (`conductor setup`) |
 | Podium | the admin page (`/admin`) |
-| Recital | the web player (in progress) |
+| Recital | the web player (`/`) |
 | Transpose | bringing your music in from other services |
 | Stagehand | downloads, hand-picked files and better copies |
 | Audition | songs on trial |
@@ -142,6 +142,7 @@ API method names, settings and `encore.*` extension names stay as they were, for
   once imported. `--to URL --as USER` sends an import to any Subsonic server instead (stars, playlists, past plays
   as scrobbles with their time: checked with Navidrome 0.64); note that such a server passes the plays on to
   ListenBrainz / Last.fm if you linked them there.
+- **Recital**, the web player at `/` (also `/web`), built in: sign in, browse, search, queue, star, scrobble; phone and desktop, no outside files.
 - **Podium**, the admin page at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).

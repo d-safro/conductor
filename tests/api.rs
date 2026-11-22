@@ -2824,3 +2824,132 @@ async fn music_lookup_mixes_shares_and_concerts_come_over() {
     assert_eq!(c["concerts"]["show"][0]["venue"], "Club");
     assert_eq!(c["concerts"]["city"], "Berlin");
 }
+
+/// The web player: served at / and /web, self-contained, and every Subsonic call it makes works.
+#[tokio::test]
+async fn web_player() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let mut page = String::new();
+    for path in ["/", "/web", "/web/"] {
+        let r = s.http.get(format!("{}{path}", s.base)).send().await.unwrap();
+        assert_eq!(r.status(), 200, "{path}");
+        assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/html"));
+        assert!(r.headers()["content-security-policy"].to_str().unwrap().contains("default-src 'self'"));
+        page = r.text().await.unwrap();
+        assert!(page.contains("<title>Recital</title>"), "{path}");
+    }
+    // small, and nothing to load from elsewhere: no outside scripts, styles, fonts or pictures
+    assert!(page.len() < 60_000, "page is {} bytes", page.len());
+    let outside = regex::Regex::new(r#"(?:src|href)=["']?(?:https?:)?//"#).unwrap();
+    assert!(!outside.is_match(&page), "the page links outside: {:?}", outside.find(&page));
+    assert!(!page.contains("@import") && !page.contains("url(http"));
+    // its icons come from this server (Conductor's logo, served by brand.rs)
+    let icons = regex::Regex::new(r#"<link rel="(?:icon|apple-touch-icon)"[^>]* href="(/[^"]+)""#).unwrap();
+    let hrefs: Vec<&str> = icons.captures_iter(&page).map(|c| c.get(1).unwrap().as_str()).collect();
+    assert_eq!(hrefs, ["/favicon.svg", "/favicon-32.png", "/icon-192.png"]);
+    for href in hrefs {
+        let r = s.http.get(format!("{}{href}", s.base)).send().await.unwrap();
+        assert_eq!(r.status(), 200, "{href}");
+        assert!(r.headers()["content-type"].to_str().unwrap().starts_with("image/"), "{href}");
+    }
+
+    // the methods the page calls, all checked below
+    let calls = regex::Regex::new(r#"(?:api|url|cover)\('(\w+)'"#).unwrap();
+    let mut used: Vec<&str> = calls.captures_iter(&page).map(|c| c.get(1).unwrap().as_str()).collect();
+    used.sort();
+    used.dedup();
+    let checked = [
+        "getAlbum",
+        "getAlbumList2",
+        "getArtist",
+        "getArtists",
+        "getCoverArt",
+        "getPlaylist",
+        "getPlaylists",
+        "getStarred2",
+        "ping",
+        "scrobble",
+        "search3",
+        "star",
+        "stream",
+        "unstar",
+    ];
+    assert_eq!(used, checked);
+
+    s.ok("ping", &[]).await;
+    let al = s.ok("getAlbumList2", &[("type", "newest"), ("size", "60")]).await;
+    let albums = al["albumList2"]["album"].as_array().unwrap();
+    assert_eq!(albums.len(), 2);
+    let more = s.ok("getAlbumList2", &[("type", "newest"), ("size", "60"), ("offset", "2")]).await;
+    assert!(more["albumList2"]["album"].as_array().is_none_or(|a| a.is_empty()));
+    let ar = s.ok("getArtists", &[]).await;
+    let alpha = ar["artists"]["index"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|i| i["artist"].as_array().unwrap())
+        .find(|a| a["name"] == "Alpha")
+        .unwrap();
+    assert_eq!(alpha["albumCount"], 1);
+    let artist = s.ok("getArtist", &[("id", alpha["id"].as_str().unwrap())]).await;
+    let album_id = artist["artist"]["album"][0]["id"].as_str().unwrap().to_string();
+    let album = s.ok("getAlbum", &[("id", &album_id)]).await["album"].clone();
+    assert_eq!(album["name"], "First Album");
+    let songs = album["song"].as_array().unwrap();
+    assert_eq!(songs.len(), 2);
+    let one = &songs[0];
+    let id = one["id"].as_str().unwrap();
+    // what the page reads from a song
+    for k in ["title", "artist", "artistId", "album", "albumId", "coverArt", "duration", "track", "suffix"] {
+        assert!(!one[k].is_null(), "song has no {k}: {one}");
+    }
+
+    // cover and stream (with Range, which the audio element uses to seek)
+    let r = s.http.get(s.url("getCoverArt", &[("id", one["coverArt"].as_str().unwrap()), ("size", "300")])).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "image/jpeg");
+    let r = s.http.get(s.url("stream", &[("id", id)])).header("Range", "bytes=0-99").send().await.unwrap();
+    assert_eq!(r.status(), 206);
+    assert_eq!(r.bytes().await.unwrap().len(), 100);
+
+    let found = s.ok("search3", &[("query", "Two"), ("artistCount", "12"), ("albumCount", "18"), ("songCount", "50")]).await;
+    assert_eq!(found["searchResult3"]["song"][0]["title"], "Two");
+    let found = s.ok("search3", &[("query", "alpha")]).await;
+    assert_eq!(found["searchResult3"]["artist"][0]["name"], "Alpha");
+    assert_eq!(found["searchResult3"]["album"][0]["name"], "First Album");
+
+    // heart, starred songs, scrobble
+    s.ok("star", &[("id", id)]).await;
+    let st = s.ok("getStarred2", &[]).await;
+    assert_eq!(st["starred2"]["song"][0]["id"], id);
+    assert!(!st["starred2"]["song"][0]["starred"].is_null());
+    s.ok("unstar", &[("id", id)]).await;
+    assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()));
+    s.ok("scrobble", &[("id", id), ("submission", "false")]).await;
+    s.ok("scrobble", &[("id", id), ("submission", "true"), ("time", "1700000000000")]).await;
+    let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(plays, 1, "the submission counts as one play");
+
+    // playlists
+    s.ok("createPlaylist", &[("name", "Web"), ("songId", id)]).await;
+    let pl = s.ok("getPlaylists", &[]).await;
+    let pid = pl["playlists"]["playlist"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"][0]["id"], id);
+
+    // a wrong password is refused with code 40, which the page shows as "Wrong username or password"
+    let salt = "x1";
+    let bad = format!("{:x}", md5::compute(format!("nope{salt}")));
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/ping?u={USER}&t={bad}&s={salt}&v=1.16.1&c=recital&f=json", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["error"]["code"], 40);
+}
