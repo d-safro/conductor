@@ -19,6 +19,7 @@
 
 pub mod gluetun;
 pub mod service;
+pub mod stack;
 pub mod ui;
 pub mod web;
 
@@ -37,7 +38,7 @@ use ui::Ui;
 pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", "services", "import", "service"];
 
 const VALUE_FLAGS: &[&str] = &[
-    "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "vpn", "vpn-check-url", "vpn-check-key",
+    "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "docker", "vpn", "vpn-check-url", "vpn-check-key",
     "wg-conf", "vpn-provider", "vpn-key", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
     "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
     "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service",
@@ -176,6 +177,8 @@ pub struct Wizard<'a> {
     /// the downloader container to make: asked for in the downloads step, written in the VPN step (inside a VPN)
     /// or at the end (on its own)
     make: Option<Downloader>,
+    /// ports given out in this run (so two services set up now don't get the same one)
+    ports: HashSet<u16>,
 }
 
 /// The answers for the downloader container.
@@ -201,6 +204,7 @@ Parts: music, server, admin, downloads, vpn, services, import, service (default:
   --vpn proxy --proxy URL [--proxy-metadata]
   --vpn none
   --require-vpn | --no-require-vpn   (pause downloads while the VPN is down)
+  --docker lidarr,audiomuse,pitch,metronome,ai   (set those up for you, in Docker; with --start, started)
   --lidarr-url --lidarr-key  --listenbrainz-token  --lastfm-key  --audiomuse-url --audiomuse-token
   --songid-url  --mixinfo-dir  --jam-public-url  --ai --ollama-url --dj-voice-url
   --import-navidrome DB  --import-music-lookup DIR  --transpose EXPORT
@@ -234,7 +238,7 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
     };
     let fresh = !path.is_file();
     let d = Draft::load(&path)?;
-    let mut w = Wizard { ui, f, d, make: None };
+    let mut w = Wizard { ui, f, d, make: None, ports: HashSet::new() };
     w.ui.say("Prelude: setting up Conductor.");
     if !fresh {
         w.ui.say(&format!("Your settings: {} (the current values are the defaults; Enter keeps them).", w.d.path.display()));
@@ -642,11 +646,9 @@ impl Wizard<'_> {
 
     /// The downloader folder: written, checked, its address and key saved, and started if you say so.
     async fn make_downloader(&mut self, vpn: Option<(gluetun::Vpn, bool)>, a: Downloader) -> Result<()> {
-        let base = self.d.path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let old = base.join("downloads-vpn"); // earlier versions' name for it
-        let dir = if old.join("compose.yml").is_file() { old } else { base.join("downloader") };
-        let web_port = free_port(5030);
-        let control_port = free_port(8000);
+        let dir = stack::dir(&self.d.path);
+        let web_port = self.port(5030);
+        let control_port = self.port(8000);
         let with_vpn = vpn.is_some();
         let (vpn, pf) = match vpn {
             Some((v, pf)) => (Some(v), pf),
@@ -659,7 +661,7 @@ impl Wizard<'_> {
             soulseek_password: a.soulseek_password,
             downloads: PathBuf::from(&a.downloads),
             web_port,
-            listen_port: if with_vpn { 50300 } else { free_port(50300) },
+            listen_port: if with_vpn { 50300 } else { self.port(50300) },
             control_port,
             port_forwarding: pf,
             slskd_key: new_key(),
@@ -668,9 +670,9 @@ impl Wizard<'_> {
         };
         gluetun::write(&setup)?;
         if with_vpn {
-            self.ui.say(&format!("  ✓ written: {} (compose.yml; the keys in vpn.env and slskd/slskd.yml, readable only by you)", setup.dir.display()));
+            self.ui.say(&format!("  ✓ written: {} (downloads.yml; the keys in vpn.env and slskd/slskd.yml, readable only by you)", setup.dir.display()));
         } else {
-            self.ui.say(&format!("  ✓ written: {} (compose.yml; the keys in slskd/slskd.yml, readable only by you)", setup.dir.display()));
+            self.ui.say(&format!("  ✓ written: {} (downloads.yml; the keys in slskd/slskd.yml, readable only by you)", setup.dir.display()));
             self.ui.say(&format!("    For more downloads, forward port {} on your router to this computer.", setup.listen_port));
         }
         if gluetun::has_docker() {
@@ -719,26 +721,99 @@ impl Wizard<'_> {
                 }
             }
         } else {
-            self.ui.say(&format!("  Start it later: cd {} && docker compose up -d", setup.dir.display()));
+            self.ui.say(&format!("  Start it later: cd {} && docker compose up -d --build", setup.dir.display()));
         }
         self.check_writable();
         Ok(())
     }
 
     // ── 6. services ──
-    async fn services(&mut self) -> Result<()> {
-        self.ui.say("\n6. Other services (each optional)");
-        // Lidarr
-        let on = self.d.str("lidarr_url").is_some() || self.f.get("lidarr-url").is_some();
-        if self.ui.yes("Lidarr (its wanted albums fetched from Soulseek)?", on) {
-            let url = self.ask_or("lidarr-url", "Lidarr's address", self.d.str("lidarr_url"), "http://127.0.0.1:8686");
-            let key = self.secret_or("lidarr-key", "LIDARR_API_KEY", "Lidarr's API key", self.d.str("lidarr_api_key"));
-            let r = http().get(format!("{}/api/v1/system/status", url.trim_end_matches('/'))).header("X-Api-Key", &key).send().await;
-            self.say_check("Lidarr", r.map(|r| r.status().is_success()).unwrap_or(false));
-            self.d.set("lidarr_url", url);
-            self.d.set("lidarr_api_key", key);
+    /// "Set it up for me" (Docker), "I have one already", or "No", for one service. 0, 1 or 2.
+    fn how(&mut self, q: &str, part: &str, have: bool) -> usize {
+        let docker_ok = gluetun::has_docker() || self.ui.auto();
+        // --docker LIST: exactly those are set up for you (one that's there and not listed comes out)
+        let list = self.f.get("docker");
+        let wanted = list.is_some_and(|l| l.split(',').any(|x| x.trim() == part));
+        let mine = stack::has_part(&stack::dir(&self.d.path), part);
+        let def = match (wanted, mine, list.is_some()) {
+            (true, _, _) => 0,
+            (false, true, false) => 0,
+            (false, true, true) => 2,
+            _ if have => 1,
+            _ => 2,
+        };
+        if docker_ok {
+            self.ui.choose(q, &["Yes: set it up for me (Docker)", "Yes, I have one already", "No"], def)
         } else {
-            self.d.unset("lidarr_url");
+            match self.ui.choose(q, &["Yes, I have one already", "No"], if def == 2 { 1 } else { 0 }) {
+                0 => 1,
+                _ => 2,
+            }
+        }
+    }
+
+    /// A port on 127.0.0.1 that's free, and not given to another service in this run.
+    fn port(&mut self, want: u16) -> u16 {
+        let p = (want..want.saturating_add(200))
+            .find(|p| !self.ports.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+            .unwrap_or(want);
+        self.ports.insert(p);
+        p
+    }
+
+    fn first_music(&self) -> Option<String> {
+        self.d.cfg.get("libraries").and_then(|l| l.as_array()).and_then(|l| l.first()).and_then(|l| l.get("path")).and_then(|p| p.as_str()).map(String::from)
+    }
+
+    fn data_dir(&self) -> PathBuf {
+        self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir)
+    }
+
+    /// Conductor's address as the services' containers reach it, and whether they can (it must listen beyond 127.0.0.1).
+    fn conductor_from_docker(&self) -> (String, bool) {
+        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
+        let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
+        let local_only = listen.starts_with("127.") || listen.starts_with("[::1]") || listen.starts_with("localhost");
+        (format!("http://host.docker.internal:{port}"), !local_only)
+    }
+
+    async fn services(&mut self) -> Result<()> {
+        self.ui.say("\n6. Other services (each optional; \"set it up for me\" adds it to one Docker folder, started together)");
+        let dir = stack::dir(&self.d.path);
+        let mut made: Vec<&str> = vec![];
+        let music = self.first_music();
+
+        // Lidarr
+        let c = self.how("Lidarr (albums you want, fetched from Soulseek)?", "lidarr", self.d.str("lidarr_url").is_some() || self.f.get("lidarr-url").is_some());
+        match c {
+            0 => match music.clone() {
+                Some(m) => {
+                    let port = self.port(8686);
+                    let key = new_key()[..32].to_string();
+                    let dl = self.d.str("slskd_downloads");
+                    stack::lidarr(&dir, &stack::Lidarr { port, key: &key, music: &m, downloads: dl.as_deref() })?;
+                    self.d.set("lidarr_url", format!("http://127.0.0.1:{port}"));
+                    self.d.set("lidarr_api_key", key);
+                    self.d.unset("lidarr_downloads"); // it sees the downloads at the same place
+                    self.ui.say(&format!("  ✓ Lidarr: its page will be http://127.0.0.1:{port}; your music is its root folder"));
+                    made.push("lidarr");
+                }
+                None => self.ui.say("  ✗ set the music folder up first (conductor setup music)"),
+            },
+            1 => {
+                stack::remove_part(&dir, "lidarr")?;
+                let url = self.ask_or("lidarr-url", "Lidarr's address", self.d.str("lidarr_url"), "http://127.0.0.1:8686");
+                let key = self.secret_or("lidarr-key", "LIDARR_API_KEY", "Lidarr's API key", self.d.str("lidarr_api_key"));
+                let r = http().get(format!("{}/api/v1/system/status", url.trim_end_matches('/'))).header("X-Api-Key", &key).send().await;
+                self.say_check("Lidarr", r.map(|r| r.status().is_success()).unwrap_or(false));
+                self.d.set("lidarr_url", url);
+                self.d.set("lidarr_api_key", key);
+            }
+            _ => {
+                stack::remove_part(&dir, "lidarr")?;
+                self.d.unset("lidarr_url");
+                self.d.unset("lidarr_api_key");
+            }
         }
         // ListenBrainz
         let on = self.d.str("listenbrainz_token").is_some() || self.f.get("listenbrainz-token").is_some();
@@ -760,32 +835,93 @@ impl Wizard<'_> {
             self.d.set("lastfm_api_key", key);
         }
         // AudioMuse
-        let on = self.d.str("audiomuse_url").is_some() || self.f.get("audiomuse-url").is_some();
-        if self.ui.yes("AudioMuse-AI (songs that sound alike)?", on) {
-            let url = self.ask_or("audiomuse-url", "AudioMuse's address", self.d.str("audiomuse_url"), "http://127.0.0.1:8000");
-            let tok = self.secret_or("audiomuse-token", "AUDIOMUSE_TOKEN", "Its API token (Enter: none)", self.d.str("audiomuse_token"));
-            self.say_check("AudioMuse", http().get(&url).send().await.is_ok());
-            self.d.set("audiomuse_url", url);
-            if !tok.is_empty() {
-                self.d.set("audiomuse_token", tok);
+        let c = self.how("AudioMuse-AI (songs that sound alike; it listens to each song once)?", "audiomuse", self.d.str("audiomuse_url").is_some() || self.f.get("audiomuse-url").is_some());
+        match c {
+            0 => {
+                let (url, reachable) = self.conductor_from_docker();
+                if !reachable {
+                    self.ui.say("  ! Conductor listens only on 127.0.0.1, so AudioMuse (in Docker) can't reach it: use 0.0.0.0 in the address step");
+                }
+                let port = self.port(8010);
+                let token = new_key();
+                let web = new_key()[..20].to_string();
+                let pass = new_key()[..24].to_string();
+                // its own account, to read the library with (not yours)
+                self.service_account("audiomuse", &pass).await?;
+                stack::audiomuse(&dir, &stack::AudioMuse { port, conductor_url: &url, user: "audiomuse", password: &pass, api_token: &token, web_password: &web })?;
+                self.d.set("audiomuse_url", format!("http://127.0.0.1:{port}"));
+                self.d.set("audiomuse_token", token);
+                self.ui.say(&format!("  ✓ AudioMuse: its page will be http://127.0.0.1:{port} (user admin; the password is in audiomuse.env there)"));
+                self.ui.say("    It reads your library with its own Conductor account, \"audiomuse\" (not an admin).");
+                made.push("audiomuse");
+            }
+            1 => {
+                stack::remove_part(&dir, "audiomuse")?;
+                let url = self.ask_or("audiomuse-url", "AudioMuse's address", self.d.str("audiomuse_url"), "http://127.0.0.1:8000");
+                let tok = self.secret_or("audiomuse-token", "AUDIOMUSE_TOKEN", "Its API token (Enter: none)", self.d.str("audiomuse_token"));
+                self.say_check("AudioMuse", http().get(&url).send().await.is_ok());
+                self.d.set("audiomuse_url", url);
+                if !tok.is_empty() {
+                    self.d.set("audiomuse_token", tok);
+                }
+            }
+            _ => {
+                stack::remove_part(&dir, "audiomuse")?;
+                self.d.unset("audiomuse_url");
+                self.d.unset("audiomuse_token");
             }
         }
-        // Pitch (song ID) and Metronome (Automix)
-        let on = self.d.str("songid_url").is_some() || self.f.get("songid-url").is_some();
-        if self.ui.yes("Pitch: \"What's playing?\" (the song-id service)?", on) {
-            let url = self.ask_or("songid-url", "The song-id service's address", self.d.str("songid_url"), "http://127.0.0.1:4540");
-            self.say_check("Pitch", http().get(format!("{}/status", url.trim_end_matches('/'))).send().await.is_ok_and(|r| r.status().is_success()));
-            self.d.set("songid_url", url);
+        // Pitch (song ID)
+        let c = self.how("Pitch: \"What's playing?\" against your own songs (offline)?", "pitch", self.d.str("songid_url").is_some() || self.f.get("songid-url").is_some());
+        match c {
+            0 => match music.clone() {
+                Some(m) => {
+                    let port = self.port(4540);
+                    stack::pitch(&dir, port, &m)?;
+                    self.d.set("songid_url", format!("http://127.0.0.1:{port}"));
+                    self.ui.say("  ✓ Pitch: it fingerprints your songs once, slowly, newest first (about 150 MB of memory for 2,000 songs)");
+                    made.push("pitch");
+                }
+                None => self.ui.say("  ✗ set the music folder up first (conductor setup music)"),
+            },
+            1 => {
+                stack::remove_part(&dir, "pitch")?;
+                let url = self.ask_or("songid-url", "The song-id service's address", self.d.str("songid_url"), "http://127.0.0.1:4540");
+                self.say_check("Pitch", http().get(format!("{}/status", url.trim_end_matches('/'))).send().await.is_ok_and(|r| r.status().is_success()));
+                self.d.set("songid_url", url);
+            }
+            _ => {
+                stack::remove_part(&dir, "pitch")?;
+                self.d.unset("songid_url");
+            }
         }
-        let on = self.d.str("mixinfo_dir").is_some() || self.f.get("mixinfo-dir").is_some();
-        if self.ui.yes("Metronome: Automix's analysis (the mix analyzer's folder)?", on) {
-            let dir = self.ask_or("mixinfo-dir", "Its folder", self.d.str("mixinfo_dir"), "");
-            self.say_check("Metronome", Path::new(&dir).is_dir());
-            self.d.set("mixinfo_dir", dir);
+        // Metronome (Automix)
+        let c = self.how("Metronome: Automix's analysis (where songs start, end and fade)?", "metronome", self.d.str("mixinfo_dir").is_some() || self.f.get("mixinfo-dir").is_some());
+        match c {
+            0 => match music.clone() {
+                Some(m) => {
+                    let out = self.data_dir().join("mixinfo").to_string_lossy().to_string();
+                    stack::metronome(&dir, &m, &out)?;
+                    self.d.set("mixinfo_dir", out);
+                    self.ui.say("  ✓ Metronome: the songs coming up in your queue first, then slowly the rest");
+                    made.push("metronome");
+                }
+                None => self.ui.say("  ✗ set the music folder up first (conductor setup music)"),
+            },
+            1 => {
+                stack::remove_part(&dir, "metronome")?;
+                let d = self.ask_or("mixinfo-dir", "The mix analyzer's folder", self.d.str("mixinfo_dir"), "");
+                self.say_check("Metronome", Path::new(&d).is_dir());
+                self.d.set("mixinfo_dir", d);
+            }
+            _ => {
+                stack::remove_part(&dir, "metronome")?;
+                self.d.unset("mixinfo_dir");
+            }
         }
         // Ensemble (Jam)
         let on = self.d.str("jam_public_url").is_some() || self.f.get("jam-public-url").is_some();
-        if self.ui.yes("Ensemble: let friends join a Jam from the internet?", on) {
+        if self.ui.yes("Ensemble: let friends join a Jam (and open share links) from the internet?", on) {
             let url = self.ask_or("jam-public-url", "The guest page's public address (https://…)", self.d.str("jam_public_url"), "");
             if !url.starts_with("https://") {
                 self.ui.say("  ! not https: friends' browsers may warn");
@@ -794,19 +930,129 @@ impl Wizard<'_> {
         }
         // AI: off unless chosen
         let on = self.f.has("ai") || self.d.str("ollama_url").is_some();
-        if self.ui.yes("AI features (Interlude, the DJ; Libretto, lyrics translation)? They use Ollama on your network", on) {
-            let url = self.ask_or("ollama-url", "Ollama's address", self.d.str("ollama_url"), "http://127.0.0.1:11434");
-            self.say_check("Ollama", http().get(format!("{}/api/tags", url.trim_end_matches('/'))).send().await.is_ok_and(|r| r.status().is_success()));
-            self.d.set("ollama_url", url);
-            let voice = self.ask_or("dj-voice-url", "Interlude's voice (dj-voice) address (Enter: none)", self.d.str("dj_voice_url"), "");
-            if !voice.is_empty() {
-                self.d.set("dj_voice_url", voice);
+        if self.ui.yes("AI features (Interlude, the DJ; Libretto, lyrics translation)? Local models only, nothing leaves this computer", on) {
+            let have = self.d.str("ollama_url").is_some() || self.f.get("ollama-url").is_some();
+            match self.how("Ollama and Interlude's voice?", "ai", have) {
+                0 => {
+                    // an Ollama already running here is used as it is
+                    let running = http().get("http://127.0.0.1:11434/api/tags").send().await.is_ok_and(|r| r.status().is_success());
+                    let ollama_port = if running { None } else { Some(self.port(11434)) };
+                    let voice = self.port(4541);
+                    stack::ai(&dir, ollama_port, voice)?;
+                    self.d.set("ollama_url", format!("http://127.0.0.1:{}", ollama_port.unwrap_or(11434)));
+                    self.d.set("dj_voice_url", format!("http://127.0.0.1:{voice}"));
+                    if running {
+                        self.ui.say("  ✓ Ollama: the one already running here; Interlude's voice in Docker");
+                    } else {
+                        self.ui.say("  ✓ Ollama and Interlude's voice (Piper; its voice, about 60 MB, comes the first time)");
+                    }
+                    made.push("ai");
+                }
+                1 => {
+                    stack::remove_part(&dir, "ai")?;
+                    let url = self.ask_or("ollama-url", "Ollama's address", self.d.str("ollama_url"), "http://127.0.0.1:11434");
+                    self.say_check("Ollama", http().get(format!("{}/api/tags", url.trim_end_matches('/'))).send().await.is_ok_and(|r| r.status().is_success()));
+                    self.d.set("ollama_url", url);
+                    let voice = self.ask_or("dj-voice-url", "Interlude's voice (dj-voice) address (Enter: none)", self.d.str("dj_voice_url"), "");
+                    if !voice.is_empty() {
+                        self.d.set("dj_voice_url", voice);
+                    }
+                }
+                _ => {
+                    stack::remove_part(&dir, "ai")?;
+                    self.d.unset("ollama_url");
+                    self.d.unset("dj_voice_url");
+                }
             }
         } else {
+            stack::remove_part(&dir, "ai")?;
             self.d.unset("ollama_url");
             self.d.unset("dj_voice_url");
         }
+
+        if made.is_empty() {
+            return Ok(());
+        }
+        self.ui.say(&format!("  ✓ written: {} ({})", dir.display(), made.iter().map(|p| format!("{p}.yml")).collect::<Vec<_>>().join(", ")));
+        if gluetun::has_docker() {
+            match stack::validate(&dir) {
+                Ok(()) => self.ui.say("  ✓ docker compose accepts it"),
+                Err(e) => self.ui.say(&format!("  ✗ {e:#}")),
+            }
+        }
+        self.d.save()?;
+        if !self.ui.yes("Start them now (docker compose up -d --build; the first time takes a few minutes)?", self.f.has("start")) {
+            self.ui.say(&format!("  Start them later: cd {} && docker compose up -d --build", dir.display()));
+            return Ok(());
+        }
+        if let Err(e) = stack::up(&dir) {
+            self.ui.say(&format!("  ✗ {e:#}"));
+            return Ok(());
+        }
+        self.ui.say("  ✓ started");
+        if made.contains(&"lidarr") {
+            self.lidarr_root().await;
+        }
+        if made.contains(&"ai") {
+            let model = self.d.str("translate_model").unwrap_or_else(|| Config::default().translate_model);
+            if self.ui.yes(&format!("Fetch the AI model now ({model}, a few GB)?"), self.f.has("start")) {
+                let target = if stack::has_part(&dir, "ai") && std::fs::read_to_string(dir.join("ai.yml")).is_ok_and(|t| t.contains("conductor-ollama")) { "conductor-ollama" } else { "" };
+                if target.is_empty() {
+                    self.ui.say(&format!("  On the Ollama already running here: ollama pull {model}"));
+                } else {
+                    match stack::exec(target, &["ollama", "pull", &model]) {
+                        Ok(()) => self.ui.say(&format!("  ✓ {model} is ready")),
+                        Err(e) => self.ui.say(&format!("  ✗ {e:#}")),
+                    }
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// The account a service reads the library with: made, or its password set again.
+    async fn service_account(&mut self, name: &str, password: &str) -> Result<()> {
+        let data = self.data_dir();
+        std::fs::create_dir_all(&data)?;
+        let db = crate::db::open(&data.join("conductor.db")).await?;
+        let secrets = crate::auth::Secrets::load_or_create(&data.join("secret.key"))?;
+        if !crate::auth::set_password(&db, &secrets, name, password).await? {
+            crate::auth::create_user(&db, &secrets, name, password, false).await?;
+        }
+        db.close().await;
+        Ok(())
+    }
+
+    /// Lidarr's root folder: the music folder (once it answers).
+    async fn lidarr_root(&mut self) {
+        let (Some(url), Some(key), Some(music)) = (self.d.str("lidarr_url"), self.d.str("lidarr_api_key"), self.first_music()) else { return };
+        let mut up = false;
+        for _ in 0..45 {
+            if http().get(format!("{url}/api/v1/system/status")).header("X-Api-Key", &key).send().await.is_ok_and(|r| r.status().is_success()) {
+                up = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        if !up {
+            self.ui.say("  ✗ Lidarr didn't answer in 90 seconds: docker logs conductor-lidarr says why");
+            return;
+        }
+        let have: Vec<Value> = match http().get(format!("{url}/api/v1/rootfolder")).header("X-Api-Key", &key).send().await {
+            Ok(r) => r.json().await.unwrap_or_default(),
+            Err(_) => vec![],
+        };
+        if have.iter().any(|r| r["path"].as_str() == Some(music.as_str())) {
+            self.ui.say("  ✓ Lidarr already has your music folder");
+            return;
+        }
+        let body = serde_json::json!({ "name": "Music", "path": music, "defaultQualityProfileId": 1, "defaultMetadataProfileId": 1,
+            "defaultMonitorOption": "none", "defaultNewItemMonitorOption": "none" });
+        match http().post(format!("{url}/api/v1/rootfolder")).header("X-Api-Key", &key).json(&body).send().await {
+            Ok(r) if r.status().is_success() => self.ui.say("  ✓ Lidarr: your music folder is its root folder"),
+            Ok(r) => self.ui.say(&format!("  ✗ Lidarr didn't take the music folder ({}); add it in Lidarr › Settings › Media Management", r.status())),
+            Err(e) => self.ui.say(&format!("  ✗ Lidarr: {e}")),
+        }
     }
 
     fn say_check(&mut self, what: &str, ok: bool) {
@@ -971,7 +1217,3 @@ pub async fn slskd_check(url: &str, key: &str) -> Result<String> {
     Ok(format!("version {}, {}", v["version"]["current"].as_str().or(v["version"].as_str()).unwrap_or("?"), if on { "on Soulseek" } else { "not on Soulseek right now" }))
 }
 
-/// This port, or the next free one.
-fn free_port(want: u16) -> u16 {
-    (want..want + 100).find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()).unwrap_or(want)
-}

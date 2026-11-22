@@ -107,7 +107,7 @@ async fn every_step_in_a_terminal() {
             "me", "secret12", "secret12",      // the admin
             "2", &base, "the-slskd-key", p.root.join("dl").to_str().unwrap(), // my own slskd
             "1", &format!("{base}/check"), "", "y", // already behind a VPN; the kill switch
-            "n", "n", "n", "n", "n", "n", "n", "n", // no other services, no AI
+            "", "n", "n", "", "", "", "n", "n", // no other services (Enter: "No"), no AI
             "", "", "",                        // nothing to import
             "4", "n",                          // no service; no scan now
         ],
@@ -166,7 +166,7 @@ async fn each_vpn_choice_again_later() {
     .await;
     assert!(out.contains("✓ written"), "{out}");
     assert!(!out.contains("TestOnlyPrivateKey") && !out.contains("soulseek-pw"), "{out}");
-    let dir = p.root.join("data/downloader");
+    let dir = p.root.join("data/services");
     assert!(read(&dir.join("vpn.env")).contains("WIREGUARD_PRIVATE_KEY=TestOnlyPrivateKeyNotReal"));
     assert!(private(&dir.join("vpn.env")) && private(&dir.join("slskd/slskd.yml")) && private(&dir.join("gluetun/auth/config.toml")));
     let cfg = read(&p.config);
@@ -205,7 +205,7 @@ async fn yes_mode_from_flags() {
     assert_eq!((c.vpn.as_str(), c.downloads_require_vpn, c.libraries.len()), (made, true, 1));
     if !cfg!(windows) {
         assert!(c.slskd_url.as_deref().unwrap().starts_with("http://127.0.0.1:"));
-        assert!(read(&p.root.join("data/downloader/compose.yml")).contains("network_mode: service:gluetun"));
+        assert!(read(&p.root.join("data/services/downloads.yml")).contains("network_mode: service:gluetun"));
     }
     // and a proxy, the same way
     let px = proxy().await;
@@ -236,8 +236,8 @@ async fn downloader_container_on_its_own() {
     }
     let out = String::from_utf8(out).unwrap();
     assert!(out.contains("✓ written") && !out.contains("pw-alone"), "{out}");
-    let dir = data.join("downloader");
-    let compose = read(&dir.join("compose.yml"));
+    let dir = data.join("services");
+    let compose = read(&dir.join("downloads.yml"));
     assert!(compose.contains("conductor-slskd") && !compose.contains("gluetun"), "{compose}");
     assert!(!dir.join("vpn.env").exists());
     assert!(private(&dir.join("slskd/slskd.yml")));
@@ -284,4 +284,67 @@ async fn docker_file_uses_the_same_settings() {
         let ok = std::process::Command::new("docker").args(["compose", "-f"]).arg(&compose).args(["config", "-q"]).status().unwrap().success();
         assert!(ok, "docker compose accepts it");
     }
+}
+
+#[tokio::test]
+async fn sets_up_the_whole_music_lab() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    let dl = p.root.join("dl");
+    let mut out = Vec::new();
+    let args = [
+        "--yes", "--music", p.music.to_str().unwrap(), "--data", data.to_str().unwrap(), "--listen", "0.0.0.0:45935",
+        "--downloads", "docker", "--slsk-user", "someone", "--slsk-pass", "pw-lab", "--downloads-dir", dl.to_str().unwrap(),
+        "--docker", "lidarr,audiomuse,pitch,metronome,ai", "--ai",
+    ];
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(p.config.clone()), &args, &mut ui).await.unwrap();
+    }
+    let out = String::from_utf8(out).unwrap();
+    assert!(!out.contains("pw-lab"), "{out}");
+    let dir = data.join("services");
+    let main = read(&dir.join("compose.yml"));
+    for part in ["downloads", "lidarr", "audiomuse", "pitch", "metronome", "ai"] {
+        assert!(main.contains(&format!("- {part}.yml")), "{part} in {main}");
+    }
+    assert!(dir.join("pitch/song_id.py").is_file() && dir.join("metronome/mix_analyzer.py").is_file() && dir.join("voice/dj_voice.py").is_file());
+    assert!(private(&dir.join("lidarr.env")) && private(&dir.join("audiomuse.env")));
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    let local = |u: &Option<String>| u.as_deref().is_some_and(|u| u.starts_with("http://127.0.0.1:"));
+    assert!(local(&c.slskd_url) && local(&c.lidarr_url) && local(&c.audiomuse_url) && local(&c.songid_url) && local(&c.ollama_url) && local(&c.dj_voice_url), "{c:?}");
+    assert!(read(&dir.join("lidarr.env")).contains(c.lidarr_api_key.as_deref().unwrap()), "Lidarr and Conductor share its key");
+    let am = read(&dir.join("audiomuse.env"));
+    assert!(am.contains(&format!("API_TOKEN={}", c.audiomuse_token.as_deref().unwrap())) && am.contains("NAVIDROME_URL=http://host.docker.internal:45935"), "{am}");
+    assert_eq!(c.mixinfo_dir.as_deref(), Some(data.join("mixinfo").as_path()));
+    // AudioMuse reads the library with its own account, not an admin, and its password works
+    let pass = am.lines().find_map(|l| l.strip_prefix("NAVIDROME_PASSWORD=")).unwrap().to_string();
+    let db = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    let secrets = conductor::auth::Secrets::load_or_create(&data.join("secret.key")).unwrap();
+    let u = conductor::auth::verify_password(&db, &secrets, "audiomuse", &pass).await.unwrap().expect("its account");
+    assert!(!u.is_admin);
+    // every port its own
+    let ports: Vec<u16> = [&c.slskd_url, &c.lidarr_url, &c.audiomuse_url, &c.songid_url, &c.dj_voice_url]
+        .iter()
+        .map(|u| u.as_deref().unwrap().rsplit(':').next().unwrap().parse().unwrap())
+        .collect();
+    let mut uniq = ports.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(uniq.len(), ports.len(), "{ports:?}");
+    if prelude::gluetun::has_docker() && !cfg!(windows) {
+        prelude::stack::validate(&dir).expect("docker compose accepts it all");
+    }
+
+    // and taking one out again leaves the rest
+    let mut out = Vec::new();
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(p.config.clone()), &["--yes", "services", "--docker", "lidarr,audiomuse,metronome,ai", "--ai"], &mut ui).await.unwrap();
+    }
+    let main = read(&dir.join("compose.yml"));
+    assert!(!main.contains("pitch.yml") && main.contains("lidarr.yml") && main.contains("downloads.yml"), "{main}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert!(c.songid_url.is_none());
 }

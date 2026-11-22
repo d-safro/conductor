@@ -35,7 +35,9 @@
 - **Made for you:** Discover Weekly, Release Radar, Daily Mixes and the Daylist (**Repertoire**); concerts near you (**Marquee**); your year in review (**Curtain Call**).
 - **Brings your history with you** (**Transpose**): Spotify, Apple Music / iTunes, YouTube Music, Last.fm, ListenBrainz and playlist files, matched to your library and undoable.
 - **Optional AI, all local:** lyrics translation (**Libretto**), a DJ between songs (**Interlude**), song ID (**Pitch**).
-- **Easy to set up:** **Prelude** asks a few questions, tests each answer, and can put downloads behind a VPN with a kill switch.
+- **Easy to set up:** **Prelude** asks a few questions and tests each answer. It can set up everything around Conductor for
+  you, in one Docker folder started together: the downloader (inside a VPN with a kill switch, if you like), Lidarr,
+  AudioMuse-AI, Pitch, Metronome, and, only if you choose AI, Ollama and Interlude's voice.
 - **Safe to run for years:** a backup every day (database, its key and your settings, in one zip) and `conductor restore` to bring one back.
 - **Share and manage:** share links anyone can play without an account; users managed from any Subsonic app or Podium.
 
@@ -88,7 +90,7 @@ cargo build --release
 
 **Prelude** (`conductor setup`, or `conductor prelude`) walks through the music folders, the data folder and port,
 the first admin, downloads (optional: the downloader set up for you as one Docker container, or your own slskd),
-**a VPN for downloads**, the other services, bringing your history in
+**a VPN for downloads**, the other services (each one set up for you in Docker, one you already run, or none), bringing your history in
 (Navidrome, music-lookup, Transpose) and running it as a service (systemd, the Windows service, or Docker). Run it
 again to change one part (`conductor setup vpn`); `--yes` with flags answers everything for scripts
 (`conductor setup --help`). Keys and passwords go to `secrets.toml` (mode 600) beside `config.toml`.

@@ -1,7 +1,7 @@
 //! Prelude's "set it up for me": the downloader (slskd) as one Docker container, optionally inside a VPN (gluetun),
-//! in a Docker Compose folder beside config.toml (`downloader/`; `downloads-vpn/` from earlier versions is kept).
+//! as the `downloads` part of Prelude's services folder (stack.rs).
 //!
-//!   compose.yml         slskd alone, or gluetun + slskd (`network_mode: service:gluetun`: then slskd only ever
+//!   downloads.yml       slskd alone, or gluetun + slskd (`network_mode: service:gluetun`: then slskd only ever
 //!                       talks through the VPN)
 //!   slskd/slskd.yml     slskd's settings: Soulseek login, API key for Conductor, remote configuration (mode 600)
 //!   vpn.env             with a VPN: its keys (mode 600)
@@ -103,7 +103,6 @@ pub fn compose_yaml(s: &Setup) -> String {
         return format!(
             "# Made by `conductor setup` (Prelude): Soulseek downloads for Conductor (slskd), on this computer's connection.
 # Its settings and keys are in slskd/slskd.yml (readable only by you). Start: docker compose up -d
-name: conductor-downloads
 services:
   slskd:
     image: slskd/slskd:latest
@@ -127,7 +126,6 @@ services:
     format!(
         "# Made by `conductor setup` (Prelude): Soulseek downloads (slskd) only ever go through a VPN (gluetun).
 # The secrets are in vpn.env and slskd/slskd.yml (readable only by you). Start: docker compose up -d
-name: conductor-downloads
 services:
   gluetun:
     image: qmcgaw/gluetun:latest
@@ -236,7 +234,7 @@ apikey = {}
 pub fn write(s: &Setup) -> Result<()> {
     std::fs::create_dir_all(&s.dir)?;
     std::fs::create_dir_all(&s.downloads).with_context(|| format!("making {}", s.downloads.display()))?;
-    std::fs::write(s.dir.join("compose.yml"), compose_yaml(s))?;
+    super::stack::write_part(&s.dir, "downloads", &compose_yaml(s), &[])?;
     if let Some(vpn) = &s.vpn {
         private(&s.dir.join("vpn.env"), &vpn_env(vpn))?;
         private(&s.dir.join("gluetun/auth/config.toml"), &control_auth(&s.control_key))?;
@@ -270,13 +268,13 @@ pub fn has_docker() -> bool {
     Command::new("docker").args(["compose", "version"]).output().is_ok_and(|o| o.status.success())
 }
 
-/// `docker compose config`: the file is valid (nothing is started).
+/// `docker compose config`: the files are valid (nothing is started).
 pub fn validate(dir: &Path) -> Result<()> {
-    docker(dir, &["config", "-q"]).map(|_| ())
+    super::stack::validate(dir)
 }
 
 pub fn start(dir: &Path) -> Result<()> {
-    docker(dir, &["up", "-d"]).map(|_| ())
+    super::stack::up(dir)
 }
 
 /// Wait (up to `secs`) for gluetun to say it's healthy: the tunnel is up.

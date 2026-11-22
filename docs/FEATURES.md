@@ -79,6 +79,14 @@ The detailed list. The [README](../README.md) has the short version.
 - **Downloads are optional**: without slskd or Lidarr, songs you don't have aren't shown (`catalog` is off unless set),
   and everything else works. Prelude sets the downloader up as one Docker container (slskd; Linux or Windows with
   Docker), on this computer's connection or inside a VPN (gluetun), or uses your own slskd.
+- **Prelude's services folder** (`services/` beside config.toml, one compose project, `docker compose up -d --build`):
+  each service can be set up for you there, be one you already run, or be off, and its address and keys go into
+  Conductor's settings by themselves. The downloader (`downloads.yml`); Lidarr (its key shared with Conductor, your
+  music as its root folder); AudioMuse-AI (its database, web app and worker; it reads the library with its own,
+  non-admin Conductor account); Pitch and Metronome (built on your computer from `helpers/`); and only with AI on,
+  Ollama (or the one already running) and Interlude's voice. Everything listens on 127.0.0.1, on ports that don't
+  clash; keys and logins are in files only you can read. `--docker lidarr,audiomuse,pitch,metronome,ai` does the
+  same for `--yes` runs.
 - **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or
