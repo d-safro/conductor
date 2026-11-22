@@ -38,6 +38,8 @@ What changed in each release, newest first. The full notes for each are on the
 - Prelude's domain step: with Conductor on one of the computer's addresses (not 0.0.0.0), "only Caddy reaches it"
   moved Conductor to 127.0.0.1 after the Caddyfile was written, so Caddy pointed at nothing. Run again, it no longer
   moves Conductor back to 127.0.0.1 unasked; an email that isn't one is no longer written into the Caddyfile.
+- A better copy swapped in for a song with another file type (FLAC for an MP3) could leave the song twice in the
+  library: the old file went only after scans were let run again.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.
