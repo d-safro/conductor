@@ -252,14 +252,13 @@ pub fn empty() -> Result<Reply, ApiError> {
     Ok(Reply::Ok(json!({})))
 }
 
+/// The largest form body (a playlist or queue of some 100 000 songs).
+const MAX_FORM: usize = 8 << 20;
+
 async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Request) -> Response {
     let method = method.strip_suffix(".view").unwrap_or(&method).to_string();
     let headers = req.headers().clone();
-    let ip = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|ci| crate::jam::client_ip(&headers, ci.0))
-        .unwrap_or_default();
+    let ip = request_ip(&req);
     let mut pairs: Vec<(String, String)> =
         req.uri().query().map(|q| form_urlencoded::parse(q.as_bytes()).into_owned().collect()).unwrap_or_default();
     let is_form = headers
@@ -276,11 +275,16 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         // the body is a short recording, whatever it's labelled as (many HTTP libraries call any body a form); the
         // login is in the query
         body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
-    } else if is_post
-        && is_form
-        && let Ok(b) = to_bytes(req.into_body(), 1 << 20).await
-    {
-        pairs.extend(form_urlencoded::parse(&b).into_owned());
+    } else if is_post && is_form {
+        match to_bytes(req.into_body(), MAX_FORM).await {
+            Ok(b) => pairs.extend(form_urlencoded::parse(&b).into_owned()),
+            Err(_) => {
+                // never carry on without it: savePlayQueue would empty the queue, createPlaylist the playlist
+                let fmt = if pairs.iter().any(|(k, v)| k == "f" && v == "json") { Fmt::Json } else { Fmt::Xml };
+                let e = ApiError { http: StatusCode::PAYLOAD_TOO_LARGE, ..ApiError::new(0, "The request is too large") };
+                return render(fmt, Err(e));
+            }
+        }
     }
     let p = Params(pairs);
     let fmt = match p.get("f") {
@@ -295,20 +299,11 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         };
         return render(fmt, r.map(|v| Reply::Ok(json!({ "pair": v }))));
     }
-    let who = p.get("u").unwrap_or("").to_string();
-    if st.login_fails.blocked("app", &ip, &who, auth::APP_TRIES) {
-        return render(fmt, Err(ApiError::new(40, "Too many wrong passwords. Try again in a few minutes.")));
-    }
     let creds = Credentials { u: p.get("u"), p: p.get("p"), t: p.get("t"), s: p.get("s"), api_key: p.get("apiKey") };
-    let user = match auth::login(&st.db, &st.secrets, creds).await {
-        Ok(u) => {
-            st.login_fails.clear("app", &ip, &who);
-            u
-        }
-        Err(e) => {
-            if matches!(e, LoginError::Wrong | LoginError::InvalidKey) {
-                st.login_fails.failed("app", &ip, &who);
-            }
+    let user = match app_login(&st, &ip, creds).await {
+        Ok(u) => u,
+        Err(None) => return render(fmt, Err(ApiError::new(40, "Too many wrong passwords. Try again in a few minutes."))),
+        Err(Some(e)) => {
             let (code, msg) = match e {
                 LoginError::Missing => (10, "Required parameter is missing: u, or apiKey"),
                 LoginError::Wrong => (40, "Wrong username or password"),
@@ -326,6 +321,45 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
     let ctx = Ctx { st, user, p, headers, client, body };
     let r = dispatch(&ctx, &method).await;
     render(fmt, r)
+}
+
+/// An app's login, with the limit on wrong passwords (`auth::Throttle`). Err(None): too many wrong ones lately.
+///
+/// Passwords are counted per user per address. API keys are counted per key per address (by a hash of it): a
+/// right key never fails, so it always gets in, and one app with a revoked key can't lock out the other apps
+/// behind the same address.
+///
+/// The address is the connection's. X-Forwarded-For is believed only when the connection comes from this
+/// computer (a proxy on it), since anyone can send that header. So behind a proxy on another computer every app
+/// has the proxy's address and shares its limit.
+pub(crate) async fn app_login(st: &AppState, ip: &str, creds: Credentials<'_>) -> Result<User, Option<LoginError>> {
+    let who = match creds.api_key {
+        Some(k) => format!("\napikey {}", &auth::sha256(k)[..16]),
+        None => creds.u.unwrap_or("").to_string(),
+    };
+    if st.login_fails.blocked("app", ip, &who, auth::APP_TRIES) {
+        return Err(None);
+    }
+    match auth::login(&st.db, &st.secrets, creds).await {
+        Ok(u) => {
+            st.login_fails.clear("app", ip, &who);
+            Ok(u)
+        }
+        Err(e) => {
+            if matches!(e, LoginError::Wrong | LoginError::InvalidKey) {
+                st.login_fails.failed("app", ip, &who);
+            }
+            Err(Some(e))
+        }
+    }
+}
+
+/// The address a request came from (`jam::client_ip`), "" when unknown.
+pub(crate) fn request_ip(req: &Request) -> String {
+    req.extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| crate::jam::client_ip(req.headers(), ci.0))
+        .unwrap_or_default()
 }
 
 async fn dispatch(c: &Ctx, method: &str) -> Result<Reply, ApiError> {

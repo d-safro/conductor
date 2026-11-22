@@ -2,7 +2,7 @@
 //!
 //!   Encore (signed in):   playlistShareStart?id=  playlistShareEnd?id=  playlistShares
 //!   Friends (public, on the Jam listener):
-//!     GET  /jam/pl/<token>               the page            GET /jam/pl/<token>/state
+//!     GET  /jam/pl/<token>               the page            GET /jam/pl/<token>/state?g=<guest>
 //!     GET  /jam/pl/<token>/search?q=     songs to add        GET /jam/pl/<token>/cover/<id>?s=
 //!     POST /jam/pl/<token>/add {id, by, guest}   POST /jam/pl/<token>/remove {id, index, guest}
 //!
@@ -184,9 +184,7 @@ fn limited(token: &str, ip: &str, n: usize) -> bool {
     hits.retain(|t| now - t < 60_000);
     hits.push(now);
     let over = hits.len() > n;
-    if g.hits.len() > 2000 {
-        g.hits.retain(|_, v| v.last().is_some_and(|t| now - t < 60_000));
-    }
+    crate::jam::trim_hits(&mut g.hits, now, 2000);
     over
 }
 
@@ -199,8 +197,9 @@ fn show_covers<'a>(token: &str, covers: impl Iterator<Item = &'a str>) {
     set.extend(covers.filter(|c| !c.is_empty()).map(String::from));
 }
 
-/// The playlist's songs, in order, with who added each through the link.
-async fn entries(st: &Shared, token: &str, pid: &str) -> Vec<Value> {
+/// The playlist's songs, in order, with who added each through the link, and whether `me` (the asking friend's
+/// own guest id) did: the others' guest ids are never shown, since removing a song only takes the guest id.
+async fn entries(st: &Shared, token: &str, pid: &str, me: &str) -> Vec<Value> {
     let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
         "SELECT t.id, t.title, t.artist_name, t.album_id, t.duration_ms FROM playlist_entry e JOIN track t ON t.id = e.track_id
          WHERE e.playlist_id = ? ORDER BY e.position",
@@ -224,7 +223,7 @@ async fn entries(st: &Shared, token: &str, pid: &str) -> Vec<Value> {
         .map(|(i, (id, title, artist, cover, d))| {
             let (by, guest) = who.get(&id).cloned().unwrap_or_default();
             json!({ "index": i, "id": id, "title": title, "artist": artist, "cover": cover, "duration": d / 1000,
-                "by": by, "guest": guest })
+                "by": by, "mine": !me.is_empty() && guest == me })
         })
         .collect()
 }
@@ -245,7 +244,14 @@ async fn page(State(st): State<Shared>, Path(token): Path<String>) -> Response {
     }
 }
 
-async fn state(State(st): State<Shared>, Path(token): Path<String>) -> Response {
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct StateQ {
+    /// the asking friend's guest id
+    g: String,
+}
+
+async fn state(State(st): State<Shared>, Path(token): Path<String>, Query(q): Query<StateQ>) -> Response {
     let Some((pid, _)) = live(&st.db, &token).await else { return ended() };
     let head: Option<(String, String, String)> =
         sqlx::query_as("SELECT p.name, p.comment, u.name FROM playlist p JOIN user u ON u.id = p.owner_id WHERE p.id = ?")
@@ -254,7 +260,8 @@ async fn state(State(st): State<Shared>, Path(token): Path<String>) -> Response 
             .await
             .unwrap_or_default();
     let Some((name, comment, owner)) = head else { return ended() };
-    let songs = entries(&st, &token, &pid).await;
+    let me: String = q.g.chars().take(40).collect();
+    let songs = entries(&st, &token, &pid, &me).await;
     show_covers(&token, songs.iter().filter_map(|s| s["cover"].as_str()));
     (
         StatusCode::OK,

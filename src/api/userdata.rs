@@ -308,11 +308,27 @@ pub async fn update_playlist(c: &Ctx) -> Result<Reply, ApiError> {
                 .bind(&p.id)
                 .fetch_all(&c.st.db)
                 .await?;
+        // the places are those getPlaylist shows: songs that are missing (or gone) aren't counted, and stay
+        let shown: std::collections::HashSet<String> = sqlx::query_scalar(
+            "SELECT id FROM track WHERE missing_since IS NULL
+             AND id IN (SELECT track_id FROM playlist_entry WHERE playlist_id = ?)",
+        )
+        .bind(&p.id)
+        .fetch_all(&c.st.db)
+        .await?
+        .into_iter()
+        .collect();
         let mut keep = vec![];
-        for (i, id) in ids.drain(..).enumerate() {
-            if !remove.contains(&i) {
+        let mut place = 0;
+        for id in ids.drain(..) {
+            if !shown.contains(&id) {
+                keep.push(id);
+                continue;
+            }
+            if !remove.contains(&place) {
                 keep.push(id);
             }
+            place += 1;
         }
         keep.extend(add.into_iter().map(String::from));
         set_entries(c, &p.id, &keep).await?;
@@ -355,7 +371,9 @@ async fn play_queue(c: &Ctx, by_index: bool) -> Result<Reply, ApiError> {
     };
     let ids: Vec<String> = serde_json::from_str(&ids).unwrap_or_default();
     let mut entries = vec![];
-    for id in &ids {
+    // places in `ids` whose song couldn't be found (and so aren't in `entries`)
+    let mut dropped = vec![];
+    for (i, id) in ids.iter().enumerate() {
         // ⬇ songs and podcast episodes are queued too: keep them, or another device loses them
         let e = if crate::catalog::dz_id(id, 't').is_some() {
             super::catalog_api::queue_entry(c, id).await
@@ -364,13 +382,18 @@ async fn play_queue(c: &Ctx, by_index: bool) -> Result<Reply, ApiError> {
         } else {
             items::track(c, id).await.ok().map(|t| items::song_json(&t))
         };
+        if e.is_none() {
+            dropped.push(i as i64);
+        }
         entries.extend(e);
     }
     let mut v = json!({ "username": c.user.name, "changed": iso(at), "changedBy": by, "position": pos, "entry": entries });
     if by_index {
         let i = index.or_else(|| current.as_ref().and_then(|cur| ids.iter().position(|x| x == cur).map(|p| p as i64)));
-        if let Some(i) = i {
-            v["currentIndex"] = i.into();
+        // the stored place counts every id; the answer only has the songs found, so the place moves back by the
+        // ones left out before it (and goes when the current song itself was left out)
+        if let Some(i) = i.filter(|i| !dropped.contains(i)) {
+            v["currentIndex"] = (i - dropped.iter().filter(|d| **d < i).count() as i64).into();
         }
         return ok(json!({ "playQueueByIndex": v }));
     }

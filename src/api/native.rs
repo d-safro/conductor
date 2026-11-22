@@ -252,7 +252,7 @@ async fn remove(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>) 
         Ok(r) => r,
         Err(e) => return e,
     };
-    if let Some(p) = cur.image_path {
+    if let Some(p) = cur.image_path.and_then(|p| st.cfg.own_playlist_image(&p)) {
         let _ = tokio::fs::remove_file(p).await;
     }
     let _ = sqlx::query("DELETE FROM playlist WHERE id = ?").bind(&id).execute(&st.db).await;
@@ -279,18 +279,19 @@ async fn set_image(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String
         Ok(image::ImageFormat::WebP) => "webp",
         _ => return err(StatusCode::BAD_REQUEST, "the picture must be JPEG, PNG or WebP"),
     };
-    let dir = st.cfg.data_dir.join("playlist-images");
-    let path = dir.join(format!("{id}_{}.{ext}", &db::random_id()[..8]));
-    if tokio::fs::create_dir_all(&dir).await.is_err() || tokio::fs::write(&path, &data).await.is_err() {
+    let dir = st.cfg.playlist_images_dir();
+    let name = format!("{id}_{}.{ext}", &db::random_id()[..8]);
+    if tokio::fs::create_dir_all(&dir).await.is_err() || tokio::fs::write(dir.join(&name), &data).await.is_err() {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "can't save the picture");
     }
+    // only the file name: the data folder may move
     let _ = sqlx::query("UPDATE playlist SET image_path = ?, updated_at = ? WHERE id = ?")
-        .bind(path.to_string_lossy().to_string())
+        .bind(&name)
         .bind(now())
         .bind(&id)
         .execute(&st.db)
         .await;
-    if let Some(old) = cur.image_path {
+    if let Some(old) = cur.image_path.and_then(|p| st.cfg.own_playlist_image(&p)) {
         let _ = tokio::fs::remove_file(old).await;
     }
     Json(json!({ "id": id })).into_response()
@@ -302,7 +303,7 @@ async fn delete_image(State(st): State<Shared>, h: HeaderMap, Path(id): Path<Str
         Ok(r) => r,
         Err(e) => return e,
     };
-    if let Some(old) = cur.image_path {
+    if let Some(old) = cur.image_path.and_then(|p| st.cfg.own_playlist_image(&p)) {
         let _ = tokio::fs::remove_file(old).await;
     }
     let _ = sqlx::query("UPDATE playlist SET image_path = NULL, updated_at = ? WHERE id = ?")

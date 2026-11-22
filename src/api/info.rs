@@ -132,11 +132,19 @@ pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
             (t.artist_id.clone(), t.artist_name.clone(), t.genre.clone().unwrap_or_default(), Some(t.id))
         }
         Some("album") => {
-            let a = items::albums_where(c, "al.id = ?", &[&id], "").await?.remove(0);
+            let a = items::albums_where(c, "al.id = ?", &[&id], "")
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::not_found("Album"))?;
             (a.artist_id.clone(), a.artist_name.clone(), a.genre.clone().unwrap_or_default(), None)
         }
         Some("artist") => {
-            let a = items::artists_where(c, "ar.id = ?", &[&id], "").await?.remove(0);
+            let a = items::artists_where(c, "ar.id = ?", &[&id], "")
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::not_found("Artist"))?;
             (a.id.clone(), a.name.clone(), String::new(), None)
         }
         _ => return Err(ApiError::not_found("Item")),

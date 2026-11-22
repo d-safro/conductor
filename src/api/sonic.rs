@@ -15,7 +15,7 @@ use axum::{
 use serde_json::{Value, json};
 
 use super::{ApiError, Ctx, Reply, Shared, items, ok};
-use crate::auth::{self, Credentials};
+use crate::auth::Credentials;
 
 /// The recommendation calls an app may use (method, path under AudioMuse's /api/).
 const ALLOWED: &[(&str, &str)] = &[
@@ -52,13 +52,16 @@ pub async fn passthrough(State(st): State<Shared>, Path(endpoint): Path<String>,
     let pairs: Vec<(String, String)> =
         req.uri().query().map(|q| form_urlencoded::parse(q.as_bytes()).into_owned().collect()).unwrap_or_default();
     let get = |k: &str| pairs.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str());
-    let creds = Credentials { u: get("u"), p: get("p"), t: get("t"), s: get("s"), api_key: get("apiKey") };
-    if auth::login(&st.db, &st.secrets, creds).await.is_err() {
-        return json_err(StatusCode::UNAUTHORIZED, "wrong login");
-    }
     let Some(base) = st.cfg.audiomuse_url.clone() else {
         return json_err(StatusCode::NOT_FOUND, "AudioMuse-AI isn't set up on this server");
     };
+    let ip = super::request_ip(&req);
+    let creds = Credentials { u: get("u"), p: get("p"), t: get("t"), s: get("s"), api_key: get("apiKey") };
+    match super::app_login(&st, &ip, creds).await {
+        Ok(_) => {}
+        Err(None) => return json_err(StatusCode::TOO_MANY_REQUESTS, "Too many wrong passwords. Try again in a few minutes."),
+        Err(Some(_)) => return json_err(StatusCode::UNAUTHORIZED, "wrong login"),
+    }
     let rest: Vec<(String, String)> = pairs.iter().filter(|(k, _)| !AUTH_KEYS.contains(&k.as_str())).cloned().collect();
     let body =
         if method == Method::POST { to_bytes(req.into_body(), 1 << 20).await.unwrap_or_default() } else { Default::default() };

@@ -225,9 +225,7 @@ fn limited(token: &str, ip: &str, n: usize) -> bool {
     hits.retain(|t| now - t < 60_000);
     hits.push(now);
     let over = hits.len() > n;
-    if g.len() > 2000 {
-        g.retain(|_, v| v.last().is_some_and(|t| now - t < 60_000));
-    }
+    crate::jam::trim_hits(&mut g, now, 2000);
     over
 }
 
@@ -265,6 +263,10 @@ async fn state(
     h: HeaderMap,
     Path(token): Path<String>,
 ) -> Response {
+    // a link that can't be one is turned away before it's counted (or kept in memory)
+    if !token_ok(&token) {
+        return gone();
+    }
     if limited(&token, &crate::jam::client_ip(&h, peer), 30) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
@@ -309,6 +311,9 @@ async fn stream(
     Path((token, n)): Path<(String, usize)>,
     req: Request,
 ) -> Response {
+    if !token_ok(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     // a player asks for a song in a few pieces (seeking): generous, but not a firehose
     if limited(&format!("{token}/stream"), &crate::jam::client_ip(req.headers(), peer), 120) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();

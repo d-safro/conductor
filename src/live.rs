@@ -15,6 +15,10 @@ pub const PAIR_SECS: i64 = 300;
 pub const MAX_PAIRS: usize = 30;
 /// Sign-in codes waiting from one address: enough to reopen the dialog a few times, too few to crowd others out.
 pub const MAX_PAIRS_PER_IP: usize = 5;
+/// Devices one account keeps (a new one past this drops the one heard from longest ago), and the commands waiting
+/// for one device, in bytes.
+pub const MAX_DEVICES: usize = 20;
+pub const MAX_CMD_BYTES: usize = 512 * 1024;
 pub const JAM_ONLINE_SECS: i64 = 60;
 pub const JAM_GUEST_SECS: i64 = 120;
 

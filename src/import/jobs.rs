@@ -161,10 +161,16 @@ pub const MAX_WAITING: i64 = 5;
 
 /// Refused when the user already has `MAX_WAITING` imports waiting.
 pub async fn room_for_another(st: &AppState, user: &str) -> Result<()> {
+    room_besides(st, user, 0).await
+}
+
+/// Like `room_for_another`, with `others` more on their way (uploads still arriving).
+pub async fn room_besides(st: &AppState, user: &str, others: i64) -> Result<()> {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batch WHERE user_id = ? AND status IN ('reading', 'preview')")
         .bind(user)
         .fetch_one(&st.db)
         .await?;
+    let n = n + others;
     if n >= MAX_WAITING {
         bail!("{n} imports are waiting already: start or discard some first");
     }

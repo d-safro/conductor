@@ -612,7 +612,7 @@ pub async fn run(
     }
 
     // playlists, with pictures copied into our data folder
-    let pics = cfg.data_dir.join("playlist-images");
+    let pics = cfg.playlist_images_dir();
     for r in
         sqlx::query("SELECT id, name, comment, public, owner_id, rules, uploaded_image, created_at, updated_at FROM playlist")
             .fetch_all(&nd)
@@ -623,11 +623,11 @@ pub async fn run(
         let mut image = None;
         if let (Some(dir), Some(file)) = (artwork, r.get::<Option<String>, _>("uploaded_image").filter(|f| !f.is_empty())) {
             let src = dir.join("playlist").join(&file);
-            if src.is_file() {
+            let name = file.rsplit(['/', '\\']).next().unwrap_or("").to_string();
+            if src.is_file() && !name.is_empty() && name != ".." {
                 std::fs::create_dir_all(&pics)?;
-                let dst = pics.join(&file);
-                std::fs::copy(&src, &dst)?;
-                image = Some(dst.to_string_lossy().to_string());
+                std::fs::copy(&src, pics.join(&name))?;
+                image = Some(name); // the file name only: the data folder may move
                 rep.playlist_pictures += 1;
             }
         }

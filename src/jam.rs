@@ -7,7 +7,7 @@
 //!   POST /jam/<token>/add | move | remove | skip        (JSON body, becomes a command the app picks up)
 //!   /jam/pl/...: collaborative playlists (`collab`)
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use crate::{
     api::{AppState, Shared, media},
     db::{self, now_ms},
+    live,
 };
 
 const PAGE: &str = include_str!("../web/jam/index.html");
@@ -103,7 +104,8 @@ fn exists(st: &AppState, token: &str) -> bool {
 
 /// Who's asking, for the rate limits. X-Forwarded-For counts only when the connection comes from a proxy on this
 /// computer (Tailscale Funnel, Caddy…), and then only its last address: the one that proxy added. The ones before it
-/// are whatever the guest sent, so a guest could otherwise be someone new on every request.
+/// are whatever the guest sent, so a guest could otherwise be someone new on every request. Behind a proxy on
+/// another computer the header isn't believed: everyone has the proxy's address, and shares its limits.
 pub fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
     if !peer.ip().is_loopback() {
         return peer.ip().to_string();
@@ -127,11 +129,29 @@ fn limited(st: &AppState, token: &str, ip: &str, n: usize) -> bool {
     hits.retain(|t| now - t < 60_000);
     hits.push(now);
     let over = hits.len() > n;
-    if j.hits.len() > 500 {
-        j.hits.retain(|_, v| v.last().is_some_and(|t| now - t < 60_000));
-    }
+    trim_hits(&mut j.hits, now, 500);
     over
 }
+
+/// Keeps a table of requests a minute to about `cap` entries: past it, those not heard from in a minute go, then
+/// the ones heard from longest ago (so many made-up addresses can't fill the memory).
+pub(crate) fn trim_hits<K: Clone + Eq + std::hash::Hash>(m: &mut HashMap<K, Vec<i64>>, now: i64, cap: usize) {
+    if m.len() <= cap {
+        return;
+    }
+    m.retain(|_, v| v.last().is_some_and(|t| now - t < 60_000));
+    if m.len() > cap {
+        let mut by_age: Vec<(i64, K)> = m.iter().map(|(k, v)| (v.last().copied().unwrap_or(0), k.clone())).collect();
+        by_age.sort_by_key(|x| x.0);
+        let extra = m.len() - cap / 2;
+        for (_, k) in by_age.into_iter().take(extra) {
+            m.remove(&k);
+        }
+    }
+}
+
+/// Guests one Jam keeps count of.
+const MAX_GUESTS: usize = 1000;
 
 async fn page(State(st): State<Shared>, Path(token): Path<String>) -> Response {
     if !token_ok(&token) {
@@ -156,15 +176,32 @@ struct StateQ {
     n: String,
 }
 
-async fn state(State(st): State<Shared>, Path(token): Path<String>, Query(q): Query<StateQ>) -> Response {
+async fn state(
+    State(st): State<Shared>,
+    Path(token): Path<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    h: HeaderMap,
+    Query(q): Query<StateQ>,
+) -> Response {
+    if !exists(&st, &token) {
+        return err(StatusCode::GONE, "This Jam has ended");
+    }
+    // the page asks every 2.5 s; generous, for a party of guests behind one address
+    if limited(&st, &token, &format!("{} state", client_ip(&h, peer)), 600) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Slow down a little");
+    }
     let now = now_ms();
     let mut g = st.live.lock();
-    let Some(j) = g.jams.get_mut(&token).filter(|_| token_ok(&token)) else { return err(StatusCode::GONE, "This Jam has ended") };
+    let Some(j) = g.jams.get_mut(&token) else { return err(StatusCode::GONE, "This Jam has ended") };
     if !q.g.is_empty() {
-        j.guests.insert(q.g.chars().take(40).collect(), (q.n.chars().take(30).collect(), now));
-    }
-    if j.guests.len() > 1000 {
-        j.guests.retain(|_, (_, t)| now - *t < 120_000);
+        let id: String = q.g.chars().take(40).collect();
+        if !j.guests.contains_key(&id) && j.guests.len() >= MAX_GUESTS {
+            j.guests.retain(|_, (_, t)| now - *t < live::JAM_GUEST_SECS * 1000);
+        }
+        // past the limit a new guest still sees the Jam, just isn't counted
+        if j.guests.contains_key(&id) || j.guests.len() < MAX_GUESTS {
+            j.guests.insert(id, (q.n.chars().take(30).collect(), now));
+        }
     }
     (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(j.public(now))).into_response()
 }
@@ -332,8 +369,21 @@ pub async fn serve(st: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::client_ip;
+    use super::{client_ip, trim_hits};
     use axum::http::HeaderMap;
+
+    #[test]
+    fn rate_tables_stay_small() {
+        let now = 1_000_000;
+        let mut m: std::collections::HashMap<String, Vec<i64>> = Default::default();
+        for i in 0..5000 {
+            m.insert(format!("a{i}"), vec![now - 1000 + i / 10]);
+            trim_hits(&mut m, now, 500);
+            assert!(m.len() <= 501);
+        }
+        assert!(m.contains_key("a4999"), "the latest stay");
+        assert!(!m.contains_key("a0"), "the oldest go");
+    }
 
     #[test]
     fn who_is_asking() {

@@ -1,6 +1,9 @@
 //! Settings: `config.toml` (path from `--config` or `CONDUCTOR_CONFIG`), then `CONDUCTOR_*` environment variables.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -613,10 +616,51 @@ impl Config {
     pub fn cache_dir(&self) -> PathBuf {
         self.data_dir.join("cache")
     }
+
+    /// Playlists' own pictures. A playlist keeps only its picture's file name, so the pictures stay found when the
+    /// data folder moves (the rename from Maestro, a backup restored elsewhere).
+    pub fn playlist_images_dir(&self) -> PathBuf {
+        self.data_dir.join("playlist-images")
+    }
+
+    /// The picture a playlist keeps (`image_path`), in this data folder. Older versions kept the whole path: the
+    /// file of that name here, else that path as it was.
+    pub fn playlist_image(&self, stored: &str) -> PathBuf {
+        let here = self.own_playlist_image(stored);
+        if here.as_ref().is_some_and(|p| p.is_file()) || !Path::new(stored).is_absolute() {
+            return here.unwrap_or_else(|| self.playlist_images_dir());
+        }
+        PathBuf::from(stored)
+    }
+
+    /// The file of that name in this data folder's pictures (None for no name), the one to remove when the picture
+    /// is changed: never a file outside the data folder.
+    pub fn own_playlist_image(&self, stored: &str) -> Option<PathBuf> {
+        let name = stored.rsplit(['/', '\\']).next().filter(|n| !n.is_empty() && *n != "." && *n != "..")?;
+        Some(self.playlist_images_dir().join(name))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn playlist_pictures_follow_the_data_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = super::Config { data_dir: dir.path().join("conductor"), ..Default::default() };
+        std::fs::create_dir_all(cfg.playlist_images_dir()).unwrap();
+        std::fs::write(cfg.playlist_images_dir().join("p1_ab.jpg"), b"x").unwrap();
+        // as stored now: a file name
+        assert_eq!(cfg.playlist_image("p1_ab.jpg"), cfg.playlist_images_dir().join("p1_ab.jpg"));
+        // as an older version stored it, under the folder's old name
+        let old = dir.path().join("maestro").join("playlist-images").join("p1_ab.jpg");
+        assert_eq!(cfg.playlist_image(&old.to_string_lossy()), cfg.playlist_images_dir().join("p1_ab.jpg"));
+        // an old whole path to a file that isn't here: that path, as before
+        let elsewhere = dir.path().join("elsewhere.jpg");
+        assert_eq!(cfg.playlist_image(&elsewhere.to_string_lossy()), elsewhere);
+        assert_eq!(cfg.own_playlist_image(&elsewhere.to_string_lossy()), Some(cfg.playlist_images_dir().join("elsewhere.jpg")));
+        assert_eq!(cfg.own_playlist_image("/x/.."), None);
+    }
+
     use super::*;
 
     #[test]
