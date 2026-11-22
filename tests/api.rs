@@ -2548,6 +2548,31 @@ async fn import_a_spotify_export() {
 }
 
 #[tokio::test]
+async fn old_uploads_go_but_what_was_sent_elsewhere_stays() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let dir = s.st.cfg.data_dir.join("imports");
+    std::fs::create_dir_all(&dir).unwrap();
+    let two_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    let old = |name: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, b"x").unwrap();
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(two_days_ago).unwrap();
+        p
+    };
+    let upload = old("0123456789abcdef0123456789abcdef.zip");
+    let state = old("sent-httpnavidromelocal-me.json");
+    let fresh = dir.join("fedcba9876543210fedcba9876543210.json");
+    std::fs::write(&fresh, b"x").unwrap();
+    conductor::import::jobs::tidy_uploads(&s.st).await;
+    assert!(!upload.exists(), "an upload left behind for a day goes");
+    assert!(fresh.exists(), "a new one stays");
+    assert!(state.exists(), "import --to's record of what it sent stays (it's needed to run it again, and to undo)");
+}
+
+#[tokio::test]
 async fn import_into_any_subsonic_server() {
     if !have_ffmpeg() {
         return;

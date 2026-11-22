@@ -74,11 +74,22 @@ pub async fn save_upload_stream(st: &AppState, hint: &str, body: axum::body::Bod
     Ok(name)
 }
 
-/// Uploads left behind (never imported) go after a day.
+/// A file `save_upload` made: a random id and an extension.
+fn is_upload_name(name: &str) -> bool {
+    name.split_once('.').is_some_and(|(id, ext)| {
+        id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) && (1..=5).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
+}
+
+/// Uploads left behind (never imported) go after a day. Only uploads: the folder also holds what `import --to`
+/// sent to another server (sent-*.json), which has to stay for running it again and for undo.
 pub async fn tidy_uploads(st: &AppState) {
     let dir = super::upload_dir(&st.cfg.data_dir);
     let Ok(mut rd) = tokio::fs::read_dir(&dir).await else { return };
     while let Ok(Some(e)) = rd.next_entry().await {
+        if !is_upload_name(&e.file_name().to_string_lossy()) {
+            continue;
+        }
         let old = e.metadata().await.ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() > KEEP_UPLOADS_SECS);
         if old {
             let _ = tokio::fs::remove_file(e.path()).await;
