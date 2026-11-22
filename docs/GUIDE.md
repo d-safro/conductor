@@ -40,8 +40,8 @@ should never write there (then also `-e CONDUCTOR_READ_ONLY=1`).
 ## Set it up: Prelude
 
 `conductor setup` asks about each part and checks every answer: your music folders, the address, the first admin,
-downloads (optional), a VPN for them, the services around Conductor, bringing your history in, and running it as a
-service. Run it again any time to change one part (`conductor setup services`, `conductor setup vpn`, …); the current
+downloads (optional), a VPN for them, the services around Conductor, how it's reached from outside, bringing your
+history in, and running it as a service. Run it again any time to change one part (`conductor setup services`, `conductor setup vpn`, …); the current
 answers are the defaults. Keys and passwords go to `secrets.toml`, which only you can read.
 
 For the services it can set up for you (the downloader, Lidarr, AudioMuse-AI, Pitch, Metronome and, only if you choose
@@ -63,8 +63,25 @@ Use the server address (`http://<server>:4533`), your user name and password.
 The safest way is a private network such as **Tailscale**: install it on the server and your phone, and use the
 server's Tailscale address. Nothing is open to the internet.
 
-For a public address, put Conductor behind a reverse proxy **on the same computer** (so the proxy's
-`X-Forwarded-For` is trusted for rate limits). With Caddy:
+`conductor setup domain` sets it up for you, one of three ways:
+
+- **Your own domain, with HTTPS**: Caddy, in Prelude's services folder (`caddy.yml`, `caddy/Caddyfile`), gets the
+  certificate from Let's Encrypt and sends `https://<domain>` to Conductor and `/jam/…` to the Jam listener (or a
+  second name to it). Prelude checks the name points at this computer's public address; behind a router, forward
+  ports 80 and 443 to it. It sets `jam_public_url`, and offers `listen = "127.0.0.1:…"` so only Caddy reaches
+  Conductor. (`--domain NAME [--jam-domain NAME] [--domain-email E]` for `--yes` runs.)
+- **A Cloudflare Tunnel** (no ports to open): paste the tunnel's token (kept in `tunnel.env`, readable only by you);
+  cloudflared runs in the same folder (`tunnel.yml`). In Cloudflare's dashboard, give the tunnel a public hostname
+  to `http://127.0.0.1:4533`, and the same name with the path `^/jam/` to `http://127.0.0.1:4535`.
+  (`--tunnel-token TOKEN` or `CONDUCTOR_TUNNEL_TOKEN`, `--tunnel-host NAME`.)
+- **Tailscale Funnel**: it shows (and, with a yes, runs) `tailscale funnel --bg` for the Jam listener and
+  `tailscale serve --bg --https=8443` for the apps, which stay on your tailnet, and sets `jam_public_url` to this
+  computer's `https://<machine>.<tailnet>.ts.net` name. (`--funnel`.)
+
+`--no-domain` takes Caddy or the tunnel out again. Start what it wrote with `docker compose up -d` in the folder.
+
+By hand: put Conductor behind a reverse proxy **on the same computer** (so the proxy's `X-Forwarded-For` is trusted
+for rate limits). With Caddy:
 
 ```
 music.example.com {

@@ -10,6 +10,8 @@
 //!   vpn        downloads through a VPN: the container inside one (gluetun) / your slskd already behind one / a
 //!              proxy / none; the kill switch
 //!   services   Lidarr, ListenBrainz, Last.fm, AudioMuse, Pitch, Metronome, Ensemble's public address, AI (off)
+//!   domain     how people reach it from outside: your own domain with HTTPS (Caddy, set up for you), a Cloudflare
+//!              Tunnel, Tailscale Funnel, or not now
 //!   import     Navidrome or music-lookup moving over; Transpose for an export (a preview, then a yes)
 //!   service    run it as a service (systemd, the Windows service, or Docker), then a first scan
 //!
@@ -35,15 +37,16 @@ use toml::Table;
 use crate::config::{self, Config, SECRET_KEYS};
 use ui::Ui;
 
-pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", "services", "import", "service"];
+pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", "services", "domain", "import", "service"];
 
 const VALUE_FLAGS: &[&str] = &[
     "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "docker", "vpn", "vpn-check-url", "vpn-check-key",
     "wg-conf", "vpn-provider", "vpn-key", "vpn-address", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
     "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
-    "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service",
+    "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service", "domain", "jam-domain", "domain-email", "tunnel-token", "tunnel-host",
 ];
-const SWITCHES: &[&str] = &["yes", "no-downloads", "require-vpn", "no-require-vpn", "port-forwarding", "start", "pull-model", "ai", "scan", "proxy-metadata"];
+const SWITCHES: &[&str] =
+    &["yes", "no-downloads", "require-vpn", "no-require-vpn", "port-forwarding", "start", "pull-model", "ai", "scan", "proxy-metadata", "funnel", "no-domain"];
 
 /// `conductor setup [SECTION] [--yes] [--flag value …]`.
 #[derive(Debug, Default)]
@@ -190,7 +193,7 @@ struct Downloader {
 
 pub const HELP: &str = "conductor setup [PART] [--yes] [settings]   (also: conductor prelude)
 
-Parts: music, server, admin, downloads, vpn, services, import, service (default: all).
+Parts: music, server, admin, downloads, vpn, services, domain, import, service (default: all).
 --yes asks nothing: the settings below, then the current ones, are the answers.
 
   --music PATH (again for more)  --sentinel NAME  --data DIR  --listen ADDR:PORT
@@ -209,11 +212,15 @@ Parts: music, server, admin, downloads, vpn, services, import, service (default:
         --pull-model also fetches the AI model, a few GB)
   --lidarr-url --lidarr-key  --listenbrainz-token  --lastfm-key  --audiomuse-url --audiomuse-token
   --songid-url  --mixinfo-dir  --jam-public-url  --ai --ollama-url --dj-voice-url
+  --domain NAME [--jam-domain NAME] [--domain-email E]   (HTTPS on your domain: Caddy, set up for you)
+        or --tunnel-token TOKEN (or CONDUCTOR_TUNNEL_TOKEN) --tunnel-host NAME   (a Cloudflare Tunnel)
+        or --funnel (Tailscale Funnel)   or --no-domain (takes Caddy or the tunnel out)
   --import-navidrome DB  --import-music-lookup DIR  --transpose EXPORT
   --service systemd-user|systemd-system|windows|docker|none  --scan
 
 Secrets can come from the environment instead of the command line: CONDUCTOR_SLSKD_API_KEY, CONDUCTOR_VPN_CHECK_KEY,
-CONDUCTOR_PROXY, CONDUCTOR_LIDARR_API_KEY, CONDUCTOR_LISTENBRAINZ_TOKEN, CONDUCTOR_LASTFM_API_KEY, CONDUCTOR_AUDIOMUSE_TOKEN.";
+CONDUCTOR_PROXY, CONDUCTOR_LIDARR_API_KEY, CONDUCTOR_LISTENBRAINZ_TOKEN, CONDUCTOR_LASTFM_API_KEY, CONDUCTOR_AUDIOMUSE_TOKEN,
+CONDUCTOR_TUNNEL_TOKEN.";
 
 /// `conductor setup …` in a terminal (or with --yes, without questions). Returns the settings file.
 pub async fn cli(config_path: Option<PathBuf>, args: &[&str]) -> Result<PathBuf> {
@@ -265,6 +272,7 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
             "downloads" => w.downloads().await?,
             "vpn" => w.vpn().await?,
             "services" => w.services().await?,
+            "domain" => w.domain().await?,
             "import" => {
                 w.d.save()?;
                 w.import().await?
@@ -869,8 +877,7 @@ impl Wizard<'_> {
     fn conductor_from_docker(&self) -> (String, bool) {
         let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
         let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
-        let local_only = listen.starts_with("127.") || listen.starts_with("[::1]") || listen.starts_with("localhost");
-        (format!("http://host.docker.internal:{port}"), !local_only)
+        (format!("http://host.docker.internal:{port}"), !local_only(&listen))
     }
 
     async fn services(&mut self) -> Result<()> {
@@ -1172,9 +1179,233 @@ impl Wizard<'_> {
         self.ui.say(&if ok { format!("  ✓ {what} answers") } else { format!("  ✗ {what} doesn't answer (saved anyway)") });
     }
 
-    // ── 7. import ──
+    // ── 7. domain ──
+    /// Conductor and its Jam listener as a proxy on this computer reaches them.
+    fn upstreams(&mut self) -> (String, String) {
+        if self.d.cfg.get("jam_listen").and_then(|v| v.as_str()) == Some("") {
+            self.d.set("jam_listen", "127.0.0.1:4535");
+            self.ui.say("  (the Jam listener was off; it's on again at 127.0.0.1:4535, and serves only Jam and share pages)");
+        }
+        let app = local_addr(&self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into()));
+        let jam = local_addr(&self.d.str("jam_listen").unwrap_or_else(|| Config::default().jam_listen));
+        (app, jam)
+    }
+
+    async fn domain(&mut self) -> Result<()> {
+        self.ui.say("\n7. Reach Conductor from outside your home (optional)");
+        let dir = stack::dir(&self.d.path);
+        let (caddy, tunnel) = (stack::has_part(&dir, "caddy"), stack::has_part(&dir, "tunnel"));
+        let def = if self.f.get("domain").is_some() {
+            0
+        } else if self.f.get("tunnel-host").is_some() || self.f.secret("tunnel-token", "TUNNEL_TOKEN").is_some() {
+            1
+        } else if self.f.has("funnel") {
+            2
+        } else if self.f.has("no-domain") {
+            3
+        } else if caddy {
+            0
+        } else if tunnel {
+            1
+        } else {
+            3
+        };
+        let c = self.ui.choose(
+            "How do people reach it from outside?",
+            &[
+                "My own domain, with HTTPS (Caddy, set up for me)",
+                "A Cloudflare Tunnel (no ports to open)",
+                "Tailscale Funnel (Jam and share links public; the apps on your tailnet)",
+                "Not now",
+            ],
+            def,
+        );
+        let made = match c {
+            0 => self.domain_caddy(&dir).await?,
+            1 => self.domain_tunnel(&dir)?,
+            2 => {
+                self.domain_funnel();
+                false
+            }
+            _ => {
+                for (part, name) in [("caddy", "Caddy"), ("tunnel", "the Cloudflare Tunnel")] {
+                    if stack::has_part(&dir, part) && self.ui.yes(&format!("Take {name} out?"), self.f.has("no-domain")) {
+                        stack::remove_part(&dir, part)?;
+                        self.ui.say(&format!("  ✓ {name} is out (its container goes at the next docker compose up); the public address for Jam stays until you change it"));
+                    }
+                }
+                false
+            }
+        };
+        if !made {
+            return Ok(());
+        }
+        if gluetun::has_docker() {
+            match stack::validate(&dir) {
+                Ok(()) => self.ui.say("  ✓ docker compose accepts it"),
+                Err(e) => self.ui.say(&format!("  ✗ {e:#}")),
+            }
+        }
+        self.d.save()?;
+        if self.ui.yes("Start it now (docker compose up -d)?", self.f.has("start")) {
+            match stack::up(&dir) {
+                Ok(()) => self.ui.say("  ✓ started (restart Conductor too if its address changed)"),
+                Err(e) => self.ui.say(&format!("  ✗ {e:#}")),
+            }
+        } else {
+            self.ui.say(&format!("  Start it later: cd {} && docker compose up -d", dir.display()));
+        }
+        Ok(())
+    }
+
+    async fn domain_caddy(&mut self, dir: &Path) -> Result<bool> {
+        let (cur, cur_jam, cur_email) = stack::caddy_current(dir);
+        let raw = self.ask_or("domain", "Your domain (e.g. music.example.com)", cur, "");
+        let Some(domain) = clean_domain(&raw) else {
+            self.ui.say(&format!("  ✗ \"{raw}\" isn't a domain name; nothing changed"));
+            return Ok(false);
+        };
+        let jam = self.ask_or("jam-domain", "A second name for Jam guests and share links (Enter: the same one, at /jam/)", cur_jam, "");
+        let jam = match (jam.is_empty(), clean_domain(&jam)) {
+            (true, _) => None,
+            (false, Some(j)) => Some(j).filter(|j| *j != domain),
+            (false, None) => {
+                self.ui.say(&format!("  ✗ \"{jam}\" isn't a domain name: Jam uses {domain}/jam/"));
+                None
+            }
+        };
+        let email = self.ask_or("domain-email", "Your email, for Let's Encrypt's notices about the certificate (Enter: none)", cur_email, "");
+        for name in std::iter::once(&domain).chain(jam.as_ref()) {
+            self.check_dns(name).await;
+        }
+        self.ui.say("    People reach it on ports 80 and 443: behind a router, forward those two to this computer.");
+        let (app, jam_at) = self.upstreams();
+        stack::caddy(dir, &stack::Caddy { domain: &domain, jam_domain: jam.as_deref(), email: Some(email.as_str()).filter(|e| !e.is_empty()), app: &app, jam: &jam_at })?;
+        if stack::has_part(dir, "tunnel") {
+            stack::remove_part(dir, "tunnel")?;
+            self.ui.say("  (the Cloudflare Tunnel is out: Caddy does it now)");
+        }
+        let public = format!("https://{}", jam.as_deref().unwrap_or(&domain));
+        self.d.set("jam_public_url", public.clone());
+        self.ui.say(&format!("  ✓ written: {} (caddy.yml; caddy/Caddyfile: https://{domain} → Conductor, /jam/ → Jam)", dir.display()));
+        self.ui.say(&format!("  ✓ Jam guests and share links: {public}"));
+        if cfg!(windows) {
+            self.ui.say(&format!("    On Windows, if Docker's host network doesn't reach Conductor, Caddy for Windows runs the same file: caddy run --config {}", dir.join("caddy/Caddyfile").display()));
+        }
+        // with Caddy in front, only it needs to reach Conductor
+        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
+        if !local_only(&listen) {
+            let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
+            let docker = stack::has_part(dir, "audiomuse");
+            if docker {
+                self.ui.say("    (AudioMuse, in Docker, reaches Conductor over this computer's address: it needs more than 127.0.0.1)");
+            }
+            let q = format!("Let only Caddy reach Conductor (listen on 127.0.0.1:{port}; your apps use https://{domain} then, at home too)?");
+            if self.ui.yes(&q, !docker && self.f.get("listen").is_none()) {
+                self.d.set("listen", format!("127.0.0.1:{port}"));
+                self.ui.say(&format!("  ✓ Conductor listens on 127.0.0.1:{port} (restart it for that)"));
+            }
+        }
+        Ok(true)
+    }
+
+    /// The name points at this computer's public address (as vpn_ip_url sees it). Neither address is shown.
+    async fn check_dns(&mut self, name: &str) {
+        let found = tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::lookup_host((name.to_string(), 443))).await;
+        let addrs: Vec<std::net::IpAddr> = match found {
+            Ok(Ok(a)) => a.map(|s| s.ip()).collect(),
+            _ => vec![],
+        };
+        if addrs.is_empty() {
+            self.ui.say(&format!("  ✗ {name} doesn't point anywhere yet: give it a DNS record (A) with this computer's public address. Caddy gets the certificate once it does."));
+            return;
+        }
+        let url = self.d.str("vpn_ip_url").unwrap_or_else(|| Config::default().vpn_ip_url);
+        let mine: Option<std::net::IpAddr> = match http().get(&url).send().await {
+            Ok(r) => r.json::<Value>().await.ok().and_then(|v| v["ip"].as_str().and_then(|s| s.parse().ok())),
+            Err(_) => None,
+        };
+        match mine {
+            Some(ip) if addrs.contains(&ip) => self.ui.say(&format!("  ✓ {name} points at this computer's public address")),
+            Some(_) => self.ui.say(&format!(
+                "  ! {name} doesn't point at this computer's public address: check its DNS record (behind a router, the router's address, with ports 80 and 443 forwarded here)"
+            )),
+            None => self.ui.say(&format!("  ? {name} points somewhere; this computer's public address couldn't be checked")),
+        }
+    }
+
+    fn domain_tunnel(&mut self, dir: &Path) -> Result<bool> {
+        self.ui.say("  cloudflared, in its own container, connects out to Cloudflare: no port to open on your router.");
+        self.ui.say("  Make the tunnel in Cloudflare's dashboard (Zero Trust › Networks › Tunnels › Create a tunnel, Cloudflared) and copy its token.");
+        let cur = stack::env_value(&dir.join("tunnel.env"), "TUNNEL_TOKEN");
+        let token = self.secret_or("tunnel-token", "TUNNEL_TOKEN", "The tunnel's token (the long text after --token)", cur);
+        // the whole command pasted: its last word is the token
+        let token = token.split_whitespace().last().unwrap_or("").to_string();
+        if token.is_empty() {
+            self.ui.say("  ✗ no token: nothing changed");
+            return Ok(false);
+        }
+        stack::tunnel(dir, &token)?;
+        if stack::has_part(dir, "caddy") {
+            stack::remove_part(dir, "caddy")?;
+            self.ui.say("  (Caddy is out: the tunnel does it now)");
+        }
+        let (app, jam) = self.upstreams();
+        self.ui.say(&format!("  ✓ written: {} (tunnel.yml; the token in tunnel.env, readable only by you)", dir.display()));
+        self.ui.say("  In the tunnel's Public Hostname tab, add:");
+        self.ui.say(&format!("    your name, path ^/jam/  →  http://{jam}   (Jam guests and share links; first)"));
+        self.ui.say(&format!("    the same name           →  http://{app}   (the apps)"));
+        let cur_host = self.d.str("jam_public_url").map(|u| u.trim_start_matches("https://").trim_end_matches('/').to_string());
+        let host = self.ask_or("tunnel-host", "That public hostname (e.g. music.example.com)", cur_host, "");
+        match clean_domain(&host) {
+            Some(h) => {
+                self.d.set("jam_public_url", format!("https://{h}"));
+                self.ui.say(&format!("  ✓ Jam guests and share links: https://{h}"));
+            }
+            None if host.is_empty() => self.ui.say("  ! no hostname yet: set it later (conductor setup domain)"),
+            None => self.ui.say(&format!("  ✗ \"{host}\" isn't a hostname: set it later (conductor setup domain)")),
+        }
+        Ok(true)
+    }
+
+    fn domain_funnel(&mut self) {
+        let run = |args: &[&str]| std::process::Command::new("tailscale").args(args).output().ok().filter(|o| o.status.success());
+        if run(&["version"]).is_none() {
+            self.ui.say("  ✗ Tailscale isn't on this computer: install it (tailscale.com/download), sign in (tailscale up), then run conductor setup domain");
+            return;
+        }
+        let name = run(&["status", "--json"])
+            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+            .and_then(|v| v["Self"]["DNSName"].as_str().map(|s| s.trim_end_matches('.').to_string()))
+            .filter(|s| !s.is_empty());
+        let Some(name) = name else {
+            self.ui.say("  ✗ Tailscale isn't signed in, so this computer has no name yet: tailscale up, then conductor setup domain");
+            return;
+        };
+        let (app, jam) = self.upstreams();
+        self.ui.say(&format!("  Funnel puts the Jam listener (it serves nothing but Jam and share pages) on the internet at https://{name};"));
+        self.ui.say(&format!("  the apps stay on your tailnet, at https://{name}:8443. These two do it (they stay set after a restart):"));
+        let jam_target = format!("http://{jam}");
+        let app_target = format!("http://{app}");
+        let cmds: [Vec<&str>; 2] = [vec!["tailscale", "funnel", "--bg", &jam_target], vec!["tailscale", "serve", "--bg", "--https=8443", &app_target]];
+        for c in &cmds {
+            self.ui.say(&format!("    {}", c.join(" ")));
+        }
+        if self.ui.yes("Run them now?", self.f.has("start")) {
+            for c in &cmds {
+                match run(&c[1..]) {
+                    Some(_) => self.ui.say(&format!("  ✓ {}", c.join(" "))),
+                    None => self.ui.say(&format!("  ✗ {} didn't work (as root, or after: sudo tailscale set --operator=$USER)", c.join(" "))),
+                }
+            }
+        }
+        self.d.set("jam_public_url", format!("https://{name}"));
+        self.ui.say(&format!("  ✓ Jam guests and share links: https://{name}"));
+    }
+
+    // ── 8. import ──
     async fn import(&mut self) -> Result<()> {
-        self.ui.say("\n7. Bring your music's history in");
+        self.ui.say("\n8. Bring your music's history in");
         let nd = self.ask_or("import-navidrome", "Moving from Navidrome? A copy of its navidrome.db (Enter: skip)", None, "");
         let ml = self.ask_or("import-music-lookup", "music-lookup's data folder (Enter: skip)", None, "");
         let tp = self.ask_or("transpose", "Transpose: an export from Spotify, Apple Music, YouTube Music… (Enter: skip)", None, "");
@@ -1234,7 +1465,7 @@ impl Wizard<'_> {
 
     // ── 8. service ──
     async fn service(&mut self) -> Result<()> {
-        self.ui.say("\n8. Running Conductor");
+        self.ui.say("\n9. Running Conductor");
         let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("conductor"));
         let opts: Vec<&str> = if cfg!(windows) {
             vec!["As a Windows service (starts with Windows)", "Not now"]
@@ -1283,6 +1514,7 @@ impl Wizard<'_> {
             format!("Address: {}", self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into())),
             format!("Stagehand (downloads): {}", if set(&self.d, "slskd_url") { "on" } else { "off" }),
             format!("VPN for downloads: {vpn}{}", if self.d.bool("downloads_require_vpn") == Some(true) { ", downloads pause while it's down" } else { "" }),
+            format!("From outside (Jam, share links): {}", self.d.str("jam_public_url").unwrap_or_else(|| "not set up".into())),
             format!(
                 "Also: {}",
                 [("lidarr_url", "Lidarr"), ("listenbrainz_token", "ListenBrainz"), ("audiomuse_url", "AudioMuse"), ("songid_url", "Pitch"), ("mixinfo_dir", "Metronome"), ("jam_public_url", "Ensemble"), ("ollama_url", "AI")]
@@ -1299,6 +1531,26 @@ impl Wizard<'_> {
         }
         self.ui.say("  Change any part later: conductor setup (or conductor setup vpn, …)");
     }
+}
+
+/// Where a proxy on this computer reaches a listener: "0.0.0.0:4533" (every address) is 127.0.0.1:4533.
+pub fn local_addr(listen: &str) -> String {
+    match listen.rsplit_once(':') {
+        Some(("0.0.0.0" | "[::]" | "" | "localhost", p)) => format!("127.0.0.1:{p}"),
+        Some(_) => listen.to_string(),
+        None => format!("127.0.0.1:{listen}"),
+    }
+}
+
+fn local_only(listen: &str) -> bool {
+    listen.starts_with("127.") || listen.starts_with("[::1]") || listen.starts_with("localhost")
+}
+
+/// A domain name as typed ("https://Music.Example.com/" is music.example.com), or None.
+pub fn clean_domain(s: &str) -> Option<String> {
+    let s = s.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_lowercase();
+    let label = |l: &str| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    (s.contains('.') && s.split('.').all(label)).then_some(s)
 }
 
 /// The music folder: there, readable, and how many songs (counted up to a million).
@@ -1330,3 +1582,20 @@ pub async fn slskd_check(url: &str, key: &str) -> Result<String> {
     Ok(format!("version {}, {}", v["version"]["current"].as_str().or(v["version"].as_str()).unwrap_or("?"), if on { "on Soulseek" } else { "not on Soulseek right now" }))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domain_names_and_addresses() {
+        assert_eq!(clean_domain(" https://Music.Example.com/ ").as_deref(), Some("music.example.com"));
+        for bad in ["", "localhost", "music example.com", "-a.example.com", "a..example.com", "example.com:443"] {
+            assert_eq!(clean_domain(bad), None, "{bad}");
+        }
+        assert_eq!(local_addr("0.0.0.0:4533"), "127.0.0.1:4533");
+        assert_eq!(local_addr("[::]:4533"), "127.0.0.1:4533");
+        assert_eq!(local_addr("192.168.1.5:4533"), "192.168.1.5:4533");
+        assert_eq!(local_addr("127.0.0.1:4535"), "127.0.0.1:4535");
+    }
+}

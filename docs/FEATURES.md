@@ -91,7 +91,12 @@ The detailed list. The [README](../README.md) has the short version.
   non-admin Conductor account); Pitch and Metronome (built on your computer from `helpers/`, seeing every music folder); and only with AI on,
   Ollama (or the one already running) and Interlude's voice. Everything listens on 127.0.0.1, on ports that don't
   clash; keys and logins are in files only you can read. `--docker lidarr,audiomuse,pitch,metronome,ai` does the
-  same for `--yes` runs.
+  same for `--yes` runs. Run again, each part keeps its port and the keys and passwords the service already holds,
+  and a downloader inside the VPN stays inside it. Pitch's memory limit follows the number of songs.
+- **On a domain** (`conductor setup domain`): your own domain with HTTPS (Caddy in the services folder, the
+  certificate from Let's Encrypt, `/jam/` or a second name to the Jam listener; it checks the name points at this
+  computer, and offers listening on 127.0.0.1 only), a Cloudflare Tunnel (no ports to open; the token in a file
+  only you can read), or Tailscale Funnel (the commands shown, run only with a yes). Each sets `jam_public_url`.
 - **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or

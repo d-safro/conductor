@@ -111,6 +111,7 @@ async fn every_step_in_a_terminal() {
             "2", &base, "the-slskd-key", p.root.join("dl").to_str().unwrap(), // my own slskd
             "1", &format!("{base}/check"), "", "y", // already behind a VPN; the kill switch
             "", "n", "n", "", "", "", "n", "n", // no other services (Enter: "No"), no AI
+            "",                                // not on a domain now
             "", "", "",                        // nothing to import
             "4", "n",                          // no service; no scan now
         ],
@@ -501,4 +502,56 @@ async fn user_add_if_missing_leaves_one_that_is_there() {
     let db = conductor::db::open(&tmp.path().join("conductor.db")).await.unwrap();
     let secrets = conductor::auth::Secrets::load_or_create(&tmp.path().join("secret.key")).unwrap();
     assert!(conductor::auth::verify_password(&db, &secrets, "me", "first-pw-1").await.unwrap().is_some(), "its password unchanged");
+}
+
+#[tokio::test]
+async fn on_a_domain_with_caddy_then_a_tunnel() {
+    let base = services().await;
+    let p = place(&base);
+    let dir = p.root.join("data/services");
+    // (a) your own domain: Caddy in front, HTTPS, Jam at /jam/
+    let out = yes(&p.config, &["--yes", "domain", "--domain", "music.invalid", "--domain-email", "me@example.com"]).await;
+    assert!(out.contains("music.invalid doesn't point anywhere yet") && out.contains("forward those two"), "{out}");
+    let main = read(&dir.join("compose.yml"));
+    assert!(main.contains("- caddy.yml"), "{main}");
+    let yml = read(&dir.join("caddy.yml"));
+    assert!(yml.contains("image: caddy:2") && yml.contains("network_mode: host") && yml.contains("./caddy/data:/data"), "{yml}");
+    let caddyfile = read(&dir.join("caddy/Caddyfile"));
+    for want in ["email me@example.com", "music.invalid {", "handle /jam/*", "reverse_proxy 127.0.0.1:4535", "reverse_proxy 127.0.0.1:4533"] {
+        assert!(caddyfile.contains(want), "{want} in {caddyfile}");
+    }
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.jam_public_url.as_deref(), c.listen.to_string()), (Some("https://music.invalid"), "127.0.0.1:4533".to_string()), "only Caddy reaches it");
+    if prelude::gluetun::has_docker() && !cfg!(windows) {
+        prelude::stack::validate(&dir).expect("docker compose accepts it");
+    }
+    // a second name for Jam; and run again with nothing given, it stays
+    yes(&p.config, &["--yes", "domain", "--domain", "music.invalid", "--jam-domain", "jam.music.invalid"]).await;
+    yes(&p.config, &["--yes", "domain"]).await;
+    let caddyfile = read(&dir.join("caddy/Caddyfile"));
+    assert!(caddyfile.contains("jam.music.invalid {") && caddyfile.contains("music.invalid {") && caddyfile.contains("email me@example.com"), "{caddyfile}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.jam_public_url.as_deref(), Some("https://jam.music.invalid"));
+
+    // (b) a Cloudflare Tunnel instead: the token only in tunnel.env
+    let token = "TunnelTokenForTestsOnly0000";
+    let out = yes(&p.config, &["--yes", "domain", "--tunnel-token", token, "--tunnel-host", "music.example.com"]).await;
+    assert!(!out.contains(token), "{out}");
+    assert!(out.contains("http://127.0.0.1:4535") && out.contains("http://127.0.0.1:4533"), "where the hostname goes: {out}");
+    let env = dir.join("tunnel.env");
+    assert!(read(&env).contains(&format!("TUNNEL_TOKEN={token}")) && private(&env));
+    for f in [p.config.clone(), p.config.with_file_name("secrets.toml"), dir.join("tunnel.yml"), dir.join("compose.yml")] {
+        assert!(!read(&f).contains(token), "the token isn't in {}", f.display());
+    }
+    let yml = read(&dir.join("tunnel.yml"));
+    assert!(yml.contains("cloudflare/cloudflared") && yml.contains("tunnel --no-autoupdate run") && yml.contains("env_file: [tunnel.env]") && yml.contains("network_mode: host"), "{yml}");
+    assert!(!dir.join("caddy.yml").exists(), "Caddy is out");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.jam_public_url.as_deref(), Some("https://music.example.com"));
+    if prelude::gluetun::has_docker() && !cfg!(windows) {
+        prelude::stack::validate(&dir).expect("docker compose accepts it");
+    }
+    // and out again
+    yes(&p.config, &["--yes", "domain", "--no-domain"]).await;
+    assert!(!dir.join("tunnel.yml").exists() && !read(&dir.join("compose.yml")).contains("tunnel"));
 }
