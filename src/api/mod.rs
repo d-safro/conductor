@@ -1,5 +1,6 @@
 //! The Subsonic / OpenSubsonic API at `/rest/<method>[.view]`, JSON or XML, GET or POST (formPost).
 
+mod bridges;
 mod browse;
 mod catalog_api;
 mod encore;
@@ -138,6 +139,8 @@ pub struct Ctx {
     pub p: Params,
     pub headers: HeaderMap,
     pub client: String,
+    /// The raw request body, for the calls that take one that isn't a form (identifySong).
+    pub body: axum::body::Bytes,
 }
 
 #[derive(Debug)]
@@ -198,11 +201,14 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("application/x-www-form-urlencoded"));
-    if req.method() == Method::POST
-        && is_form
-        && let Ok(b) = to_bytes(req.into_body(), 1 << 20).await
-    {
-        pairs.extend(form_urlencoded::parse(&b).into_owned());
+    let mut body = axum::body::Bytes::new();
+    if req.method() == Method::POST && is_form {
+        if let Ok(b) = to_bytes(req.into_body(), 1 << 20).await {
+            pairs.extend(form_urlencoded::parse(&b).into_owned());
+        }
+    } else if req.method() == Method::POST && method == "identifySong" {
+        // the body is a short recording, not a form (the login is in the query)
+        body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
     }
     let p = Params(pairs);
     let fmt = match p.get("f") {
@@ -231,7 +237,7 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         }
     };
     let client = p.get("c").unwrap_or("").to_string();
-    let ctx = Ctx { st, user, p, headers, client };
+    let ctx = Ctx { st, user, p, headers, client, body };
     let r = dispatch(&ctx, &method).await;
     render(fmt, r)
 }
@@ -266,6 +272,8 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.review", "versions": [1] },
             { "name": "encore.collabPlaylists", "versions": [1] },
             { "name": "encore.lyricsTranslation", "versions": [1] },
+            { "name": "encore.songId", "versions": [1] },
+            { "name": "encore.automix", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -327,6 +335,8 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "playlistShareEnd" => crate::collab::share_end(c).await,
         "playlistShares" => crate::collab::shares(c).await,
         "translateLyrics" => translate::translate_lyrics(c).await,
+        "identifySong" => bridges::identify_song(c).await,
+        "getMixInfo" => bridges::mix_info(c).await,
         "getFolder" => encore::folder(c).await,
         "jamStart" => encore::jam_start(c).await,
         "jamState" => encore::jam_state(c).await,

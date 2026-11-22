@@ -1583,3 +1583,92 @@ async fn lyrics_translation() {
     let r = s.ok("translateLyrics", &[("id", "song1"), ("lang", "en"), ("mode", "romanize"), ("line", "hello")]).await;
     assert_eq!(r["lyricsTranslation"]["same"], true);
 }
+
+#[tokio::test]
+async fn song_id_and_automix() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (sid, _) = stand_in(|path, _, body| match path {
+        "/identify" if body == b"RIFFfake-audio" => {
+            Some(serde_json::json!({ "path": "Alpha/First Album/02 Two.flac", "offset": 12.5, "score": 40 }))
+        }
+        "/identify" => Some(serde_json::json!({ "path": null, "score": 2 })),
+        "/status" => Some(serde_json::json!({ "songs": 3, "hashes": 100, "indexing": true })),
+        _ => None,
+    })
+    .await;
+    let mix = tempfile::tempdir().unwrap();
+    let mixdir = mix.path().to_path_buf();
+    std::fs::write(
+        mixdir.join("info.jsonl"),
+        concat!(
+            r#"{"path": "Alpha/First Album/01 One.flac", "mtime": 1, "dur": 3.0, "start": 0.1, "introEnd": 0.5, "outroStart": 2.5, "end": 2.9, "bpm": 120.0, "beat": 0.2, "endDb": -30}"#,
+            "\n",
+            r#"{"path": "The Beta Band/Second/01 Three.mp3", "error": "couldn't decode"}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let md = mixdir.clone();
+    let s = Server::start_with(move |c| {
+        c.catalog = false;
+        c.songid_url = Some(sid);
+        c.mixinfo_dir = Some(md);
+    })
+    .await;
+    let r = s.ok("search3", &[("query", "")]).await;
+    let id = |t: &str| {
+        r["searchResult3"]["song"].as_array().unwrap().iter().find(|x| x["title"] == t).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (one, two, three) = (id("One"), id("Two"), id("Three"));
+
+    let post = |body: &'static [u8]| {
+        let (h, u) = (s.http.clone(), s.url("identifySong", &[]));
+        async move {
+            let v: Value = h
+                .post(u)
+                .header("content-type", "application/octet-stream")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            v["subsonic-response"]["songIdentification"].clone()
+        }
+    };
+    let got = post(b"RIFFfake-audio").await;
+    assert_eq!(got["found"], true, "{got}");
+    assert_eq!(got["song"]["id"], two.as_str());
+    assert_eq!(got["offset"], 12.5);
+    let miss = post(b"something else").await;
+    assert_eq!(miss["found"], false);
+    assert_eq!(miss["indexing"], true);
+    assert_eq!(miss["songs"], 3);
+
+    let r = s.ok("getMixInfo", &[("id", &one), ("id", &two), ("id", &three)]).await;
+    let songs = r["mixInfo"]["song"].as_array().unwrap();
+    assert_eq!(songs.len(), 1, "only measured songs, not failed ones: {songs:?}");
+    assert_eq!(songs[0]["id"], one.as_str());
+    assert_eq!(songs[0]["introEnd"], 0.5);
+    assert!(songs[0].get("endDb").is_none());
+    // Two isn't measured yet: it's asked for
+    let wanted = std::fs::read_to_string(mixdir.join("wanted.txt")).unwrap();
+    assert_eq!(wanted.trim(), "Alpha/First Album/02 Two.flac");
+    // the analyzer measures it: seen on the next call
+    let mut f = std::fs::OpenOptions::new().append(true).open(mixdir.join("info.jsonl")).unwrap();
+    std::io::Write::write_all(
+        &mut f,
+        br#"{"path": "Alpha/First Album/02 Two.flac", "dur": 3.0, "start": 0.0, "end": 3.0, "bpm": 90}"#,
+    )
+    .unwrap();
+    std::io::Write::write_all(&mut f, b"\n").unwrap();
+    drop(f);
+    let r = s.ok("getMixInfo", &[("id", &two)]).await;
+    assert_eq!(r["mixInfo"]["song"][0]["bpm"], 90);
+}

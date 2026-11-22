@@ -85,9 +85,8 @@ pub struct Config {
     pub translate_model: String,
     /// The song-id service (optional): "What's playing?" against your own library. POST /identify, GET /status.
     pub songid_url: Option<String>,
-    /// Automix: the mix analyzer's folder (info.jsonl in, wanted.txt out) and the music folder as it sees it.
+    /// Automix: the mix analyzer's folder (info.jsonl in, wanted.txt out; paths relative to the music folder).
     pub mixinfo_dir: Option<PathBuf>,
-    pub mixinfo_music_root: String,
     /// Concerts near you: Ticketmaster's Discovery API (with the key set in Encore), else MusicBrainz events.
     pub ticketmaster_url: String,
     pub musicbrainz_url: String,
@@ -157,7 +156,6 @@ impl Default for Config {
             translate_model: "gemma4:e2b-it-qat".into(),
             songid_url: None,
             mixinfo_dir: None,
-            mixinfo_music_root: "/music".into(),
             ticketmaster_url: "https://app.ticketmaster.com/discovery/v2".into(),
             musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
             concerts: true,
@@ -257,9 +255,6 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_MIXINFO_DIR") {
             c.mixinfo_dir = Some(PathBuf::from(v)).filter(|v| !v.as_os_str().is_empty());
-        }
-        if let Ok(v) = std::env::var("MAESTRO_MIXINFO_MUSIC_ROOT") {
-            c.mixinfo_music_root = v;
         }
         if let Ok(v) = std::env::var("MAESTRO_CONCERTS") {
             c.concerts = v != "0" && v != "false";

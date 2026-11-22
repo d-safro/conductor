@@ -19,7 +19,7 @@ fn enabled(c: &Ctx) -> bool {
 }
 
 fn sub(c: &Ctx, p: Params) -> Ctx {
-    Ctx { st: c.st.clone(), user: c.user.clone(), p, headers: c.headers.clone(), client: c.client.clone() }
+    Ctx { st: c.st.clone(), user: c.user.clone(), p, headers: c.headers.clone(), client: c.client.clone(), body: c.body.clone() }
 }
 
 fn sv<'a>(v: &'a Value, k: &str) -> &'a str {
