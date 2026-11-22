@@ -11,7 +11,7 @@
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, Path, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -46,10 +46,21 @@ struct LoginBody {
     password: String,
 }
 
-async fn login(State(st): State<Shared>, Json(b): Json<LoginBody>) -> Response {
+async fn login(
+    State(st): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    h: HeaderMap,
+    Json(b): Json<LoginBody>,
+) -> Response {
+    let ip = crate::jam::client_ip(&h, peer);
+    if st.login_fails.blocked("app", &ip, &b.username, auth::APP_TRIES) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Too many wrong passwords. Try again in a few minutes.");
+    }
     let Ok(Some(user)) = auth::verify_password(&st.db, &st.secrets, &b.username, &b.password).await else {
+        st.login_fails.failed("app", &ip, &b.username);
         return err(StatusCode::UNAUTHORIZED, "Invalid username or password");
     };
+    st.login_fails.clear("app", &ip, &b.username);
     let token = format!("{}{}", db::random_id(), db::random_id());
     {
         let mut t = st.native_tokens.lock().await;

@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
@@ -105,13 +105,24 @@ struct Login {
     password: String,
 }
 
-async fn login(State(st): State<Shared>, h: HeaderMap, Json(b): Json<Login>) -> Response {
+async fn login(
+    State(st): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    h: HeaderMap,
+    Json(b): Json<Login>,
+) -> Response {
     if h.get("x-conductor").and_then(|v| v.to_str().ok()) != Some("1") {
         return err(StatusCode::FORBIDDEN, "missing X-Conductor header");
     }
+    let ip = crate::jam::client_ip(&h, peer);
+    if st.login_fails.blocked("admin", &ip, &b.username, auth::ADMIN_TRIES) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Too many wrong passwords. Try again in a few minutes.");
+    }
     let Ok(Some(u)) = auth::verify_password(&st.db, &st.secrets, &b.username, &b.password).await else {
+        st.login_fails.failed("admin", &ip, &b.username);
         return err(StatusCode::UNAUTHORIZED, "Wrong username or password");
     };
+    st.login_fails.clear("admin", &ip, &b.username);
     if !u.is_admin {
         return err(StatusCode::FORBIDDEN, "This page is for admins");
     }

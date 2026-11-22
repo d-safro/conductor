@@ -101,6 +101,45 @@ pub async fn user_by_name(db: &Db, name: &str) -> Result<Option<User>> {
 }
 
 /// The user, if this is their password (for sign-ins that send the password itself).
+/// Wrong passwords, counted per user per address. Past the limit, that user is refused from that address until
+/// the oldest wrong try is `THROTTLE_MS` old. A right password from there clears the count, so a device with an
+/// old saved password can't lock out the rest.
+#[derive(Default)]
+pub struct Throttle(std::sync::Mutex<std::collections::HashMap<String, Vec<i64>>>);
+
+pub const THROTTLE_MS: i64 = 15 * 60_000;
+/// Wrong tries allowed per 15 minutes on the admin page, and from apps (which retry more on their own).
+pub const ADMIN_TRIES: usize = 10;
+pub const APP_TRIES: usize = 30;
+
+impl Throttle {
+    fn key(scope: &str, ip: &str, user: &str) -> String {
+        format!("{scope}\n{ip}\n{}", user.to_lowercase())
+    }
+    pub fn blocked(&self, scope: &str, ip: &str, user: &str, max: usize) -> bool {
+        let now = db::now_ms();
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match g.get_mut(&Self::key(scope, ip, user)) {
+            Some(v) => {
+                v.retain(|t| now - t < THROTTLE_MS);
+                v.len() >= max
+            }
+            None => false,
+        }
+    }
+    pub fn failed(&self, scope: &str, ip: &str, user: &str) {
+        let now = db::now_ms();
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.entry(Self::key(scope, ip, user)).or_default().push(now);
+        if g.len() > 10_000 {
+            g.retain(|_, v| v.last().is_some_and(|t| now - t < THROTTLE_MS));
+        }
+    }
+    pub fn clear(&self, scope: &str, ip: &str, user: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Self::key(scope, ip, user));
+    }
+}
+
 pub async fn verify_password(db: &Db, s: &Secrets, name: &str, password: &str) -> Result<Option<User>> {
     let Some(u) = user_by_name(db, name).await? else { return Ok(None) };
     let real = s.decrypt(&u.password_enc)?;

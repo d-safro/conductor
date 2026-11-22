@@ -241,7 +241,7 @@ $('login').onsubmit = async e => {
     S = s; store.set(KEY, s); $('lp').value = '';
     start();
   } catch (err) {
-    $('lerr').textContent = err.code === 40 ? 'Wrong username or password.' : err.message;
+    $('lerr').textContent = err.code === 40 && !/Too many/.test(err.message) ? 'Wrong username or password.' : err.message;
   }
 };
 function signOut() {

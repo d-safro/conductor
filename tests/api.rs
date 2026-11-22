@@ -536,7 +536,14 @@ async fn podcasts() {
         eprintln!("skipping: ffmpeg not found");
         return;
     }
-    let s = Arc::new(Server::start().await);
+    // the test's podcast server is on this computer
+    let s = Arc::new(
+        Server::start_with(|c| {
+            c.catalog = false;
+            c.podcast_local = true;
+        })
+        .await,
+    );
     // a podcast's own server: a feed, two episodes, a picture
     let dir = tempfile::tempdir().unwrap();
     tone(&dir.path().join("ep1.mp3"), "Ep 1", "Host", "Show", 1, 4);
@@ -3185,4 +3192,138 @@ async fn web_player() {
         .await
         .unwrap();
     assert_eq!(r["subsonic-response"]["error"]["code"], 40);
+}
+
+#[tokio::test]
+async fn podcasts_internet_only_and_for_admins() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // a feed on this computer or the home network isn't fetched (by name or by number)
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = fl.local_addr().unwrap().port();
+    let app = axum::Router::new()
+        .route("/feed.xml", axum::routing::get(|| async { "<rss><channel><title>Inside</title></channel></rss>" }));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    for url in [
+        format!("http://127.0.0.1:{port}/feed.xml"),
+        format!("http://localhost:{port}/feed.xml"),
+        format!("http://[::1]:{port}/feed.xml"),
+        "http://169.254.169.254/latest/meta-data/".to_string(),
+        "http://192.168.1.1/feed.xml".to_string(),
+    ] {
+        let r = s.call("createPodcastChannel", &[("url", &url)]).await;
+        assert_eq!(r["status"], "failed", "{url}: {r}");
+        assert!(r["error"]["message"].as_str().unwrap().contains("Couldn't read that feed"), "{url}: {r}");
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM podcast").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(n, 0);
+
+    // someone who isn't an admin can listen, not change the shows
+    auth::create_user(&s.st.db, &s.st.secrets, "guest", "guest pass", false).await.unwrap();
+    for (m, extra) in [
+        ("createPodcastChannel", ("url", "https://feeds.example.com/x.xml")),
+        ("deletePodcastChannel", ("id", "pc-1")),
+        ("refreshPodcasts", ("x", "")),
+        ("downloadPodcastEpisode", ("id", "pe-1")),
+        ("deletePodcastEpisode", ("id", "pe-1")),
+    ] {
+        let url = format!("{}/rest/{m}.view?u=guest&p=guest%20pass&v=1.16.1&c=test&f=json&{}={}", s.base, extra.0, extra.1);
+        let r: Value = s.http.get(url).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r["subsonic-response"]["error"]["code"], 50, "{m}: {r}");
+    }
+    let url = format!("{}/rest/getPodcasts.view?u=guest&p=guest%20pass&v=1.16.1&c=test&f=json", s.base);
+    let r: Value = s.http.get(url).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok");
+}
+
+#[tokio::test]
+async fn smart_rules_see_only_readable_playlists() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // the admin's private playlist, with one song
+    let song = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let pl =
+        s.ok("createPlaylist", &[("name", "Secret"), ("songId", &song)]).await["playlist"]["id"].as_str().unwrap().to_string();
+    let other = auth::create_user(&s.st.db, &s.st.secrets, "other", "other pass", false).await.unwrap();
+    let rule = serde_json::json!({"all": [{"inPlaylist": {"id": pl}}]});
+    let not_rule = serde_json::json!({"all": [{"notInPlaylist": {"id": pl}}]});
+    // its owner sees what's in it
+    let mine = api::smart::evaluate(&s.st, &s.st_user().await, &rule).await.unwrap();
+    assert_eq!(mine, vec![song.clone()]);
+    // someone else learns nothing from it: it's as if it were empty
+    assert!(api::smart::evaluate(&s.st, &other, &rule).await.unwrap().is_empty());
+    assert_eq!(api::smart::evaluate(&s.st, &other, &not_rule).await.unwrap().len(), 3);
+    // once it's public, they can use it
+    sqlx::query("UPDATE playlist SET public = 1 WHERE id = ?").bind(&pl).execute(&s.st.db).await.unwrap();
+    assert_eq!(api::smart::evaluate(&s.st, &other, &rule).await.unwrap(), vec![song]);
+}
+
+#[tokio::test]
+async fn sign_in_codes_capped_per_address() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    let start = |from: &'static str| {
+        let url = format!("{}/rest/pairStart?f=json&c=test&name=Laptop", s.base);
+        // the test talks over loopback, so X-Forwarded-For stands for who's asking (as behind Caddy)
+        let rq = s.http.get(url).header("x-forwarded-for", from);
+        async move { rq.send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() }
+    };
+    for _ in 0..conductor::live::MAX_PAIRS_PER_IP {
+        assert_eq!(start("203.0.113.7").await["status"], "ok");
+    }
+    let r = start("203.0.113.7").await;
+    assert_eq!(r["status"], "failed", "{r}");
+    // someone else can still get a code
+    assert_eq!(start("198.51.100.20").await["status"], "ok");
+}
+
+#[tokio::test]
+async fn wrong_passwords_are_limited() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    let ping = |pass: &str, from: &'static str| {
+        let url = format!("{}/rest/ping.view?u={USER}&p={}&v=1.16.1&c=test&f=json", s.base, pass.replace(' ', "%20"));
+        let rq = s.http.get(url).header("x-forwarded-for", from);
+        async move { rq.send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() }
+    };
+    // a right password clears the count
+    for _ in 0..auth::APP_TRIES - 1 {
+        assert_eq!(ping("nope", "203.0.113.7").await["error"]["code"], 40);
+    }
+    assert_eq!(ping(PASS, "203.0.113.7").await["status"], "ok");
+    for _ in 0..auth::APP_TRIES {
+        assert_eq!(ping("nope", "203.0.113.7").await["error"]["code"], 40);
+    }
+    // past the limit even the right one is refused from there, for a while
+    let r = ping(PASS, "203.0.113.7").await;
+    assert!(r["error"]["message"].as_str().unwrap().contains("Too many"), "{r}");
+    // not from anywhere else
+    assert_eq!(ping(PASS, "198.51.100.20").await["status"], "ok");
+
+    // the admin page has a smaller limit
+    let admin = |pass: &str| {
+        let rq = s
+            .http
+            .post(format!("{}/admin/api/login", s.base))
+            .header("x-conductor", "1")
+            .header("x-forwarded-for", "192.0.2.50")
+            .json(&serde_json::json!({"username": USER, "password": pass}));
+        async move { rq.send().await.unwrap().status().as_u16() }
+    };
+    for _ in 0..auth::ADMIN_TRIES {
+        assert_eq!(admin("nope").await, 401);
+    }
+    assert_eq!(admin(PASS).await, 429);
 }

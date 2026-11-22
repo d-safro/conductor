@@ -26,15 +26,17 @@ The detailed list. The [README](../README.md) has the short version.
 - **Covers into album folders**: every 6 hours, album folders (`Albums/Artist/Album`, holding just that album) with no
   picture get a `cover.jpg` from iTunes, then Deezer; nothing is ever overwritten (`covers_fetch`).
 - **Login**: Subsonic token (`t` + `s`), password (`p`, also `enc:`), and OpenSubsonic API keys (`apiKey`).
-  Passwords are stored encrypted with a key in `secret.key` beside the database, never in it.
+  Passwords are stored encrypted with a key in `secret.key` beside the database, never in it. Wrong passwords are
+  limited per user per address (30 every 15 minutes from apps, 10 on the admin page); a right one resets the count.
 - **Smart playlists** in Navidrome's rule format (`all`/`any`, is, contains, gt/lt, inTheRange, inTheLast,
   before/after, inPlaylist…; sort, order, limit). They refill themselves when read (at most once a minute) and
-  can't be edited by hand (`readonly`).
+  can't be edited by hand (`readonly`). `inPlaylist` only sees your own playlists and public ones.
 - **Navidrome stand-in** for what Encore 1.7.9 uses from Navidrome's own API: `POST /auth/login`,
   `/api/playlist` (smart rules), `/api/playlist/{id}/image` (playlist pictures, served as `pl-<id>_…` covers).
 - **Encore's own calls** (advertised as `encore.*` OpenSubsonic extensions, same answers as music-lookup gave):
   devices and remote control (`deviceHello/State/List/Command/Poll/Bye`, long-polls), sync between devices
-  (`syncGet/syncSet`, newest wins, kept in the database), signing in from your phone (`pairStart/Poll/Approve`),
+  (`syncGet/syncSet`, newest wins, kept in the database), signing in from your phone (`pairStart/Poll/Approve`;
+  at most 5 codes waiting from one address),
   listening stats (`getListeningStats`: week / month / year / all, local time), the year / month in review
   (`getListeningReview`: top fives, genres, first song, longest streak, peak hour, discoveries) and real folders
   (`getFolder`).
@@ -61,7 +63,9 @@ The detailed list. The [README](../README.md) has the short version.
 - **Podcasts**: the whole Subsonic podcast API; feeds checked every 2 hours; episodes stream through from the
   podcast's server (with seeking) unless saved on the server (`downloadPodcastEpisode`, or `podcast_keep` newest
   per show); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
-  bookmarks per user. Episode and show ids are the same as music-lookup's.
+  bookmarks per user. Episode and show ids are the same as music-lookup's. Adding, removing, refreshing and saving
+  shows is for admins. Feeds, episodes and covers are fetched only from the internet, redirects included, never this
+  computer or your network (`podcast_local = true` allows those).
 - **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or

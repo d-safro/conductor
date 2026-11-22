@@ -249,10 +249,10 @@ fn expire_pairs(g: &mut live::Inner) {
 }
 
 /// No login: the new device asks for a code to show.
-pub async fn pair_start(st: &super::Shared, name: Option<&str>) -> Result<Value, ApiError> {
+pub async fn pair_start(st: &super::Shared, name: Option<&str>, ip: &str) -> Result<Value, ApiError> {
     let mut g = st.live.lock();
     expire_pairs(&mut g);
-    if g.pairs.len() >= live::MAX_PAIRS {
+    if g.pairs.len() >= live::MAX_PAIRS || g.pairs.values().filter(|p| p.ip == ip).count() >= live::MAX_PAIRS_PER_IP {
         return Err(bad("Too many sign-ins waiting. Try again in a few minutes."));
     }
     let live_codes: HashSet<String> = g.pairs.values().map(|p| p.code.clone()).collect();
@@ -265,7 +265,7 @@ pub async fn pair_start(st: &super::Shared, name: Option<&str>) -> Result<Value,
     };
     let token = format!("{}{}", db::random_id(), &db::random_id()[..8]);
     let name = Some(clean(name, 60)).filter(|s| !s.is_empty()).unwrap_or_else(|| "a computer".into());
-    g.pairs.insert(token.clone(), Pair { code: code.clone(), created_ms: now_ms(), name, login: None });
+    g.pairs.insert(token.clone(), Pair { code: code.clone(), ip: ip.to_string(), created_ms: now_ms(), name, login: None });
     Ok(json!({ "code": code, "token": token, "expires": live::PAIR_SECS }))
 }
 

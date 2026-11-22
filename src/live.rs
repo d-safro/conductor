@@ -13,6 +13,8 @@ use tokio::sync::watch;
 pub const ONLINE_SECS: i64 = 90;
 pub const PAIR_SECS: i64 = 300;
 pub const MAX_PAIRS: usize = 30;
+/// Sign-in codes waiting from one address: enough to reopen the dialog a few times, too few to crowd others out.
+pub const MAX_PAIRS_PER_IP: usize = 5;
 pub const JAM_ONLINE_SECS: i64 = 60;
 pub const JAM_GUEST_SECS: i64 = 120;
 
@@ -42,6 +44,8 @@ impl Device {
 
 pub struct Pair {
     pub code: String,
+    /// who asked for it (jam::client_ip)
+    pub ip: String,
     pub created_ms: i64,
     pub name: String,
     pub login: Option<Value>,

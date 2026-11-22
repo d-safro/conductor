@@ -63,6 +63,8 @@ pub struct AppState {
     pub vpn: std::sync::RwLock<crate::vpn::Status>,
     /// opens /setup from another computer while nobody has an account (printed at start)
     pub setup_token: String,
+    /// wrong passwords, per user per address
+    pub login_fails: crate::auth::Throttle,
 }
 
 impl AppState {
@@ -84,6 +86,7 @@ impl AppState {
             podcast_wake: Default::default(),
             vpn: std::sync::RwLock::new(crate::vpn::Status { mode: cfg_vpn, ..Default::default() }),
             setup_token: crate::db::random_id(),
+            login_fails: Default::default(),
         }
     }
 }
@@ -234,6 +237,11 @@ pub fn empty() -> Result<Reply, ApiError> {
 async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Request) -> Response {
     let method = method.strip_suffix(".view").unwrap_or(&method).to_string();
     let headers = req.headers().clone();
+    let ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| crate::jam::client_ip(&headers, ci.0))
+        .unwrap_or_default();
     let mut pairs: Vec<(String, String)> =
         req.uri().query().map(|q| form_urlencoded::parse(q.as_bytes()).into_owned().collect()).unwrap_or_default();
     let is_form = headers
@@ -261,16 +269,26 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
     };
     if method == "pairStart" || method == "pairPoll" {
         let r = if method == "pairStart" {
-            encore::pair_start(&st, p.get("name")).await
+            encore::pair_start(&st, p.get("name"), &ip).await
         } else {
             encore::pair_poll(&st, p.get("token").unwrap_or(""), p.int("wait").unwrap_or(20).clamp(0, 25) as u64).await
         };
         return render(fmt, r.map(|v| Reply::Ok(json!({ "pair": v }))));
     }
+    let who = p.get("u").unwrap_or("").to_string();
+    if st.login_fails.blocked("app", &ip, &who, auth::APP_TRIES) {
+        return render(fmt, Err(ApiError::new(40, "Too many wrong passwords. Try again in a few minutes.")));
+    }
     let creds = Credentials { u: p.get("u"), p: p.get("p"), t: p.get("t"), s: p.get("s"), api_key: p.get("apiKey") };
     let user = match auth::login(&st.db, &st.secrets, creds).await {
-        Ok(u) => u,
+        Ok(u) => {
+            st.login_fails.clear("app", &ip, &who);
+            u
+        }
         Err(e) => {
+            if matches!(e, LoginError::Wrong | LoginError::InvalidKey) {
+                st.login_fails.failed("app", &ip, &who);
+            }
             let (code, msg) = match e {
                 LoginError::Missing => (10, "Required parameter is missing: u, or apiKey"),
                 LoginError::Wrong => (40, "Wrong username or password"),

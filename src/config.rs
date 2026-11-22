@@ -31,6 +31,8 @@ pub struct Config {
     pub podcast_keep: i64,
     /// Played episodes saved on the server go after this many days (0: never).
     pub podcast_clean_days: i64,
+    /// Let podcast feeds, episodes and pictures come from this computer or your own network (off: internet only).
+    pub podcast_local: bool,
     /// Songs you don't have (⬇) in searches, albums and artists (from Deezer).
     pub catalog: bool,
     /// Apps that never get ⬇ items (part of the client name, any case).
@@ -164,6 +166,7 @@ impl Default for Config {
             podcast_dir: None,
             podcast_keep: 0,
             podcast_clean_days: 7,
+            podcast_local: false,
             catalog: true,
             catalog_skip_clients: vec!["symfonium".into()],
             deezer_url: "https://api.deezer.com".into(),
@@ -418,6 +421,9 @@ impl Config {
         }
         if let Ok(v) = var("PODCAST_CLEAN_DAYS") {
             c.podcast_clean_days = v.parse().context("CONDUCTOR_PODCAST_CLEAN_DAYS")?;
+        }
+        if let Ok(v) = var("PODCAST_LOCAL") {
+            c.podcast_local = v == "1" || v == "true";
         }
         if let Ok(v) = var("CATALOG") {
             c.catalog = v != "0" && v != "false";

@@ -124,7 +124,11 @@ fn condition(c: &Value, out: &mut Vec<Bind>) -> Result<String> {
         let id = body.get("id").map(text).ok_or_else(|| anyhow!("{op} needs an id"))?;
         out.push(Bind::Text(id));
         let not = if op == "notInPlaylist" { "NOT " } else { "" };
-        return Ok(format!("t.id {not}IN (SELECT track_id FROM playlist_entry WHERE playlist_id = ?)"));
+        // only a playlist the owner may read: their own, or a public one (`me` is the owner, set in `evaluate`)
+        return Ok(format!(
+            "t.id {not}IN (SELECT pe.track_id FROM playlist_entry pe JOIN playlist p ON p.id = pe.playlist_id \
+             WHERE pe.playlist_id = ? AND (p.owner_id = (SELECT uid FROM me) OR p.public = 1))"
+        ));
     }
     let b = body.as_object().filter(|b| b.len() == 1).ok_or_else(|| anyhow!("{op} needs one field"))?;
     let (fname, v) = b.iter().next().unwrap();
@@ -257,8 +261,9 @@ pub fn compile(rules: &Value) -> Result<(String, String, Vec<Bind>)> {
 pub async fn evaluate(st: &AppState, owner: &str, rules: &Value) -> Result<Vec<String>> {
     let (wh, tail, binds) = compile(rules)?;
     let sql = format!(
-        "SELECT t.id FROM track t JOIN album al ON al.id = t.album_id
-         LEFT JOIN annotation an ON an.user_id = ? AND an.item_kind = 'track' AND an.item_id = t.id
+        "WITH me(uid) AS (SELECT ?)
+         SELECT t.id FROM track t JOIN album al ON al.id = t.album_id
+         LEFT JOIN annotation an ON an.user_id = (SELECT uid FROM me) AND an.item_kind = 'track' AND an.item_id = t.id
          WHERE t.missing_since IS NULL AND {wh} {tail}"
     );
     let mut q = sqlx::query_scalar::<_, String>(&sql).bind(owner);

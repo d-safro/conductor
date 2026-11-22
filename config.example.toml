@@ -20,6 +20,8 @@ jam_listen = "127.0.0.1:4535"
 # podcast_dir = "/srv/podcasts"
 podcast_keep = 0
 podcast_clean_days = 7
+# feeds on this computer or your own network (off: podcasts come only from the internet)
+# podcast_local = false
 
 # Songs you don't have (⬇, from Deezer) and downloading them through slskd. Filing needs write access to the music folder.
 catalog = true

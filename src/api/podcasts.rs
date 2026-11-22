@@ -173,12 +173,20 @@ pub fn parse_feed(url: &str, xml: &str) -> Result<Feed> {
     Ok(feed)
 }
 
-fn http() -> reqwest::Client {
-    reqwest::Client::builder().user_agent(UA).connect_timeout(Duration::from_secs(20)).build().expect("http client")
+/// A request to a podcast's server. Feeds come from anyone, so unless `podcast_local` is on, only internet
+/// addresses are reached (redirects too): a feed can't point Conductor at the home network.
+fn get(st: &AppState, url: &str) -> Result<reqwest::RequestBuilder> {
+    let mut b = reqwest::Client::builder().user_agent(UA).connect_timeout(Duration::from_secs(20));
+    if !st.cfg.podcast_local {
+        let u: reqwest::Url = url.parse().context("not a web address")?;
+        crate::net::check_public_url(&u).map_err(|e| anyhow!(e))?;
+        b = crate::net::public_only(b);
+    }
+    Ok(b.build()?.get(url))
 }
 
-async fn fetch_text(url: &str) -> Result<String> {
-    let r = http().get(url).timeout(Duration::from_secs(30)).send().await?.error_for_status()?;
+async fn fetch_text(st: &AppState, url: &str) -> Result<String> {
+    let r = get(st, url)?.timeout(Duration::from_secs(30)).send().await?.error_for_status()?;
     Ok(r.text().await?)
 }
 
@@ -232,7 +240,7 @@ pub async fn refresh(st: &AppState, only: Option<&str>) {
     let shows: Vec<(String, String)> = sqlx::query_as("SELECT id, url FROM podcast").fetch_all(&st.db).await.unwrap_or_default();
     for (id, url) in shows.into_iter().filter(|(id, _)| only.is_none_or(|o| o == id)) {
         let res = async {
-            let f = parse_feed(&url, &fetch_text(&url).await?)?;
+            let f = parse_feed(&url, &fetch_text(st, &url).await?)?;
             store(st, &url, &f, false).await
         }
         .await;
@@ -308,7 +316,7 @@ async fn download(st: &AppState, e: &EpRow) -> Result<()> {
         tokio::fs::create_dir_all(d).await?;
     }
     let part = dst.with_extension("part");
-    let r = http().get(&e.url).timeout(Duration::from_secs(3600)).send().await?.error_for_status()?;
+    let r = get(st, &e.url)?.timeout(Duration::from_secs(3600)).send().await?.error_for_status()?;
     let mut f = tokio::fs::File::create(&part).await?;
     let mut body = r.bytes_stream();
     while let Some(chunk) = body.next().await {
@@ -493,7 +501,7 @@ pub async fn get_episode(c: &Ctx) -> Result<Reply, ApiError> {
 
 /// Subscribe to a feed (for imports): its id, and whether it's new.
 pub async fn subscribe(st: &AppState, url: &str) -> Result<(String, bool)> {
-    let f = parse_feed(url, &fetch_text(url).await?)?;
+    let f = parse_feed(url, &fetch_text(st, url).await?)?;
     let had: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM podcast WHERE id = ? OR url = ?").bind(&f.id).bind(url).fetch_one(&st.db).await?;
     if had > 0 {
         return Ok((f.id, false));
@@ -519,12 +527,18 @@ pub async fn unsubscribe(st: &AppState, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Adding, removing, refreshing and saving shows changes them for everyone, so it's for admins (as in Navidrome).
+fn need_admin(c: &Ctx) -> Result<(), ApiError> {
+    if c.user.is_admin { Ok(()) } else { Err(ApiError::new(50, "Only admins can change podcasts")) }
+}
+
 pub async fn create(c: &Ctx) -> Result<Reply, ApiError> {
+    need_admin(c)?;
     let url = c.p.get("url").unwrap_or("").trim().to_string();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(ApiError::new(10, "Give the podcast's feed address"));
     }
-    let f = match fetch_text(&url).await.and_then(|x| parse_feed(&url, &x)) {
+    let f = match fetch_text(&c.st, &url).await.and_then(|x| parse_feed(&url, &x)) {
         Ok(f) => f,
         Err(e) => return Err(ApiError::new(0, format!("Couldn't read that feed: {e:#}"))),
     };
@@ -536,23 +550,27 @@ pub async fn create(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 pub async fn delete_show(c: &Ctx) -> Result<Reply, ApiError> {
+    need_admin(c)?;
     unsubscribe(&c.st, c.p.req("id")?).await?;
     empty()
 }
 
 pub async fn refresh_all(c: &Ctx) -> Result<Reply, ApiError> {
+    need_admin(c)?;
     let st = c.st.clone();
     tokio::spawn(async move { refresh(&st, None).await });
     empty()
 }
 
 pub async fn download_episode(c: &Ctx) -> Result<Reply, ApiError> {
+    need_admin(c)?;
     sqlx::query("UPDATE episode SET pinned = 1 WHERE id = ?").bind(c.p.req("id")?).execute(&c.st.db).await?; // kept until you delete it
     c.st.podcast_wake.notify_one();
     empty()
 }
 
 pub async fn delete_episode(c: &Ctx) -> Result<Reply, ApiError> {
+    need_admin(c)?;
     let id = c.p.req("id")?;
     sqlx::query("UPDATE episode SET pinned = 0 WHERE id = ?").bind(id).execute(&c.st.db).await?;
     remove_file(&c.st, id).await;
@@ -687,7 +705,7 @@ pub async fn stream(c: &Ctx, id: &str) -> Result<Reply, ApiError> {
         }
     }
     // not saved here: pass the podcast's own server through (Range included, so seeking works)
-    let mut rq = http().get(&e.url);
+    let mut rq = get(&c.st, &e.url).map_err(|err| ApiError::new(0, format!("Can't play this episode: {err:#}")))?;
     if let Some(r) = c.headers.get(header::RANGE) {
         rq = rq.header(header::RANGE, r);
     }
@@ -718,7 +736,7 @@ pub async fn cover_bytes(st: &AppState, id: &str) -> Result<Option<Vec<u8>>> {
     if let Ok(b) = tokio::fs::read(&cache).await {
         return Ok(Some(b));
     }
-    let r = http().get(&url).timeout(Duration::from_secs(20)).send().await?.error_for_status()?;
+    let r = get(st, &url)?.timeout(Duration::from_secs(20)).send().await?.error_for_status()?;
     let b = r.bytes().await?.to_vec();
     if image::guess_format(&b).is_err() {
         bail!("not a picture");
