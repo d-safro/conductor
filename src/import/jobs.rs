@@ -199,11 +199,15 @@ pub async fn start(st: &Arc<AppState>, id: &str, opts: Options) -> Result<()> {
     if status != "preview" {
         bail!("this import is {status}");
     }
-    sqlx::query("UPDATE import_batch SET status = 'running', progress = 0, options_json = ? WHERE id = ?")
+    // only once, even when started twice at the same moment
+    let r = sqlx::query("UPDATE import_batch SET status = 'running', progress = 0, options_json = ? WHERE id = ? AND status = 'preview'")
         .bind(serde_json::to_string(&opts)?)
         .bind(id)
         .execute(&st.db)
         .await?;
+    if r.rows_affected() == 0 {
+        bail!("this import has started already");
+    }
     let input: Value = serde_json::from_str(&input).unwrap_or_default();
     let (st, id) = (st.clone(), id.to_string());
     tokio::spawn(async move {
@@ -232,10 +236,26 @@ pub async fn run(st: &AppState, id: &str, user: &str, input: &Value, opts: &Opti
     Ok(report)
 }
 
+/// Imports that were reading or running when Conductor stopped: failed (what they changed can be undone).
+pub async fn recover(st: &AppState) {
+    let r = sqlx::query(
+        "UPDATE import_batch SET status = 'failed', error = 'stopped part way (Conductor was stopped); undo it to take back what it changed'
+         WHERE status IN ('reading', 'running')",
+    )
+    .execute(&st.db)
+    .await;
+    if let Ok(r) = r
+        && r.rows_affected() > 0
+    {
+        warn!(imports = r.rows_affected(), "imports stopped part way when Conductor stopped: marked failed");
+    }
+}
+
+/// Take back what an import changed: a finished one, or one that failed part way (what it got to is undone).
 pub async fn undo(st: &AppState, id: &str) -> Result<()> {
     let status: Option<String> = sqlx::query_scalar("SELECT status FROM import_batch WHERE id = ?").bind(id).fetch_optional(&st.db).await?;
     match status.as_deref() {
-        Some("done") => {
+        Some("done") | Some("failed") => {
             let _one = ONE.lock().await;
             apply::undo(st, id).await
         }
@@ -250,6 +270,11 @@ pub async fn discard(st: &AppState, id: &str) -> Result<()> {
     let Some((input, status)) = row else { bail!("no such import") };
     if !["preview", "failed", "reading"].contains(&status.as_str()) {
         bail!("this import is {status}: undo it instead");
+    }
+    if status == "failed" {
+        // it may have failed part way: what it changed goes too, not left behind with nothing to undo it by
+        let _one = ONE.lock().await;
+        apply::undo(st, id).await?;
     }
     drop_upload(st, &serde_json::from_str(&input).unwrap_or_default()).await;
     sqlx::query("DELETE FROM import_batch WHERE id = ?").bind(id).execute(&st.db).await?;

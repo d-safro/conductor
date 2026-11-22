@@ -192,6 +192,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     }
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
+    conductor::import::jobs::recover(&state).await;
     tokio::spawn(scan_loop(state.clone()));
     conductor::jam::load(&state).await;
     tokio::spawn(conductor::api::podcasts::worker(state.clone()));

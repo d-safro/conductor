@@ -2573,6 +2573,35 @@ async fn old_uploads_go_but_what_was_sent_elsewhere_stays() {
 }
 
 #[tokio::test]
+async fn an_import_stopped_part_way_can_be_undone() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let uid = s.st_user().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    // what an import had done when Conductor stopped (or it failed): a play and a heart
+    for (id, status) in [("b-stopped", "running"), ("b-failed", "failed")] {
+        sqlx::query("INSERT INTO import_batch (id, user_id, input_json, status, created_at) VALUES (?, ?, '{}', ?, 0)")
+            .bind(id).bind(&uid).bind(status).execute(&s.st.db).await.unwrap();
+        sqlx::query("INSERT INTO play (user_id, track_id, played_at, client) VALUES (?, ?, ?, ?)")
+            .bind(&uid).bind(&one).bind(1_000_000).bind(format!("import:{id}")).execute(&s.st.db).await.unwrap();
+    }
+    sqlx::query("INSERT INTO annotation (user_id, item_kind, item_id, starred_at) VALUES (?, 'track', ?, 5)").bind(&uid).bind(&one).execute(&s.st.db).await.unwrap();
+    sqlx::query("INSERT INTO import_change (batch_id, kind, item) VALUES ('b-stopped', 'star', ?)").bind(&one).execute(&s.st.db).await.unwrap();
+    let plays = || sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM play WHERE client LIKE 'import:%'").fetch_one(&s.st.db);
+    // the next start: the one left running is failed, and both can be taken back
+    conductor::import::jobs::recover(&s.st).await;
+    assert_eq!(s.ok("getImport", &[("id", "b-stopped")]).await["import"]["status"], "failed");
+    assert_eq!(s.ok("undoImport", &[("id", "b-stopped")]).await["import"]["status"], "undone");
+    assert_eq!(plays().await.unwrap(), 1);
+    assert!(s.ok("getSong", &[("id", &one)]).await["song"]["starred"].is_null(), "its heart is taken back");
+    // forgetting a failed one takes back what it changed too
+    s.ok("deleteImport", &[("id", "b-failed")]).await;
+    assert_eq!(plays().await.unwrap(), 0);
+}
+
+#[tokio::test]
 async fn import_into_any_subsonic_server() {
     if !have_ffmpeg() {
         return;
