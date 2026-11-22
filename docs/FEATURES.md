@@ -25,6 +25,11 @@ The detailed list. The [README](../README.md) has the short version.
   (`.lrc` files next to the song, embedded lyrics, else **LRCLIB** online, remembered; synced when timed).
 - **Covers into album folders**: every 6 hours, album folders (`Albums/Artist/Album`, holding just that album) with no
   picture get a `cover.jpg` from iTunes, then Deezer; nothing is ever overwritten (`covers_fetch`).
+- **Works with web apps** served from another address (Feishin's web version, Airsonic-refix…): the Subsonic API
+  answers them (CORS, as Navidrome does; the admin page doesn't). In Feishin, add Conductor as "OpenSubsonic".
+- **Big libraries**: measured with 100,000 songs (`cargo run --release --example bench_library -- DIR 100000` makes
+  one in seconds): first scan ~10 s, a rescan ~1 s, ~75 MB of memory; lists and albums in ~1-25 ms; an app fetching
+  the whole library 500 songs at a time ~10 s in all (stable paging, nothing skipped or repeated).
 - **Login**: Subsonic token (`t` + `s`), password (`p`, also `enc:`), and OpenSubsonic API keys (`apiKey`).
   Passwords are stored encrypted with a key in `secret.key` beside the database, never in it. Wrong passwords are
   limited per user per address (30 every 15 minutes from apps, 10 on the admin page); a right one resets the count.

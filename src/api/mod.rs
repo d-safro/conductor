@@ -103,10 +103,26 @@ pub struct NowPlaying {
 
 pub type Shared = Arc<AppState>;
 
+/// The Subsonic API answers web apps served from another address (Feishin's web version, Airsonic-refix…), as
+/// Navidrome does. Safe: the login is in each request (no cookies), so a page can only use a login it already has.
+/// Only /rest: the admin page and the Navidrome stand-in keep the browser's same-address rule.
+fn cors() -> tower_http::cors::CorsLayer {
+    use axum::http::{Method, header};
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([Method::GET, Method::POST, Method::HEAD, Method::OPTIONS])
+        .allow_headers([header::CONTENT_TYPE, header::RANGE, header::AUTHORIZATION])
+        .expose_headers([header::CONTENT_LENGTH, header::CONTENT_RANGE, header::ACCEPT_RANGES, header::CONTENT_DISPOSITION])
+        .max_age(std::time::Duration::from_secs(86400))
+}
+
 pub fn router(state: Shared) -> Router {
-    Router::new()
+    let rest = Router::new()
         .route("/rest/audiomuse/{*endpoint}", any(sonic::passthrough))
         .route("/rest/{method}", any(handle))
+        .layer(cors());
+    Router::new()
+        .merge(rest)
         .route("/health", get(health))
         .merge(native::routes())
         .merge(crate::admin::routes())

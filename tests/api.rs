@@ -3525,3 +3525,28 @@ async fn play_queue_by_index_keeps_the_right_copy() {
     let ext = s.ok("getOpenSubsonicExtensions", &[]).await;
     assert!(ext["openSubsonicExtensions"].as_array().unwrap().iter().any(|e| e["name"] == "indexBasedQueue"));
 }
+
+#[tokio::test]
+async fn web_apps_from_elsewhere_can_use_the_api() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // a web app on another address (Feishin's web version): the browser asks first, then calls
+    let pre = s
+        .http
+        .request(reqwest::Method::OPTIONS, format!("{}/rest/getUser.view", s.base))
+        .header("origin", "http://player.example")
+        .header("access-control-request-method", "GET")
+        .send()
+        .await
+        .unwrap();
+    assert!(pre.status().is_success());
+    assert_eq!(pre.headers()["access-control-allow-origin"], "*");
+    let r = s.http.get(s.url("ping", &[])).header("origin", "http://player.example").send().await.unwrap();
+    assert_eq!(r.headers()["access-control-allow-origin"], "*");
+    // the admin page (signed in with a cookie) keeps the same-address rule
+    let a = s.http.get(format!("{}/admin/api/status", s.base)).header("origin", "http://player.example").send().await.unwrap();
+    assert!(a.headers().get("access-control-allow-origin").is_none());
+}
