@@ -276,7 +276,13 @@ pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
         let id = p["id"].as_str().unwrap_or("");
         let items = match c.pages(&format!("/playlists/{id}/items?limit=100")).await {
             Ok(i) => i,
-            Err(_) => c.pages(&format!("/playlists/{id}/tracks?limit=100")).await.unwrap_or_default(),
+            Err(_) => match c.pages(&format!("/playlists/{id}/tracks?limit=100")).await {
+                Ok(i) => i,
+                Err(e) => {
+                    warn!(playlist = %name, "Spotify playlist not read, left as it is: {e:#}");
+                    continue;
+                }
+            },
         };
         lists.push((
             name,

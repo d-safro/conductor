@@ -641,6 +641,66 @@ async fn podcasts() {
     assert_eq!(s.call("getPodcastEpisode", &[("id", &newer)]).await["error"]["code"], 70);
 }
 
+#[tokio::test]
+async fn podcast_episodes_with_the_same_name_keep_their_own_files() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+        c.podcast_keep = 0;
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    tone(&dir.path().join("a.mp3"), "A", "Host", "Show", 1, 2);
+    tone(&dir.path().join("b.mp3"), "B", "Host", "Show", 2, 4);
+    let (a, b) = (std::fs::read(dir.path().join("a.mp3")).unwrap(), std::fs::read(dir.path().join("b.mp3")).unwrap());
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    // two episodes on one day with one title (a daily show's "News")
+    let feed = format!(
+        r#"<?xml version="1.0"?><rss><channel><title>Daily</title>
+        <item><title>News</title><guid>morning</guid><pubDate>Wed, 11 Nov 2026 08:00:00 +0000</pubDate><enclosure url="{fbase}/a.mp3" type="audio/mpeg"/></item>
+        <item><title>News</title><guid>evening</guid><pubDate>Wed, 11 Nov 2026 18:00:00 +0000</pubDate><enclosure url="{fbase}/b.mp3" type="audio/mpeg"/></item>
+        </channel></rss>"#
+    );
+    let app = axum::Router::new()
+        .route("/feed.xml", axum::routing::get(move || { let f = feed.clone(); async move { ([("content-type", "application/rss+xml")], f) } }))
+        .nest_service("/a.mp3", tower_http::services::ServeFile::new(dir.path().join("a.mp3")))
+        .nest_service("/b.mp3", tower_http::services::ServeFile::new(dir.path().join("b.mp3")));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    tokio::spawn(conductor::api::podcasts::worker(s.st.clone()));
+    s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    let eps = s.ok("getPodcasts", &[]).await["podcasts"]["channel"][0]["episode"].as_array().unwrap().clone();
+    let ids: Vec<String> = eps.iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids.len(), 2);
+    for id in &ids {
+        s.ok("downloadPodcastEpisode", &[("id", id)]).await;
+    }
+    wait_for(
+        async || {
+            let mut all = true;
+            for id in &ids {
+                all &= s.ok("getPodcastEpisode", &[("id", id)]).await["podcastEpisode"]["downloaded"] == true;
+            }
+            all
+        },
+        "both episodes saved",
+    )
+    .await;
+    let body = async |id: &str| s.http.get(s.url("stream", &[("id", id)])).send().await.unwrap().bytes().await.unwrap().to_vec();
+    let (first, second) = (body(&ids[0]).await, body(&ids[1]).await);
+    assert_ne!(first, second, "each has its own file");
+    assert!([&a, &b].contains(&&first) && [&a, &b].contains(&&second));
+    // deleting one leaves the other's file
+    s.ok("deletePodcastEpisode", &[("id", &ids[0])]).await;
+    assert_eq!(body(&ids[1]).await, second);
+    let files: Vec<Option<String>> = sqlx::query_scalar("SELECT file FROM episode").fetch_all(&s.st.db).await.unwrap();
+    let left = files.into_iter().flatten().next().unwrap();
+    assert!(conductor::api::podcasts::folder(&s.st).join(left).is_file());
+}
+
 /// Stand-ins for Deezer (a few songs, albums, artists) and slskd (one peer who has the song).
 async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String, String) {
     use axum::{extract::Request, response::IntoResponse};
@@ -1572,28 +1632,33 @@ async fn spotify_sync() {
     }
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let sp = format!("http://{}", l.local_addr().unwrap());
-    let app = axum::Router::new().fallback(move |req: Request| async move {
-        let path = req.uri().path().to_string();
-        if path == "/api/token" {
-            let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
-            let form: Vec<(String, String)> = form_urlencoded::parse(&b).into_owned().collect();
-            // the saved one first, then the new one Spotify handed out
-            let tok = form.iter().find(|(k, _)| k == "refresh_token").map(|(_, v)| v.as_str()).unwrap_or("");
-            assert!((tok == "old-refresh" || tok == "new-refresh") && form.contains(&("client_id".into(), "cid".into())));
-            return axum::Json(json!({ "access_token": "acc", "refresh_token": "new-refresh", "expires_in": 3600 })).into_response();
+    let broken = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let b2 = broken.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let broken = b2.load(std::sync::atomic::Ordering::SeqCst);
+        async move {
+            let path = req.uri().path().to_string();
+            if path == "/api/token" {
+                let b = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+                let form: Vec<(String, String)> = form_urlencoded::parse(&b).into_owned().collect();
+                // the saved one first, then the new one Spotify handed out
+                let tok = form.iter().find(|(k, _)| k == "refresh_token").map(|(_, v)| v.as_str()).unwrap_or("");
+                assert!((tok == "old-refresh" || tok == "new-refresh") && form.contains(&("client_id".into(), "cid".into())));
+                return axum::Json(json!({ "access_token": "acc", "refresh_token": "new-refresh", "expires_in": 3600 })).into_response();
+            }
+            assert_eq!(req.headers()["authorization"], "Bearer acc");
+            let t = |id: &str, name: &str, artist: &str, isrc: Option<&str>| {
+                json!({ "id": id, "name": name, "type": "track", "artists": [{ "name": artist }], "duration_ms": 3000, "external_ids": { "isrc": isrc } })
+            };
+            let body = match path.as_str() {
+                "/v1/me/tracks" => json!({ "items": [{ "track": t("sp-pk", "Psycho Killer", "Talking Heads", Some("USSI10000001")) },
+                                                     { "track": t("sp-one", "One", "Alpha", None) }], "next": null }),
+                "/v1/me/playlists" => json!({ "items": [{ "id": "car", "name": "Car" }, { "id": "x", "name": "Not chosen" }], "next": null }),
+                "/v1/playlists/car/items" if !broken => json!({ "items": [{ "item": t("sp-two", "Zwei (renamed on Spotify)", "Alpha", None) }], "next": null }),
+                _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            };
+            axum::Json(body).into_response()
         }
-        assert_eq!(req.headers()["authorization"], "Bearer acc");
-        let t = |id: &str, name: &str, artist: &str, isrc: Option<&str>| {
-            json!({ "id": id, "name": name, "type": "track", "artists": [{ "name": artist }], "duration_ms": 3000, "external_ids": { "isrc": isrc } })
-        };
-        let body = match path.as_str() {
-            "/v1/me/tracks" => json!({ "items": [{ "track": t("sp-pk", "Psycho Killer", "Talking Heads", Some("USSI10000001")) },
-                                                 { "track": t("sp-one", "One", "Alpha", None) }], "next": null }),
-            "/v1/me/playlists" => json!({ "items": [{ "id": "car", "name": "Car" }, { "id": "x", "name": "Not chosen" }], "next": null }),
-            "/v1/playlists/car/items" => json!({ "items": [{ "item": t("sp-two", "Zwei (renamed on Spotify)", "Alpha", None) }], "next": null }),
-            _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
-        };
-        axum::Json(body).into_response()
     });
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     let (s, _tmp) = trial_server(|c| {
@@ -1651,6 +1716,10 @@ async fn spotify_sync() {
         .map(|x| x["title"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(order, ["Psycho Killer", "One"]);
+    // Spotify can't give a playlist's songs: it's left as it is, not emptied
+    broken.store(true, std::sync::atomic::Ordering::SeqCst);
+    conductor::spotify::sync_once(&s.st).await.unwrap();
+    assert_eq!(s.ok("getPlaylist", &[("id", &car)]).await["playlist"]["entry"][0]["title"], "Two");
 }
 
 #[tokio::test]
@@ -1792,6 +1861,41 @@ async fn stand_in(
     });
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     (base, hits)
+}
+
+#[tokio::test]
+async fn deezer_failures_arent_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let up = Arc::new(AtomicBool::new(false));
+    let u2 = up.clone();
+    let (dz, _) = stand_in(move |path, _q, _| match path {
+        _ if !u2.load(SeqCst) => None, // Deezer is down: an error page
+        "/search/artist" => Some(json!({ "data": [{ "id": 8, "name": "Alpha", "nb_fan": 50 }] })),
+        "/artist/8/related" => Some(json!({ "data": [] })),
+        _ => Some(json!({ "error": { "code": 800, "message": "no data" } })),
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = true;
+        c.deezer_url = dz.clone();
+    })
+    .await;
+    assert_eq!(conductor::catalog::artist_dz_id(&s.st, "Alpha").await, None);
+    assert!(conductor::catalog::artist_info(&s.st, "Alpha").await.is_none());
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cache WHERE kind IN ('artist', 'artist_info')")
+        .fetch_one(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, 0, "a failed call isn't kept as \"Deezer has nothing\"");
+    // Deezer's own "nothing" is an answer, and kept
+    up.store(true, SeqCst);
+    assert_eq!(conductor::catalog::match_album(&s.st, "Nobody", "Nothing", &[]).await, None);
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM catalog_cache WHERE kind = 'album'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(kept, 1);
 }
 
 #[tokio::test]

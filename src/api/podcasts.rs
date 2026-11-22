@@ -310,7 +310,17 @@ async fn download(st: &AppState, e: &EpRow) -> Result<()> {
     let day = chrono::DateTime::from_timestamp(if e.published_at > 0 { e.published_at } else { now() }, 0)
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
-    let rel = format!("{}/{day} {}{}", safe(&e.show_title), safe(&e.title), ext_of(&e.url));
+    let mut rel = format!("{}/{day} {}{}", safe(&e.show_title), safe(&e.title), ext_of(&e.url));
+    // two episodes on the same day with the same title (or two shows with the same name): each its own file
+    let taken: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM episode WHERE file = ? AND id != ?")
+        .bind(&rel)
+        .bind(&e.id)
+        .fetch_one(&st.db)
+        .await?;
+    if taken > 0 || folder(st).join(&rel).exists() {
+        let tail: String = e.id.chars().skip(e.id.chars().count().saturating_sub(6)).collect();
+        rel = format!("{}/{day} {} [{tail}]{}", safe(&e.show_title), safe(&e.title), ext_of(&e.url));
+    }
     let dst = folder(st).join(&rel);
     if let Some(d) = dst.parent() {
         tokio::fs::create_dir_all(d).await?;
@@ -340,9 +350,21 @@ async fn remove_file(st: &AppState, id: &str) {
         .flatten()
         .flatten();
     if let Some(rel) = rel {
-        let _ = tokio::fs::remove_file(folder(st).join(rel)).await;
+        if !shared(st, &rel, id).await {
+            let _ = tokio::fs::remove_file(folder(st).join(&rel)).await;
+        }
         let _ = sqlx::query("UPDATE episode SET file = NULL WHERE id = ?").bind(id).execute(&st.db).await;
     }
+}
+
+/// Another episode's saved file is this one too (saved before names were kept apart): it stays.
+async fn shared(st: &AppState, rel: &str, id: &str) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM episode WHERE file = ? AND id != ?")
+        .bind(rel)
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .map_or(true, |n| n > 0)
 }
 
 /// Downloads what's wanted, removes what isn't, refreshes feeds every 2 hours. Woken by `podcast_wake`.
@@ -513,10 +535,15 @@ pub async fn subscribe(st: &AppState, url: &str) -> Result<(String, bool)> {
 
 /// Remove a show, its downloaded episodes and everyone's progress in it.
 pub async fn unsubscribe(st: &AppState, id: &str) -> Result<()> {
-    let files: Vec<String> =
-        sqlx::query_scalar("SELECT file FROM episode WHERE podcast_id = ? AND file IS NOT NULL").bind(id).fetch_all(&st.db).await?;
+    let files: Vec<String> = sqlx::query_scalar(
+        "SELECT file FROM episode e WHERE podcast_id = ?1 AND file IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM episode o WHERE o.file = e.file AND o.podcast_id != ?1)",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await?;
     for f in files {
-        let _ = tokio::fs::remove_file(folder(st).join(f)).await;
+        let _ = tokio::fs::remove_file(folder(st).join(f)).await; // (not one another show's episode has too)
     }
     let title: Option<String> = sqlx::query_scalar("SELECT title FROM podcast WHERE id = ?").bind(id).fetch_optional(&st.db).await?;
     sqlx::query("DELETE FROM podcast_progress WHERE episode_id IN (SELECT id FROM episode WHERE podcast_id = ?)").bind(id).execute(&st.db).await?;

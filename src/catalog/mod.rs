@@ -356,7 +356,8 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
     for q in [format!(r#"artist:"{artist}" album:"{clean}""#), format!("{artist} {clean}")] {
-        for a in st.catalog.dz.list("search/album", &[("q", &q), ("limit", "15")]).await {
+        // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later)
+        for a in st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await? {
             if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
                 cands.push(a);
             }
@@ -401,7 +402,8 @@ pub async fn artist_dz_id(st: &AppState, name: &str) -> Option<String> {
         return hit;
     }
     let mut best: Option<Value> = None;
-    for a in st.catalog.dz.list("search/artist", &[("q", name), ("limit", "10")]).await {
+    // Deezer didn't answer: nothing is kept (it's asked again next time, not a month later)
+    for a in st.catalog.dz.try_list("search/artist", &[("q", name), ("limit", "10")]).await? {
         if ak(s(&a, "name")) == key && best.as_ref().is_none_or(|b| n(&a, "nb_fan") > n(b, "nb_fan")) {
             best = Some(a);
         }
@@ -504,9 +506,11 @@ pub async fn artist_info(st: &AppState, name: &str) -> Option<Value> {
     if let Some(v) = cache_get(st, "artist_info", &key, 7).await {
         return v.and_then(|v| serde_json::from_str(&v).ok());
     }
-    let found = match dz_artist(st, name).await {
+    // Deezer didn't answer: nothing is kept (it's asked again next time)
+    let hits = st.catalog.dz.try_list("search/artist", &[("q", name), ("limit", "1")]).await?;
+    let found = match hits.into_iter().next().filter(|a| same_artist(name, s(a, "name"))) {
         Some(a) => {
-            let related = st.catalog.dz.list(&format!("artist/{}/related", n(&a, "id")), &[("limit", "20")]).await;
+            let related = st.catalog.dz.try_list(&format!("artist/{}/related", n(&a, "id")), &[("limit", "20")]).await?;
             Some(json!({ "artist": a, "related": related }))
         }
         None => None,
