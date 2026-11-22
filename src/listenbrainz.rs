@@ -200,9 +200,9 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
     // last time's songs you didn't keep go; kept ones move into Songs
     clean_up(st, &owner).await?;
     let mut have = vec![];
-    let mut asked = 0;
+    let mut wanted = vec![];
     sqlx::query("DELETE FROM request_want WHERE playlist_id = ?").bind(&pid).execute(&st.db).await?;
-    for (title, artist, album, secs) in &tracks {
+    for (title, artist, _album, secs) in &tracks {
         if let Some(mine) = catalog::find(st, title, artist, Some(*secs).filter(|s| *s > 0)).await {
             have.push(mine.id);
             continue;
@@ -216,17 +216,11 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
         let Some(t) = hit.filter(|t| catalog::text::same_artist(artist, t["artist"]["name"].as_str().unwrap_or(""))) else {
             continue;
         };
-        let key = format!("dz-t-{}", t["id"]);
-        let _ = album;
-        if catalog::ask(st, &key, &owner, false, Some(&pid), false).await? {
-            sqlx::query("UPDATE request SET folder = ? WHERE key = ? AND rel IS NULL")
-                .bind(FOLDER)
-                .bind(&key)
-                .execute(&st.db)
-                .await?;
-            asked += 1;
-        }
+        wanted.push(format!("dz-t-{}", t["id"]));
     }
+    // the songs you have go in first; only then are the others asked for. (Asked for first, one could arrive and
+    // join the playlist before it was filled, and the filling dropped it again, or put it in the same place as
+    // another song.)
     let mut tx = st.db.begin().await?;
     sqlx::query("DELETE FROM playlist_entry WHERE playlist_id = ?").bind(&pid).execute(&mut *tx).await?;
     for (i, id) in have.iter().enumerate() {
@@ -238,13 +232,15 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
             .await?;
     }
     sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&mut *tx).await?;
-    sqlx::query("UPDATE discovery SET source = ?, filled_at = ? WHERE kind = ?")
-        .bind(&source)
-        .bind(now())
-        .bind(kind)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
+    let mut asked = 0;
+    for key in &wanted {
+        // filed into Discovery/ from the start (set afterwards, a quick download could land in Songs/ and stay)
+        if catalog::ask_into(st, key, &owner, false, Some(&pid), false, Some(FOLDER)).await? {
+            asked += 1;
+        }
+    }
+    sqlx::query("UPDATE discovery SET source = ?, filled_at = ? WHERE kind = ?").bind(&source).bind(now()).bind(kind).execute(&st.db).await?;
     info!(playlist = title_of(kind), have = have.len(), asked, "discovery playlist filled from ListenBrainz");
     Ok(())
 }

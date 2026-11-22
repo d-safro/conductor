@@ -522,23 +522,19 @@ pub async fn apply_wants(st: &AppState, key: &str, local: &str) -> Result<()> {
                 .bind(now()).bind(&user).bind(local).execute(&st.db).await?;
         }
         if !pid.is_empty() {
-            let have: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist_entry WHERE playlist_id = ? AND track_id = ?")
-                .bind(&pid)
-                .bind(local)
-                .fetch_one(&st.db)
-                .await?;
-            if have == 0 {
-                let pos: i64 =
-                    sqlx::query_scalar("SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_entry WHERE playlist_id = ?")
-                        .bind(&pid)
-                        .fetch_one(&st.db)
-                        .await?;
-                sqlx::query("INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES (?, ?, ?)")
-                    .bind(&pid)
-                    .bind(pos)
-                    .bind(local)
-                    .execute(&st.db)
-                    .await?;
+            // at the end, in one statement: the playlist may be written at the same time (a discovery list being
+            // filled, an app's change), and a place worked out first could be taken by then
+            let added = sqlx::query(
+                "INSERT INTO playlist_entry (playlist_id, position, track_id)
+                 SELECT ?1, (SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_entry WHERE playlist_id = ?1), ?2
+                 WHERE NOT EXISTS (SELECT 1 FROM playlist_entry WHERE playlist_id = ?1 AND track_id = ?2)
+                   AND EXISTS (SELECT 1 FROM playlist WHERE id = ?1)",
+            )
+            .bind(&pid)
+            .bind(local)
+            .execute(&st.db)
+            .await?;
+            if added.rows_affected() > 0 {
                 sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&st.db).await?;
             }
         }

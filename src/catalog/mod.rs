@@ -578,7 +578,7 @@ pub async fn trials_today(st: &AppState) -> i64 {
 }
 
 /// Add a request for this Deezer track (false when Deezer doesn't know it).
-async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool) -> Result<bool> {
+async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool, folder: Option<&str>) -> Result<bool> {
     let Some(tid) = dz_id(key, 't') else { return Ok(false) };
     let t = st.catalog.dz.get(&format!("track/{tid}"), &[]).await;
     if s(&t, "title").is_empty() {
@@ -602,7 +602,7 @@ async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool) -> Re
     .bind(s(&t["album"], "title"))
     .bind(n(&t, "duration") * 1000)
     .bind(Some(s(&t, "isrc")).filter(|x| !x.is_empty()))
-    .bind(if trial { "Trial" } else { "Songs" })
+    .bind(folder.unwrap_or(if trial { "Trial" } else { "Songs" }))
     .bind(trial)
     .bind(if trial { Some(now()) } else { None })
     .bind(if trial { Some(user_id) } else { None })
@@ -616,6 +616,20 @@ async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool) -> Re
 /// Ask for this Deezer track. False when Deezer doesn't know it (or, on trial, today's trials are used up).
 /// trial: you played / queued it; it goes to the Trial folder and is deleted unless you keep it.
 pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: Option<&str>, trial: bool) -> Result<bool> {
+    ask_into(st, key, user_id, star, playlist, trial, None).await
+}
+
+/// `ask`, filed into `folder` (Discovery/) instead of Songs/ or Trial/. The folder is set before the download
+/// worker can see the request, so it can't be filed anywhere else.
+pub async fn ask_into(
+    st: &AppState,
+    key: &str,
+    user_id: &str,
+    star: bool,
+    playlist: Option<&str>,
+    trial: bool,
+    folder: Option<&str>,
+) -> Result<bool> {
     let known: Option<String> =
         sqlx::query_scalar("SELECT status FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
     if trial && known.is_some() && known.as_deref() != Some("notfound") {
@@ -624,7 +638,7 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
     if trial && known.is_none() && trials_today(st).await >= st.cfg.trial_per_day {
         return Ok(false); // enough trials today; it keeps playing the preview
     }
-    if known.is_none() && !new_request(st, key, user_id, trial).await? {
+    if known.is_none() && !new_request(st, key, user_id, trial, folder).await? {
         return Ok(false);
     } else if known.as_deref() == Some("notfound") {
         // asked again later: look once more
@@ -640,7 +654,8 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
             .bind(key)
             .execute(&st.db)
             .await?;
-        sqlx::query("UPDATE request SET trial = 0, folder = 'Songs' WHERE key = ? AND rel IS NULL")
+        sqlx::query("UPDATE request SET trial = 0, folder = ? WHERE key = ? AND rel IS NULL")
+            .bind(folder.unwrap_or("Songs"))
             .bind(key)
             .execute(&st.db)
             .await?;
@@ -702,7 +717,7 @@ pub async fn ask_for_mix(st: &AppState, key: &str, user_id: &str, mix: &str, hou
         sqlx::query_scalar("SELECT status FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
     match known.as_deref() {
         None => {
-            if !new_request(st, key, user_id, true).await? {
+            if !new_request(st, key, user_id, true, None).await? {
                 return Ok(false);
             }
             sqlx::query("UPDATE request SET mix = ?, trial_hours = ? WHERE key = ?")
