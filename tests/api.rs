@@ -4599,3 +4599,30 @@ async fn albums_without_a_cover_get_a_picture_except_in_apps_that_draw_their_own
     let r = s.http.get(s.url("getCoverArt", &[("id", &one)])).send().await.unwrap();
     assert_eq!(r.headers()["content-type"], "image/jpeg");
 }
+
+#[tokio::test]
+async fn cyrillic_tags_written_as_latin1_are_read_as_cyrillic_also_in_songs_scanned_before() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    // Windows-1251 bytes that a tagger marked as Latin-1: «Лучшее часть 2 диск 2» by «Аквариум»
+    let mp3 = s.music.join("Akvarium/02.mp3");
+    tone_tags(&mp3, 2, &[("title", "Ãîðîä"), ("artist", "Àêâàðèóì"), ("album", "Ëó÷øåå ÷àñòü 2 äèñê 2")]);
+    tone_tags(&s.music.join("Beyonce/01.mp3"), 1, &[("title", "Halo"), ("artist", "Beyoncé"), ("album", "I Am... Sasha Fierce")]);
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let song = async |q: &str| s.ok("search3", &[("query", q)]).await["searchResult3"]["song"][0].clone();
+    let t = song("Город").await;
+    assert_eq!((t["artist"].as_str(), t["album"].as_str()), (Some("Аквариум"), Some("Лучшее часть 2 диск 2")));
+    assert_eq!(song("Halo").await["artist"], "Beyoncé");
+
+    // a library scanned by an older version has the garbled names: the upgrade has them read again, once
+    sqlx::query("UPDATE track SET title = 'Ãîðîä', artist_name = 'Àêâàðèóì' WHERE title = 'Город'").execute(&s.st.db).await.unwrap();
+    for stmt in include_str!("../migrations/0022_reread_latin1_tags.sql").split(';').filter(|x| x.lines().any(|l| !l.trim().is_empty() && !l.trim_start().starts_with("--"))) {
+        sqlx::query(stmt).execute(&s.st.db).await.unwrap();
+    }
+    let rep = library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    assert_eq!(rep.updated, 2, "the garbled song and Beyoncé's are read again; the plain ASCII ones aren't");
+    let title: String = sqlx::query_scalar("SELECT title FROM track WHERE artist_name = 'Аквариум'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(title, "Город");
+}

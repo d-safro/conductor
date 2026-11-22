@@ -26,6 +26,8 @@ What changed in each release, newest first. The full notes for each are on the
   and searches 5-100× quicker; first scan ~10 s, ~75 MB of memory.
 
 ### Fixed
+- MP3s whose Cyrillic tags were written as Windows-1251 but marked Latin-1 showed garbled names ("Àêâàðèóì" for
+  «Аквариум»); they're read as Cyrillic now, songs already scanned too (read again once). Western accents stay.
 - Podcasts: changes are for admins, and feeds can't reach your own network (`podcast_local` allows it).
 - A smart playlist could read someone else's private playlist.
 - Phone sign-in codes and wrong passwords are limited per address.
