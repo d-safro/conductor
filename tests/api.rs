@@ -380,6 +380,27 @@ async fn subsonic_end_to_end() {
 }
 
 #[tokio::test]
+async fn a_song_ffmpeg_cant_read_is_an_error_not_silence() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    std::fs::create_dir_all(s.music.join("Broken")).unwrap();
+    std::fs::write(s.music.join("Broken/Damaged.flac"), b"fLaC this is not really a flac file at all").unwrap();
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let id = s.ok("search3", &[("query", "Damaged")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let r = s.http.get(s.url("stream", &[("id", &id), ("format", "mp3")])).send().await.unwrap();
+    assert_ne!(r.status(), 200);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!(v["subsonic-response"]["status"], "failed");
+    // a good one still streams
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let r = s.http.get(s.url("stream", &[("id", &one), ("format", "mp3")])).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.bytes().await.unwrap().len() > 1000);
+}
+
+#[tokio::test]
 async fn encore_extensions() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");

@@ -116,17 +116,31 @@ async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, offset: i64) 
     cmd.args(["-map", "0:a:0", "-vn", "-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container, "pipe:1"]);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| ApiError::from(anyhow::anyhow!("ffmpeg can't start ({e}); is it installed?")))?;
-    let stdout = child.stdout.take().ok_or_else(|| ApiError::new(0, "ffmpeg gave no output"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| ApiError::new(0, "ffmpeg gave no output"))?;
+    // the first bytes before answering: when ffmpeg can't read the file (damaged, not audio, an offset past the
+    // end) the app gets an error, not an empty song that "plays" as silence and counts as played
+    let mut first = vec![0u8; 64 * 1024];
+    let n = {
+        use tokio::io::AsyncReadExt;
+        stdout.read(&mut first).await.unwrap_or(0)
+    };
+    if n == 0 {
+        let _ = child.wait().await;
+        return Err(ApiError { http: StatusCode::INTERNAL_SERVER_ERROR, ..ApiError::new(0, "This song can't be transcoded (ffmpeg couldn't read it)") });
+    }
+    first.truncate(n);
     tokio::spawn(async move {
         let _ = child.wait().await; // ends when the app stops listening (ffmpeg gets a broken pipe)
     });
+    let rest = ReaderStream::with_capacity(stdout, 64 * 1024);
+    let body = futures_util::StreamExt::chain(futures_util::stream::once(async move { Ok(axum::body::Bytes::from(first)) }), rest);
     Ok(raw(
         StatusCode::OK,
         &[
             (header::CONTENT_TYPE, x.content_type.to_string()),
             (header::HeaderName::from_static("x-transcoded"), format!("{}@{kbps}k", x.suffix)),
         ],
-        Body::from_stream(ReaderStream::with_capacity(stdout, 64 * 1024)),
+        Body::from_stream(body),
     ))
 }
 
