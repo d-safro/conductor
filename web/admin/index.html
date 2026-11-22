@@ -30,8 +30,10 @@
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
   td.num { font-variant-numeric:tabular-nums; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; border:1px solid var(--line); }
-  .pill.ok { color:var(--ok); border-color:currentColor; } .pill.warn { color:var(--warn); border-color:currentColor; } .pill.bad { color:var(--bad); border-color:currentColor; }
+  /* a status: a coloured dot and the word (the word carries it; the colour only helps) */
+  .pill { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); white-space:nowrap; margin-right:10px; }
+  .pill::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
+  .pill.ok { color:var(--ok); } .pill.warn { color:var(--warn); } .pill.bad { color:var(--bad); }
   button.act, form button { font:inherit; font-size:13px; padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--fg); cursor:pointer; }
   button.act.primary, form button { background:var(--accent); color:#fff; border-color:var(--accent); }
   button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
