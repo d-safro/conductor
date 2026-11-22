@@ -8,8 +8,11 @@
 //!   pitch.yml        Pitch, "What's playing?" (built here from pitch/)
 //!   metronome.yml    Metronome, Automix analysis (built here from metronome/)
 //!   ai.yml           Ollama and Interlude's voice (built here from voice/), only when AI is chosen
+//!   caddy.yml        Caddy, HTTPS on your own domain (its Caddyfile in caddy/), only when chosen
+//!   tunnel.yml       a Cloudflare Tunnel (its token in tunnel.env), only when chosen
 //!
-//! Everything listens on 127.0.0.1 only, on ports chosen so they don't clash. Secrets go in files only you can read.
+//! Everything listens on 127.0.0.1 only, on ports chosen so they don't clash; only Caddy, there to be reached from
+//! outside, listens on ports 80 and 443 of every address. Secrets go in files only you can read.
 
 use std::{
     path::{Path, PathBuf},
@@ -20,7 +23,7 @@ use anyhow::{Context, Result, bail};
 
 pub const PROJECT: &str = "conductor-services";
 /// in the order they're included
-pub const PARTS: &[&str] = &["downloads", "lidarr", "audiomuse", "pitch", "metronome", "ai"];
+pub const PARTS: &[&str] = &["downloads", "lidarr", "audiomuse", "pitch", "metronome", "ai", "caddy", "tunnel"];
 
 pub const PITCH_FILES: &[(&str, &str)] = &[
     ("Dockerfile", include_str!("../../helpers/pitch/Dockerfile")),
@@ -115,6 +118,24 @@ fn private(path: &Path, text: &str) -> Result<()> {
     crate::config::write_private(path, text.as_bytes()).with_context(|| format!("writing {}", path.display()))
 }
 
+/// The port on this computer a part's file gives a container's port (`127.0.0.1:HOST:INNER`). Run again, a part
+/// keeps its port: its own container holds it, so it looks taken, and the settings would point at nothing.
+pub fn part_port(dir: &Path, part: &str, inner: u16) -> Option<u16> {
+    let text = std::fs::read_to_string(dir.join(format!("{part}.yml"))).ok()?;
+    text.lines().find_map(|l| {
+        let l = l.split('#').next()?.trim().strip_prefix('-')?.trim().trim_matches('"');
+        let mut it = l.rsplit(':');
+        let i: u16 = it.next()?.parse().ok()?;
+        let h: u16 = it.next()?.parse().ok()?;
+        (i == inner).then_some(h)
+    })
+}
+
+/// A value from an env file (KEY=VALUE). Run again, the keys a service already holds are kept.
+pub fn env_value(path: &Path, key: &str) -> Option<String> {
+    std::fs::read_to_string(path).ok()?.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().to_string())).filter(|v| !v.is_empty())
+}
+
 /// SELinux (Fedora, RHEL…) keeps containers out of folders that aren't labelled for them: with it, every folder
 /// mounted gets `:z` (Docker labels it once, shared). Elsewhere nothing is added.
 pub fn selinux() -> bool {
@@ -152,18 +173,31 @@ pub fn ids() -> (u32, u32) {
 pub struct Lidarr<'a> {
     pub port: u16,
     pub key: &'a str,
-    /// the music folder and the downloads folder, mounted at the same places as here
+    /// the music folder and the downloads folder, mounted where `lidarr_paths` says
     pub music: &'a str,
     pub downloads: Option<&'a str>,
+    /// Windows paths (D:\Music) aren't paths in Lidarr's Linux container
+    pub windows: bool,
+}
+
+/// Where Lidarr sees the music and the downloads folders: at the same places as here, or on Windows at /music
+/// and /downloads (Conductor's lidarr_downloads then). (music, downloads)
+pub fn lidarr_paths(music: &str, downloads: Option<&str>, windows: bool) -> (String, Option<String>) {
+    let downloads = downloads.filter(|d| !d.is_empty());
+    if !windows {
+        return (music.to_string(), downloads.map(String::from));
+    }
+    ("/music".into(), downloads.map(|d| if d == music { "/music" } else { "/downloads" }.to_string()))
 }
 
 pub fn lidarr(dir: &Path, l: &Lidarr) -> Result<()> {
     let (uid, gid) = ids();
     private(&dir.join("lidarr.env"), &format!("# Lidarr's API key (Conductor has the same one). Keep it to yourself.\nLIDARR__AUTH__APIKEY={}\n", l.key))?;
     let z = opts(false);
-    let mut vols = format!("      - ./lidarr:/config{z}\n      - {}\n", q(&format!("{0}:{0}{z}", l.music)));
-    if let Some(d) = l.downloads.filter(|d| !d.is_empty() && *d != l.music) {
-        vols += &format!("      - {}\n", q(&format!("{d}:{d}{z}")));
+    let (music, downloads) = lidarr_paths(l.music, l.downloads, l.windows);
+    let mut vols = format!("      - ./lidarr:/config{z}\n      - {}\n", q(&format!("{}:{music}{z}", l.music)));
+    if let (Some(d), Some(inside)) = (l.downloads.filter(|d| *d != l.music), downloads) {
+        vols += &format!("      - {}\n", q(&format!("{d}:{inside}{z}")));
     }
     let yaml = format!(
         "# Lidarr: albums you want, which Conductor fetches from Soulseek (Stagehand) and files into your music.
@@ -200,8 +234,10 @@ pub struct AudioMuse<'a> {
 }
 
 pub fn audiomuse(dir: &Path, a: &AudioMuse) -> Result<()> {
-    let db_pass = super::new_key();
-    let jwt = super::new_key();
+    // its database keeps the password it was made with: an earlier run's stays
+    let env = dir.join("audiomuse.env");
+    let db_pass = env_value(&env, "POSTGRES_PASSWORD").unwrap_or_else(super::new_key);
+    let jwt = env_value(&env, "JWT_SECRET").unwrap_or_else(super::new_key);
     private(
         &dir.join("audiomuse.env"),
         &format!(
@@ -281,9 +317,18 @@ fn music_mounts(music: &[String]) -> String {
     }
 }
 
-/// Pitch: the music folders, read-only; its fingerprints in pitch/data.
-pub fn pitch(dir: &Path, port: u16, music: &[String]) -> Result<()> {
+/// Pitch's memory limit in MB for this many songs. It keeps every song's hashes in memory (about 80 KB a song)
+/// and adding songs copies that once, so twice that, plus Python and the song being read. None: so big a library
+/// would need more than a limit can keep safe, so there's none.
+pub fn pitch_memory(songs: usize) -> Option<u64> {
+    let mb = (384 + (songs as u64 * 160).div_ceil(1024)).div_ceil(128) * 128;
+    (mb <= 16384).then_some(mb.max(768))
+}
+
+/// Pitch: the music folders, read-only; its fingerprints in pitch/data. Its memory limit fits `songs`.
+pub fn pitch(dir: &Path, port: u16, music: &[String], songs: usize) -> Result<()> {
     let (uid, gid) = ids();
+    let mem = pitch_memory(songs).map(|mb| format!("    mem_limit: {mb}m\n")).unwrap_or_default();
     let yaml = format!(
         "# Pitch, \"What's playing?\": fingerprints your songs once (slowly, newest first) and recognises short
 # recordings against them. Offline: nothing is sent anywhere, and it only knows your own songs.
@@ -301,8 +346,7 @@ services:
     ports:
       - \"127.0.0.1:{port}:4540\"
     cpus: 1
-    mem_limit: 768m
-    restart: unless-stopped
+{mem}    restart: unless-stopped
 ",
         music = music_mounts(music),
         z = opts(false),
@@ -385,6 +429,90 @@ services:
     write_part(dir, "ai", &yaml, VOICE_FILES)
 }
 
+pub struct Caddy<'a> {
+    pub domain: &'a str,
+    /// a second name for Jam guests and share links (None: the same name, at /jam/)
+    pub jam_domain: Option<&'a str>,
+    /// for Let's Encrypt's notices
+    pub email: Option<&'a str>,
+    /// Conductor and the Jam listener, as Caddy reaches them (it shares this computer's network)
+    pub app: &'a str,
+    pub jam: &'a str,
+}
+
+pub fn caddyfile(c: &Caddy) -> String {
+    let mut t = String::from("# Made by `conductor setup domain` (Prelude). Caddy gets the HTTPS certificates and renews them by itself.\n");
+    if let Some(e) = c.email.filter(|e| !e.is_empty()) {
+        t += &format!("{{\n\temail {e}\n}}\n");
+    }
+    match c.jam_domain.filter(|j| *j != c.domain) {
+        Some(j) => {
+            t += &format!("\n{} {{\n\treverse_proxy {}\n}}\n", c.domain, c.app);
+            t += &format!("\n# Jam guests and share links: nothing else is served on this name\n{j} {{\n\treverse_proxy {}\n}}\n", c.jam);
+        }
+        None => {
+            t += &format!(
+                "\n{} {{\n\t# Jam guests and share links (/jam/…) go to their own listener, which serves nothing else\n\thandle /jam/* {{\n\t\treverse_proxy {}\n\t}}\n\thandle {{\n\t\treverse_proxy {}\n\t}}\n}}\n",
+                c.domain, c.jam, c.app
+            );
+        }
+    }
+    t
+}
+
+/// What the Caddyfile written before says: (domain, the second name, the email).
+pub fn caddy_current(dir: &Path) -> (Option<String>, Option<String>, Option<String>) {
+    let text = std::fs::read_to_string(dir.join("caddy/Caddyfile")).unwrap_or_default();
+    let mut sites = text.lines().filter(|l| !l.starts_with([' ', '\t', '#', '{', '}'])).filter_map(|l| l.strip_suffix('{')).map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+    let email = text.lines().find_map(|l| l.trim().strip_prefix("email ")).map(|e| e.trim().to_string());
+    (sites.next(), sites.next(), email)
+}
+
+/// Caddy: HTTPS on your domain, in front of Conductor (and its Jam listener).
+pub fn caddy(dir: &Path, c: &Caddy) -> Result<()> {
+    let yaml = format!(
+        "# Caddy: Conductor at https://{domain}, with certificates from Let's Encrypt (renewed by itself).
+# It shares this computer's network (so it reaches Conductor at 127.0.0.1): it listens on ports 80 and 443 of
+# every address, and those two are what to forward on your router. Its settings: caddy/Caddyfile.
+services:
+  caddy:
+    image: caddy:2
+    container_name: conductor-caddy
+    network_mode: host
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile{ro}
+      - ./caddy/data:/data{z}
+      - ./caddy/config:/config{z}
+    restart: unless-stopped
+",
+        domain = c.domain,
+        ro = opts(true),
+        z = opts(false),
+    );
+    std::fs::create_dir_all(dir.join("caddy/data"))?;
+    std::fs::create_dir_all(dir.join("caddy/config"))?;
+    write_part(dir, "caddy", &yaml, &[("Caddyfile", &caddyfile(c))])
+}
+
+/// A Cloudflare Tunnel: cloudflared connects out to Cloudflare, which sends your hostname's visitors through it.
+/// The token is in tunnel.env, readable only by you.
+pub fn tunnel(dir: &Path, token: &str) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    private(&dir.join("tunnel.env"), &format!("# The Cloudflare Tunnel's token. Keep this file to yourself.\nTUNNEL_TOKEN={token}\n"))?;
+    let yaml = "# A Cloudflare Tunnel: Conductor reached from outside without opening a port. Where its hostname goes
+# (http://127.0.0.1:…) is set in Cloudflare's dashboard; the token is in tunnel.env (readable only by you).
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: conductor-tunnel
+    network_mode: host
+    env_file: [tunnel.env]
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+";
+    write_part(dir, "tunnel", yaml, &[])
+}
+
 // ── running them ──
 
 fn docker(dir: &Path, args: &[&str]) -> Result<String> {
@@ -401,13 +529,14 @@ pub fn validate(dir: &Path) -> Result<()> {
 }
 
 /// Start (or update) everything in the folder. An earlier version's downloader project is stopped first: its
-/// containers have the same names and now belong to this one.
+/// containers have the same names and now belong to this one. A part taken out (or gluetun, when the downloader
+/// leaves the VPN) has its container removed.
 pub fn up(dir: &Path) -> Result<()> {
     let old = Command::new("docker").args(["compose", "ls", "-a", "-q"]).output();
     if old.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "conductor-downloads")) {
         let _ = Command::new("docker").args(["compose", "-p", "conductor-downloads", "down"]).output();
     }
-    docker(dir, &["up", "-d", "--build"]).map(|_| ())
+    docker(dir, &["up", "-d", "--build", "--remove-orphans"]).map(|_| ())
 }
 
 /// A container's command, for after it's up (e.g. Ollama fetching a model).
@@ -421,6 +550,44 @@ pub fn exec(container: &str, args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caddy_in_front() {
+        let c = super::Caddy { domain: "music.example.com", jam_domain: None, email: Some("me@example.com"), app: "127.0.0.1:4533", jam: "127.0.0.1:4535" };
+        let t = super::caddyfile(&c);
+        assert!(t.contains("email me@example.com") && t.contains("music.example.com {") && t.contains("handle /jam/*"), "{t}");
+        let tmp = tempfile::tempdir().unwrap();
+        super::caddy(tmp.path(), &c).unwrap();
+        assert_eq!(super::caddy_current(tmp.path()), (Some("music.example.com".into()), None, Some("me@example.com".into())));
+        let two = super::Caddy { jam_domain: Some("jam.example.com"), email: None, ..c };
+        super::caddy(tmp.path(), &two).unwrap();
+        assert_eq!(super::caddy_current(tmp.path()), (Some("music.example.com".into()), Some("jam.example.com".into()), None));
+        assert!(!super::caddyfile(&two).contains("handle"), "the Jam name serves only Jam");
+    }
+
+    #[test]
+    fn pitch_memory_fits_the_library() {
+        assert_eq!(super::pitch_memory(2), Some(768));
+        assert_eq!(super::pitch_memory(2_000), Some(768));
+        assert_eq!(super::pitch_memory(10_000), Some(2048), "about 800 MB of hashes, twice while adding");
+        assert_eq!(super::pitch_memory(200_000), None);
+        let tmp = tempfile::tempdir().unwrap();
+        super::pitch(tmp.path(), 4540, &["/srv/music".into()], 10_000).unwrap();
+        assert!(std::fs::read_to_string(tmp.path().join("pitch.yml")).unwrap().contains("mem_limit: 2048m"));
+        super::pitch(tmp.path(), 4540, &["/srv/music".into()], 200_000).unwrap();
+        assert!(!std::fs::read_to_string(tmp.path().join("pitch.yml")).unwrap().contains("mem_limit"));
+    }
+
+    #[test]
+    fn lidarr_on_windows_sees_linux_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = super::Lidarr { port: 8686, key: "k", music: "D:\\Music", downloads: Some("D:\\Downloads"), windows: true };
+        super::lidarr(tmp.path(), &l).unwrap();
+        let y = std::fs::read_to_string(tmp.path().join("lidarr.yml")).unwrap();
+        assert!(y.contains(r#""D:\\Music:/music"#) && y.contains(r#""D:\\Downloads:/downloads"#), "{y}");
+        assert_eq!(super::lidarr_paths("D:\\Music", Some("D:\\Downloads"), true), ("/music".into(), Some("/downloads".into())));
+        assert_eq!(super::lidarr_paths("/srv/m", Some("/srv/d"), false), ("/srv/m".into(), Some("/srv/d".into())));
+    }
+
     #[test]
     fn music_folders_for_the_helpers() {
         let one = super::music_mounts(&["/srv/music".into()]);

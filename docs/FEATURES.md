@@ -84,6 +84,11 @@ The detailed list. The [README](../README.md) has the short version.
 - **Downloads are optional**: without slskd or Lidarr, songs you don't have aren't shown (`catalog` is off unless set),
   and everything else works. Prelude sets the downloader up as one Docker container (slskd; Linux or Windows with
   Docker), on this computer's connection or inside a VPN (gluetun), or uses your own slskd.
+- **Prelude finds your music**: with no music folder yet (or `--music auto`), the drives are listed (lsblk or
+  /proc/mounts on Linux, the logical drives on Windows; label, size, free space, USB or not) with the music folders
+  found near the top of each and their songs counted (a quick look: 5 seconds and 100,000 songs a drive at most).
+  It offers the one with the most songs, else a new folder on the drive with the most free space (the downloads
+  beside it), and on a USB drive the drive guard's file.
 - **Prelude's services folder** (`services/` beside config.toml, one compose project, `docker compose up -d --build`):
   each service can be set up for you there, be one you already run, or be off, and its address and keys go into
   Conductor's settings by themselves. The downloader (`downloads.yml`); Lidarr (its key shared with Conductor, your
@@ -91,7 +96,12 @@ The detailed list. The [README](../README.md) has the short version.
   non-admin Conductor account); Pitch and Metronome (built on your computer from `helpers/`, seeing every music folder); and only with AI on,
   Ollama (or the one already running) and Interlude's voice. Everything listens on 127.0.0.1, on ports that don't
   clash; keys and logins are in files only you can read. `--docker lidarr,audiomuse,pitch,metronome,ai` does the
-  same for `--yes` runs.
+  same for `--yes` runs. Run again, each part keeps its port and the keys and passwords the service already holds,
+  and a downloader inside the VPN stays inside it. Pitch's memory limit follows the number of songs.
+- **On a domain** (`conductor setup domain`): your own domain with HTTPS (Caddy in the services folder, the
+  certificate from Let's Encrypt, `/jam/` or a second name to the Jam listener; it checks the name points at this
+  computer, and offers listening on 127.0.0.1 only), a Cloudflare Tunnel (no ports to open; the token in a file
+  only you can read), or Tailscale Funnel (the commands shown, run only with a yes). Each sets `jam_public_url`.
 - **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or

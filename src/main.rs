@@ -3,7 +3,8 @@
 //!   conductor [--config FILE] [serve]          run the server (default; the first time in a terminal: Prelude first)
 //!   conductor [--config FILE] setup [PART] [--yes …]  Prelude, the setup wizard (also `prelude`; see src/prelude)
 //!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
-//!   conductor [--config FILE] user add NAME [--admin]     password from CONDUCTOR_PASSWORD or stdin
+//!   conductor [--config FILE] user add NAME [--admin] [--if-missing]   password from CONDUCTOR_PASSWORD or stdin
+//!                                                         (--if-missing: a user that's there is left as it is)
 //!   conductor [--config FILE] user passwd NAME
 //!   conductor [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   conductor [--config FILE] backup [FILE]                 everything needed to come back, in one zip
@@ -117,6 +118,13 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             Ok(())
         }
         ["user", "add", name, rest @ ..] => {
+            if rest.contains(&"--if-missing") {
+                let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user WHERE name = ?").bind(name).fetch_one(&pool).await?;
+                if n > 0 {
+                    println!("user {name} is there already");
+                    return Ok(());
+                }
+            }
             let pw = read_password()?;
             auth::create_user(&pool, &secrets, name, &pw, rest.contains(&"--admin")).await?;
             println!("user {name} added");

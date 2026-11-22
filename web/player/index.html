@@ -252,9 +252,11 @@ function signOut() {
 $('out').onclick = signOut;
 
 // ---- views
+// LIST: the songs of the view shown (what a click plays). A view keeps its songs in `made` (its last argument) while it's made; route()
+// makes them LIST only once that view is the one shown, so an older answer arriving late can't swap them.
 let LIST = [], routeTok = 0, moreOffset = 0;
-const songRows = (list, num) => {
-  LIST = list;
+const songRows = (list, num, v) => {
+  if (v) v.list = list;
   if (!list.length) return '<p class="empty">No songs</p>';
   const cur = Q[I] && Q[I].id;
   return list.map((s, i) => `<div class="row song${s.id === cur ? ' on' : ''}" data-act="play" data-i="${i}" data-id="${esc(s.id)}">
@@ -286,31 +288,31 @@ const VIEWS = {
     const a = (await api('getArtist', { id })).artist;
     return `<h1>${esc(a.name)}</h1>` + grid(a.album || []);
   },
-  async album(id) {
+  async album(id, v) {
     const a = (await api('getAlbum', { id })).album, songs = a.song || [];
     const len = songs.reduce((t, s) => t + (s.duration || 0), 0);
     return `<div class="head">${img(a.coverArt, 400)}<div class="grow"><h1>${esc(a.name)}</h1>
       <div class="a">${a.artistId ? `<a href="#/artist/${enc(a.artistId)}">${esc(a.artist)}</a>` : esc(a.artist)}</div>
-      <div class="a">${[a.year, plural(songs.length, 'song'), fmt(len)].filter(Boolean).join(' · ')}</div></div></div>` + listTools() + songRows(songs, true);
+      <div class="a">${[a.year, plural(songs.length, 'song'), fmt(len)].filter(Boolean).join(' · ')}</div></div></div>` + listTools() + songRows(songs, true, v);
   },
   async playlists() {
     const pl = (await api('getPlaylists')).playlists.playlist || [];
     return '<h1>Playlists</h1>' + (pl.map(p => `<a class="row" href="#/playlist/${enc(p.id)}">${img(p.coverArt, 80)}
       <div class="grow"><div class="t">${esc(p.name)}</div><div class="a">${plural(p.songCount || 0, 'song')}</div></div></a>`).join('') || '<p class="empty">No playlists</p>');
   },
-  async playlist(id) {
+  async playlist(id, v) {
     const p = (await api('getPlaylist', { id })).playlist;
-    return `<h1>${esc(p.name)}</h1>` + listTools() + songRows(p.entry || []);
+    return `<h1>${esc(p.name)}</h1>` + listTools() + songRows(p.entry || [], false, v);
   },
-  async starred() {
+  async starred(_, v) {
     const songs = (await api('getStarred2')).starred2.song || [];
-    return '<h1>Starred songs</h1>' + (songs.length ? listTools() : '') + songRows(songs);
+    return '<h1>Starred songs</h1>' + (songs.length ? listTools() : '') + songRows(songs, false, v);
   },
-  async search(q) {
+  async search(q, v) {
     const r = (await api('search3', { query: q, artistCount: 12, albumCount: 18, songCount: 50 })).searchResult3;
     const ar = r.artist || [], al = r.album || [], so = r.song || [];
     if (!ar.length && !al.length && !so.length) return `<p class="empty">Nothing found for “${esc(q)}”</p>`;
-    return (ar.length ? '<h2>Artists</h2>' + ar.map(artistRow).join('') : '') + (al.length ? '<h2>Albums</h2>' + grid(al) : '') + (so.length ? '<h2>Songs</h2>' + songRows(so) : '');
+    return (ar.length ? '<h2>Artists</h2>' + ar.map(artistRow).join('') : '') + (al.length ? '<h2>Albums</h2>' + grid(al) : '') + (so.length ? '<h2>Songs</h2>' + songRows(so, false, v) : '');
   },
   queue() {
     const tools = `<div class="tools"><button data-act="qclear">${icon('x')}Clear</button>
@@ -329,8 +331,10 @@ async function route() {
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === tab));
   if (view !== 'search' && document.activeElement !== $('q')) $('q').value = '';
   let html;
-  try { html = await VIEWS[view](decodeURIComponent(arg)) } catch (e) { html = `<p class="empty">${esc(e.message)}</p>` }
+  const made = {};
+  try { html = await VIEWS[view](decodeURIComponent(arg), made) } catch (e) { html = `<p class="empty">${esc(e.message)}</p>` }
   if (tok !== routeTok) return;
+  LIST = made.list || [];
   $('view').innerHTML = html;
   window.scrollTo(0, 0);
 }
