@@ -6,7 +6,7 @@
 //!   conductor [--config FILE] user add NAME [--admin]     password from CONDUCTOR_PASSWORD or stdin
 //!   conductor [--config FILE] user passwd NAME
 //!   conductor [--config FILE] apikey NAME [LABEL]          prints a new API key
-//!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
+//!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR] [--nd-key KEY]   (a copy of the database)
 //!   conductor [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
 //!   conductor [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
 //!                                                         (your music from another service; see src/import/cli.rs)
@@ -124,12 +124,20 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             Ok(())
         }
         ["import-navidrome", db_path, rest @ ..] => {
-            let artwork = rest.iter().position(|a| *a == "--artwork").and_then(|i| rest.get(i + 1)).map(PathBuf::from);
-            let rep =
-                conductor::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref()).await?;
+            let flag = |f: &str| rest.iter().position(|a| *a == f).and_then(|i| rest.get(i + 1)).copied();
+            let artwork = flag("--artwork").map(PathBuf::from);
+            // Navidrome's own password key, if it was given one (else its default is used)
+            let nd_key = flag("--nd-key").map(String::from).or_else(|| conductor::config::var("ND_PASSWORD_KEY").ok());
+            let rep = conductor::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref(), nd_key.as_deref())
+                .await?;
             println!("{}", serde_json::to_string_pretty(&rep)?);
+            println!("Passwords carried over for {} of {} users.", rep.passwords_carried, rep.users_imported);
             if !rep.users.is_empty() {
-                println!("Set a password for each imported user: conductor user passwd NAME");
+                println!(
+                    "Set a password for: {} (conductor user passwd NAME). If Navidrome had its own PasswordEncryptionKey, \
+                     run the import again with it (--nd-key, or CONDUCTOR_ND_PASSWORD_KEY).",
+                    rep.users.join(", ")
+                );
             }
             Ok(())
         }

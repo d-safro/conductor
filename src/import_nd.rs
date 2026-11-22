@@ -1,7 +1,8 @@
 //! Moving over from Navidrome: `conductor import-navidrome <navidrome.db> [--artwork <navidrome data>/artwork]`.
 //!
 //! Reads a Navidrome database (opened read-only; use a copy) and brings over, keeping Navidrome's ids so apps
-//! that remember ids keep working: users (names and admin flag; passwords have to be set again), plays, ratings,
+//! that remember ids keep working: users (names, admin flag and passwords: Navidrome keeps them encrypted with its
+//! default key unless it was given its own, --nd-key / CONDUCTOR_ND_PASSWORD_KEY), plays, ratings,
 //! stars, play history, playlists (with their smart rules and uploaded pictures), play queues and radio stations.
 //! The library itself is rescanned from the music folder. Running it again replaces what it brought over before.
 //!
@@ -404,9 +405,39 @@ async fn extras(ours: &Db, data: &Path, users: &HashMap<String, String>, rep: &m
     Ok(())
 }
 
+/// Navidrome's password key when none is set (its PasswordEncryptionKey default, a constant in its public source).
+const ND_DEFAULT_KEY: &str = "just for obfuscation";
+/// Passwords Navidrome made up itself (e.g. for reverse-proxy sign-in) start with this: nothing to carry over.
+const ND_AUTOGEN: &str = "__NAVIDROME_AUTOGEN__";
+
+/// The AES key Navidrome encrypts passwords with: SHA-256 of its PasswordEncryptionKey (or of the default).
+pub fn nd_key(custom: Option<&str>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(custom.filter(|k| !k.is_empty()).unwrap_or(ND_DEFAULT_KEY).as_bytes()).into()
+}
+
+/// A password as Navidrome keeps it (base64 of a 12-byte nonce, then the AES-256-GCM ciphertext and tag), opened
+/// with `key`. Only in memory, wiped when dropped; None when it doesn't open (another key) or is one Navidrome made up.
+pub fn nd_password(key: &[u8; 32], stored: &str) -> Option<zeroize::Zeroizing<String>> {
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+    use base64::Engine;
+    let raw = base64::engine::general_purpose::STANDARD.decode(stored.trim()).ok()?;
+    if raw.len() <= 12 + 16 {
+        return None;
+    }
+    let (nonce, ct) = raw.split_at(12);
+    let plain = zeroize::Zeroizing::new(Aes256Gcm::new(key.into()).decrypt(Nonce::from_slice(nonce), ct).ok()?);
+    let text = zeroize::Zeroizing::new(String::from_utf8(plain.to_vec()).ok()?);
+    (!text.is_empty() && !text.starts_with(ND_AUTOGEN)).then_some(text)
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct ImportReport {
+    /// users whose password couldn't be carried over: set it again (`conductor user passwd NAME`)
     pub users: Vec<String>,
+    /// users whose Navidrome password works here too
+    pub passwords_carried: usize,
+    pub users_imported: usize,
     pub song_ids: usize,
     pub album_ids: usize,
     pub artist_ids: usize,
@@ -432,6 +463,7 @@ pub async fn run(
     libs: &[(i64, LibraryConfig)],
     nd_path: &Path,
     artwork: Option<&Path>,
+    nd_password_key: Option<&str>,
 ) -> Result<ImportReport> {
     let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", nd_path.display()))?.read_only(true);
     let nd = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.context("opening the Navidrome database")?;
@@ -463,8 +495,11 @@ pub async fn run(
         sqlx::query(&format!("DELETE FROM {t}")).execute(&mut *tx).await?;
     }
 
-    // users: same ids; a random password until it's set again
-    let users = sqlx::query("SELECT id, user_name, is_admin, created_at FROM user").fetch_all(&nd).await?;
+    // users: same ids, and the same passwords (Navidrome keeps them encrypted with a key we know, unless it was given
+    // its own: then pass it with --nd-key / CONDUCTOR_ND_PASSWORD_KEY). One that won't open gets a random password,
+    // to be set again. The passwords are never shown or logged.
+    let key = nd_key(nd_password_key);
+    let users = sqlx::query("SELECT id, user_name, is_admin, created_at, password FROM user").fetch_all(&nd).await?;
     let mut user_map: HashMap<String, String> = HashMap::new();
     for u in users {
         let (id, name): (String, String) = (u.get("id"), u.get("user_name"));
@@ -473,15 +508,26 @@ pub async fn run(
         let mine = match existing {
             Some(e) => e,
             None => {
+                let stored: Option<String> = u.try_get("password").ok().flatten();
+                let enc = match stored.as_deref().and_then(|s| nd_password(&key, s)) {
+                    Some(pw) => {
+                        rep.passwords_carried += 1;
+                        secrets.encrypt(&pw)
+                    }
+                    None => {
+                        rep.users.push(name.clone());
+                        secrets.encrypt(&db::random_id())
+                    }
+                };
                 sqlx::query("INSERT INTO user (id, name, password_enc, is_admin, created_at) VALUES (?, ?, ?, ?, ?)")
                     .bind(&id)
                     .bind(&name)
-                    .bind(secrets.encrypt(&db::random_id()))
+                    .bind(enc)
                     .bind(u.get::<bool, _>("is_admin"))
                     .bind(nd_time(u.get("created_at")).unwrap_or_else(db::now))
                     .execute(&mut *tx)
                     .await?;
-                rep.users.push(name.clone());
+                rep.users_imported += 1;
                 id.clone()
             }
         };
@@ -684,4 +730,33 @@ pub async fn run(
             .await? as usize;
     rep.songs_not_found = rep.song_ids.saturating_sub(rep.songs_matched_after_scan);
     Ok(rep)
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::*;
+
+    // Made by a real Navidrome 0.64 (createAdmin) with test-only passwords: its default key, and its own key.
+    const DEFAULT: &str = "51Sxz9molEEEoDcirGPBQkUe5GtQQ43ss2tnvqJ5WEXzYWXvGLcKbRfl1Rwo";
+    const CUSTOM: &str = "aKRq7AgwSj43+IBFsufgk+3D0bpQESEx8pqC+qdXjUnBK0WAd7Z+X0QbdbY=";
+    const CUSTOM_KEY: &str = "test-only-custom-key";
+
+    #[test]
+    fn navidromes_passwords() {
+        assert_eq!(nd_password(&nd_key(None), DEFAULT).as_deref().map(String::as_str), Some("test-pw-default-1"));
+        assert_eq!(nd_password(&nd_key(Some(CUSTOM_KEY)), CUSTOM).as_deref().map(String::as_str), Some("test-pw-custom-2"));
+        assert!(nd_password(&nd_key(None), CUSTOM).is_none(), "the wrong key doesn't open it");
+        assert!(nd_password(&nd_key(Some("other")), DEFAULT).is_none());
+        assert!(nd_password(&nd_key(None), "not base64!").is_none() && nd_password(&nd_key(None), "").is_none());
+        // the check Navidrome keeps for its own key (property PasswordsEncryptedKey) is the SHA-256 of our key
+        use sha2::{Digest, Sha256};
+        assert_eq!(hex::encode(Sha256::digest(nd_key(Some(CUSTOM_KEY)))), "4542de552716c4147253ceb36e83d900474fa98985ce7fe4ce2eab0f92c5d5dd");
+        // one Navidrome made up itself isn't carried over
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+        use base64::Engine;
+        let nonce = [7u8; 12];
+        let mut raw = nonce.to_vec();
+        raw.extend(Aes256Gcm::new((&nd_key(None)).into()).encrypt(Nonce::from_slice(&nonce), format!("{ND_AUTOGEN}x").as_bytes()).unwrap());
+        assert!(nd_password(&nd_key(None), &base64::engine::general_purpose::STANDARD.encode(raw)).is_none());
+    }
 }

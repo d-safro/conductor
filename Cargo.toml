@@ -38,6 +38,8 @@ futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 rpassword = "7.5.5"
+base64 = "0.23.1"
+zeroize = "1.9.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

@@ -2948,6 +2948,67 @@ async fn slskd_follows_the_vpns_forwarded_port() {
     wait_for(async || conductor::vpn::status(&s.st).forwarded_port == Some(41234), "the status").await;
 }
 
+/// A Navidrome database with just what the importer reads, and two users whose passwords a real Navidrome encrypted
+/// (test-only passwords): one with its default key, one with its own key.
+async fn navidrome_db(path: &Path) {
+    let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(path).create_if_missing(true);
+    let nd = sqlx::SqlitePool::connect_with(opts).await.unwrap();
+    for sql in [
+        "CREATE TABLE library (id INTEGER, name TEXT)",
+        "INSERT INTO library VALUES (1, 'Music Library')",
+        "CREATE TABLE user (id TEXT, user_name TEXT, is_admin BOOL, created_at TEXT, password TEXT)",
+        "INSERT INTO user VALUES ('nd-u1', 'nd-default', 1, '2024-01-01 00:00:00', '51Sxz9molEEEoDcirGPBQkUe5GtQQ43ss2tnvqJ5WEXzYWXvGLcKbRfl1Rwo')",
+        "INSERT INTO user VALUES ('nd-u2', 'nd-custom', 0, '2024-01-01 00:00:00', 'aKRq7AgwSj43+IBFsufgk+3D0bpQESEx8pqC+qdXjUnBK0WAd7Z+X0QbdbY=')",
+        "CREATE TABLE media_file (id TEXT, path TEXT, library_id INTEGER, album_artist TEXT, album TEXT, album_id TEXT, created_at TEXT)",
+        "CREATE TABLE album (id TEXT, name TEXT, album_artist TEXT, missing BOOL, song_count INTEGER, created_at TEXT)",
+        "CREATE TABLE artist (id TEXT, name TEXT, missing BOOL)",
+        "CREATE TABLE annotation (user_id TEXT, item_id TEXT, item_type TEXT, play_count INTEGER, play_date TEXT, rating INTEGER, starred BOOL, starred_at TEXT)",
+        "CREATE TABLE scrobbles (media_file_id TEXT, user_id TEXT, submission_time INTEGER)",
+        "CREATE TABLE playlist (id TEXT, name TEXT, comment TEXT, public BOOL, owner_id TEXT, rules TEXT, uploaded_image TEXT, created_at TEXT, updated_at TEXT)",
+        "CREATE TABLE playlist_tracks (id INTEGER, playlist_id TEXT, media_file_id TEXT)",
+        "CREATE TABLE playqueue (user_id TEXT, current TEXT, changed_by TEXT, items TEXT, position INTEGER, updated_at TEXT)",
+        "CREATE TABLE radio (id TEXT, name TEXT, stream_url TEXT, home_page_url TEXT)",
+    ] {
+        sqlx::query(sql).execute(&nd).await.unwrap();
+    }
+    nd.close().await;
+}
+
+async fn signs_in(s: &Server, user: &str, pw: &str) -> (bool, bool) {
+    let salt = "s4lt";
+    let t = format!("{:x}", md5::compute(format!("{pw}{salt}")));
+    let ping = async |q: String| -> bool {
+        let r: Value = s.http.get(format!("{}/rest/ping?{q}&v=1.16.1&c=test&f=json", s.base)).send().await.unwrap().json().await.unwrap();
+        r["subsonic-response"]["status"] == "ok"
+    };
+    let user = form_urlencoded::byte_serialize(user.as_bytes()).collect::<String>();
+    let p = form_urlencoded::byte_serialize(pw.as_bytes()).collect::<String>();
+    (ping(format!("u={user}&t={t}&s={salt}")).await, ping(format!("u={user}&p={p}")).await)
+}
+
+#[tokio::test]
+async fn navidrome_passwords_come_over() {
+    if !have_ffmpeg() {
+        return;
+    }
+    for (key, carried, reset) in [(None, "nd-default", "nd-custom"), (Some("test-only-custom-key"), "nd-custom", "nd-default")] {
+        let s = Server::start().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let nd = tmp.path().join("navidrome.db");
+        navidrome_db(&nd).await;
+        let rep = conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, key).await.unwrap();
+        assert_eq!((rep.users_imported, rep.passwords_carried), (2, 1));
+        assert_eq!(rep.users, [reset.to_string()], "the other one is to be set again");
+        let shown = serde_json::to_string(&rep).unwrap();
+        assert!(!shown.contains("test-pw-") && !shown.contains("51Sxz9") && !shown.contains("aKRq7"), "no password in the report: {shown}");
+        let pw = if carried == "nd-default" { "test-pw-default-1" } else { "test-pw-custom-2" };
+        assert_eq!(signs_in(&s, carried, pw).await, (true, true), "{carried} signs in with Navidrome's password (token and p=)");
+        assert_eq!(signs_in(&s, carried, "wrong-password").await, (false, false));
+        let other = if reset == "nd-default" { "test-pw-default-1" } else { "test-pw-custom-2" };
+        assert_eq!(signs_in(&s, reset, other).await, (false, false), "a password that didn't open isn't guessed");
+    }
+}
+
 #[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {

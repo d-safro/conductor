@@ -723,8 +723,13 @@ impl Wizard<'_> {
         let secrets = crate::auth::Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
         let libs = crate::library::ensure_libraries(&db, &cfg.libraries).await?;
         if !nd.is_empty() && self.ui.yes(&format!("Import Navidrome's users, ids, plays and playlists from {nd}?"), true) {
-            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None).await?;
+            let key = config::var("ND_PASSWORD_KEY").ok();
+            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None, key.as_deref()).await?;
             self.ui.say(&format!("  ✓ {} songs keep their ids, {} playlists, {} plays", rep.songs_matched_after_scan, rep.playlists, rep.plays));
+            self.ui.say(&format!("  ✓ passwords carried over for {} of {} users", rep.passwords_carried, rep.users_imported));
+            if !rep.users.is_empty() {
+                self.ui.say(&format!("  ! set a password again for: {} (Navidrome's own key: CONDUCTOR_ND_PASSWORD_KEY)", rep.users.join(", ")));
+            }
         }
         if !ml.is_empty() && self.ui.yes(&format!("Import music-lookup's history and settings from {ml}?"), true) {
             let rep = crate::import_nd::music_lookup(&db, Path::new(&ml), None).await?;
