@@ -2729,6 +2729,38 @@ async fn an_import_stopped_part_way_can_be_undone() {
 }
 
 #[tokio::test]
+async fn undo_keeps_what_others_want_and_skips_deleted_playlists() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let uid = s.st_user().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let run = |q: &'static str| sqlx::query(q);
+    sqlx::query("INSERT INTO import_batch (id, user_id, input_json, status, created_at) VALUES ('b1', ?, '{}', 'done', 0)").bind(&uid).execute(&s.st.db).await.unwrap();
+    sqlx::query("INSERT INTO play (user_id, track_id, played_at, client) VALUES (?, ?, 1000000, 'import:b1')").bind(&uid).bind(&one).execute(&s.st.db).await.unwrap();
+    sqlx::query("INSERT INTO annotation (user_id, item_kind, item_id, starred_at) VALUES (?, 'track', ?, 5)").bind(&uid).bind(&one).execute(&s.st.db).await.unwrap();
+    // it hearted a song, filled a playlist deleted since, and asked for two songs (someone else wants one of them now)
+    sqlx::query("INSERT INTO import_change (batch_id, kind, item) VALUES ('b1', 'star', ?)").bind(&one).execute(&s.st.db).await.unwrap();
+    run("INSERT INTO import_change (batch_id, kind, item, before) VALUES ('b1', 'playlist_songs', 'gone-pl', '[\"x\"]')").execute(&s.st.db).await.unwrap();
+    for key in ["dz-t-5", "dz-t-6"] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', 1)").bind(key).execute(&s.st.db).await.unwrap();
+        sqlx::query("INSERT INTO request_want (key, user_id, star) VALUES (?, ?, 1)").bind(key).bind(&uid).execute(&s.st.db).await.unwrap();
+        sqlx::query("INSERT INTO import_change (batch_id, kind, item) VALUES ('b1', 'request', ?)").bind(key).execute(&s.st.db).await.unwrap();
+    }
+    run("INSERT INTO request_want (key, user_id, star) VALUES ('dz-t-5', 'ann', 1)").execute(&s.st.db).await.unwrap();
+    assert_eq!(s.ok("undoImport", &[("id", "b1")]).await["import"]["status"], "undone");
+    let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(plays, 0);
+    assert!(s.ok("getSong", &[("id", &one)]).await["song"]["starred"].is_null(), "its heart is taken back");
+    let left: Vec<(String, String)> = sqlx::query_as("SELECT r.key, w.user_id FROM request r JOIN request_want w ON w.key = r.key")
+        .fetch_all(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [("dz-t-5".to_string(), "ann".to_string())], "Ann's song stays asked for; only the import's want goes");
+}
+
+#[tokio::test]
 async fn import_into_any_subsonic_server() {
     if !have_ffmpeg() {
         return;
@@ -2824,6 +2856,58 @@ async fn import_from_lastfm_and_deezer() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     panic!("no failure");
+}
+
+#[tokio::test]
+async fn online_imports_keep_keys_and_spotify_to_themselves() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // Last.fm can't be reached: the error doesn't show the address with the key in it
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let lfm = format!("http://{}/lfm", l.local_addr().unwrap());
+    drop(l);
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.lastfm_url = lfm.clone();
+        c.lastfm_api_key = Some("secret-lfm-key-123".into());
+    })
+    .await;
+    let id = s.ok("importOnline", &[("source", "lastfm"), ("account", "bob")]).await["import"]["id"].as_str().unwrap().to_string();
+    let mut error = String::new();
+    for _ in 0..400 {
+        let b = s.ok("getImport", &[("id", &id)]).await["import"].clone();
+        if b["status"] == "failed" {
+            error = b["error"].as_str().unwrap_or("").to_string();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!error.is_empty(), "no failure");
+    assert!(!error.contains("secret-lfm-key-123") && !error.contains("api_key"), "{error}");
+    // the server's Spotify login is the admin's: someone else can't import from it
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/importOnline.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&source=spotify", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["error"]["code"], 50, "{r}");
+    let r: Value = s
+        .http
+        .get(format!("{}/rest/importOnline.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json&source=deezer&account=42", s.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["subsonic-response"]["status"], "ok", "other sources are for everyone: {r}");
+    s.ok("importOnline", &[("source", "spotify")]).await;
 }
 
 #[tokio::test]
@@ -3093,7 +3177,7 @@ async fn navidrome_passwords_come_over() {
         let tmp = tempfile::tempdir().unwrap();
         let nd = tmp.path().join("navidrome.db");
         navidrome_db(&nd).await;
-        let rep = conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, key).await.unwrap();
+        let rep = conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, key, false).await.unwrap();
         assert_eq!((rep.users_imported, rep.passwords_carried), (2, 1));
         assert_eq!(rep.users, [reset.to_string()], "the other one is to be set again");
         let shown = serde_json::to_string(&rep).unwrap();
@@ -3104,6 +3188,27 @@ async fn navidrome_passwords_come_over() {
         let other = if reset == "nd-default" { "test-pw-default-1" } else { "test-pw-custom-2" };
         assert_eq!(signs_in(&s, reset, other).await, (false, false), "a password that didn't open isn't guessed");
     }
+}
+
+#[tokio::test]
+async fn navidrome_again_only_with_replace() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let nd = tmp.path().join("navidrome.db");
+    navidrome_db(&nd).await;
+    let run = async |replace: bool| conductor::import_nd::run(&s.st.cfg, &s.st.db, &s.st.secrets, &s.st.libs, &nd, None, None, replace).await;
+    run(false).await.unwrap();
+    // used since: a playlist of yours
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    s.ok("createPlaylist", &[("name", "Made since"), ("songId", &one)]).await;
+    let e = run(false).await.unwrap_err().to_string();
+    assert!(e.contains("--replace"), "{e}");
+    assert!(s.ok("getPlaylists", &[]).await.to_string().contains("Made since"), "nothing was replaced");
+    run(true).await.unwrap();
+    assert!(!s.ok("getPlaylists", &[]).await.to_string().contains("Made since"), "asked for: replaced");
 }
 
 #[tokio::test]

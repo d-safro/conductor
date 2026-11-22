@@ -8,7 +8,7 @@
 //!   conductor [--config FILE] apikey NAME [LABEL]          prints a new API key
 //!   conductor [--config FILE] backup [FILE]                 everything needed to come back, in one zip
 //!   conductor [--config FILE] restore FILE [--force]        put a backup back (Conductor stopped; see src/backup.rs)
-//!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR] [--nd-key KEY]   (a copy of the database)
+//!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR] [--nd-key KEY] [--replace]   (a copy of the database)
 //!   conductor [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
 //!   conductor [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
 //!                                                         (your music from another service; see src/import/cli.rs)
@@ -146,7 +146,9 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             let artwork = flag("--artwork").map(PathBuf::from);
             // Navidrome's own password key, if it was given one (else its default is used)
             let nd_key = flag("--nd-key").map(String::from).or_else(|| conductor::config::var("ND_PASSWORD_KEY").ok());
-            let rep = conductor::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref(), nd_key.as_deref())
+            // a second run replaces everything since (plays, hearts, playlists): only when asked
+            let replace = rest.contains(&"--replace");
+            let rep = conductor::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref(), nd_key.as_deref(), replace)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&rep)?);
             println!("Passwords carried over for {} of {} users.", rep.passwords_carried, rep.users_imported);

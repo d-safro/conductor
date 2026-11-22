@@ -2,6 +2,8 @@
 //!
 //!   POST importUpload?name=<file name>            body: the export (zip, json, csv, xml, m3u) → {import}
 //!   importOnline?source=spotify|lastfm|deezer&account=   (Last.fm user name, Deezer user id) → {import}
+//!                                                 (spotify: the server's Spotify login, for admins and the user
+//!                                                 Spotify sync is for)
 //!   getImports                                    → {imports: {import: [...]}} (newest first)
 //!   getImport?id=                                 → {import: {id, status, progress, source, report, …}}
 //!   startImport?id=&kinds=liked,albums,artists,playlists,plays,ratings,counts,podcasts&askMissing=N
@@ -42,6 +44,10 @@ pub async fn online(c: &Ctx) -> Result<Reply, ApiError> {
     let source = c.p.req("source")?;
     if !["spotify", "lastfm", "deezer"].contains(&source) {
         return Err(ApiError::new(10, "source is spotify, lastfm or deezer"));
+    }
+    // Spotify is the server's own Spotify login: only for the one it syncs for, or an admin
+    if source == "spotify" && !c.user.is_admin && crate::listenbrainz::owner(&c.st).await.as_deref() != Some(c.user.id.as_str()) {
+        return Err(ApiError::new(50, "Spotify here is someone else's account: only an admin can import from it"));
     }
     let input = json!({ "online": source, "user": c.p.get("account").unwrap_or("") });
     jobs::room_for_another(&c.st, &c.user.id).await.map_err(failed)?;

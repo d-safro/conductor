@@ -188,11 +188,12 @@ async fn artists(st: &AppState, uid: &str) -> Vec<String> {
 }
 
 async fn get_json(http: &reqwest::Client, url: &str, q: &[(&str, &str)]) -> Result<Value, String> {
-    let r = http.get(url).query(q).header("accept", "application/json").send().await.map_err(|e| e.to_string())?;
+    // without the address in errors: Ticketmaster's key is in it
+    let r = http.get(url).query(q).header("accept", "application/json").send().await.map_err(|e| e.without_url().to_string())?;
     if !r.status().is_success() {
         return Err(format!("HTTP {}", r.status().as_u16()));
     }
-    r.json().await.map_err(|e| e.to_string())
+    r.json().await.map_err(|e| e.without_url().to_string())
 }
 
 async fn tm_shows(st: &AppState, http: &reqwest::Client, key: &str, artist: &str, today: &str) -> Result<Vec<Value>, String> {
@@ -321,6 +322,15 @@ pub async fn get_concerts(c: &Ctx, refresh: bool) -> Result<Reply, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn errors_dont_show_the_key() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/events.json", l.local_addr().unwrap());
+        drop(l);
+        let e = get_json(&reqwest::Client::new(), &url, &[("apikey", "sekrit-tm-key")]).await.unwrap_err();
+        assert!(!e.contains("sekrit-tm-key"), "{e}");
+    }
 
     #[test]
     fn names_and_merging() {

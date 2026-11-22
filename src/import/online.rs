@@ -158,9 +158,11 @@ async fn lastfm_page(st: &AppState, key: &str, method: &str, user: &str, page: u
             .query(&[("method", method), ("user", user), ("api_key", key), ("format", "json"), ("limit", "200"), ("page", &page.to_string())])
             .send()
             .await;
+        // reqwest's errors name the address, and with it the API key: they're shown without it
+        let r = r.map_err(reqwest::Error::without_url);
         match r {
             Ok(r) if r.status().is_success() => {
-                let v: Value = r.json().await?;
+                let v: Value = r.json().await.map_err(reqwest::Error::without_url).context("Last.fm")?;
                 if let Some(e) = v["message"].as_str().filter(|_| v.get("error").is_some()) {
                     bail!("Last.fm: {e}");
                 }
