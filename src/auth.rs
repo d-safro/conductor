@@ -30,12 +30,7 @@ impl Secrets {
         } else {
             let mut k = vec![0u8; 32];
             rand::thread_rng().fill_bytes(&mut k);
-            std::fs::write(path, hex::encode(&k))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-            }
+            crate::config::write_private(path, hex::encode(&k).as_bytes()).with_context(|| format!("writing {}", path.display()))?;
             k
         };
         Ok(Self { cipher: Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key)) })

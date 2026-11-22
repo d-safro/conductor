@@ -149,12 +149,7 @@ impl Draft {
             let _ = std::fs::remove_file(&sp);
         } else {
             let text = format!("# Conductor's secrets (read with config.toml). Keep this file to yourself.\n\n{}", toml::to_string_pretty(&self.secrets)?);
-            std::fs::write(&sp, text)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&sp, std::fs::Permissions::from_mode(0o600))?;
-            }
+            config::write_private(&sp, text.as_bytes()).with_context(|| format!("writing {}", sp.display()))?;
         }
         Ok(())
     }

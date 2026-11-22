@@ -89,13 +89,7 @@ fn private(path: &Path, text: &str) -> Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    crate::config::write_private(path, text.as_bytes()).with_context(|| format!("writing {}", path.display()))
 }
 
 pub fn compose_yaml(s: &Setup) -> String {

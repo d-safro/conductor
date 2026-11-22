@@ -252,6 +252,38 @@ pub fn default_config_path() -> PathBuf {
     var_os("DATA_DIR").map(PathBuf::from).unwrap_or_else(default_data_dir).join("config.toml")
 }
 
+/// Write a file only its owner can read (secrets.toml, secret.key, the VPN's keys). It's made that way from the
+/// start, under a temporary name beside it, then renamed over the old one: never readable by others, not even for
+/// a moment, and never half written.
+pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    let res = (|| {
+        let mut f = o.open(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // a leftover temporary file had others' modes
+        }
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
 /// secrets.toml beside a config file.
 pub fn secrets_path(config: &std::path::Path) -> PathBuf {
     config.with_file_name("secrets.toml")
@@ -505,6 +537,28 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("secrets.toml");
+        std::fs::write(&p, b"old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        write_private(&p, b"key = 1").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"key = 1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+            write_private(&tmp.path().join("new.key"), b"k").unwrap();
+            assert_eq!(std::fs::metadata(tmp.path().join("new.key")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2, "no temporary file left");
+    }
 
     // one test touches the environment, so they don't race
     #[test]
