@@ -59,12 +59,14 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
     }
     let times = c.p.all("time");
     let submission = c.p.bool("submission").unwrap_or(true);
+    // what goes to the user's ListenBrainz and Last.fm, sent one after another once the request is done: an app
+    // handing in plays made offline sends many at once, and they must arrive (or wait to be sent again) in order
+    let mut out: Vec<(String, i64, bool)> = vec![];
     for (i, id) in ids.iter().enumerate() {
         let t = items::track(c, id).await?;
         if !submission {
             set_now_playing(c, &t.id).await;
-            let (st, uid, tid) = (c.st.clone(), c.user.id.clone(), t.id.clone());
-            tokio::spawn(async move { crate::scrobble::scrobble(&st, &uid, &tid, now(), true).await });
+            out.push((t.id.clone(), now(), true));
             continue;
         }
         let at = times.get(i).and_then(|v| v.parse::<i64>().ok()).map(|ms| ms / 1000).unwrap_or_else(now);
@@ -81,8 +83,15 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
         for (k, item) in [("track", &t.id), ("album", &t.album_id), ("artist", &t.artist_id)] {
             annotate(c, k, item, "play_count = play_count + 1, last_played = MAX(COALESCE(last_played, 0), ?)", Some(at)).await?;
         }
-        let (st, uid, tid) = (c.st.clone(), c.user.id.clone(), t.id.clone());
-        tokio::spawn(async move { crate::scrobble::scrobble(&st, &uid, &tid, at, false).await });
+        out.push((t.id.clone(), at, false));
+    }
+    if !out.is_empty() {
+        let (st, uid) = (c.st.clone(), c.user.id.clone());
+        tokio::spawn(async move {
+            for (tid, at, playing_now) in out {
+                crate::scrobble::scrobble(&st, &uid, &tid, at, playing_now).await;
+            }
+        });
     }
     empty()
 }

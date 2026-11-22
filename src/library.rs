@@ -203,6 +203,39 @@ fn first_num(s: &str) -> Option<i64> {
     s.split('/').next()?.trim().parse().ok()
 }
 
+/// ID3 text that is really Windows-1251 (Cyrillic) but marked as Latin-1, as many older Russian taggers wrote it:
+/// read as Latin-1 it shows as "Àêâàðèóì" for «Аквариум». Taken back to its bytes and read as Windows-1251 when
+/// nothing in it is past U+00FF, every non-ASCII character is one that Latin-1 shows for a Cyrillic letter
+/// (U+00C0–U+00FF, and U+00A8 / U+00B8 for Ё / ё), and there are at least two of them and more than the ASCII
+/// letters. So "Beyoncé", "Sigur Rós" or "Mötley Crüe" (an accent among ASCII letters) stay as they are.
+fn cp1251_mojibake(s: &str) -> Option<String> {
+    let cyrillic = |c: char| matches!(c, '\u{c0}'..='\u{ff}' | '\u{a8}' | '\u{b8}');
+    let (mut high, mut ascii_letters) = (0, 0);
+    for c in s.chars() {
+        if c.is_ascii() {
+            ascii_letters += c.is_ascii_alphabetic() as usize;
+        } else if cyrillic(c) {
+            high += 1;
+        } else {
+            return None;
+        }
+    }
+    if high < 2 || high <= ascii_letters {
+        return None;
+    }
+    Some(
+        s.chars()
+            .map(|c| match c {
+                '\u{a8}' => 'Ё',
+                '\u{b8}' => 'ё',
+                // Windows-1251's 0xC0–0xFF are А–я, in order
+                c if cyrillic(c) => char::from_u32(0x410 + (c as u32 - 0xc0)).unwrap_or(c),
+                c => c,
+            })
+            .collect(),
+    )
+}
+
 /// What a file whose tags can't be read is known by: its name.
 fn untagged(path: &Path) -> Meta {
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -223,20 +256,23 @@ pub fn read_meta(path: &Path) -> Meta {
     m.bit_depth = p.bit_depth().map(|b| b as i64);
     m.channels = p.channels().unwrap_or(0) as i64;
     if let Some(tag) = tf.primary_tag().or_else(|| tf.first_tag()) {
-        let get = |k: ItemKey| tag.get_string(&k).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        // only ID3 has text marked Latin-1 (Vorbis comments, MP4 and APE tags are always Unicode)
+        let id3 = matches!(tag.tag_type(), lofty::tag::TagType::Id3v2 | lofty::tag::TagType::Id3v1);
+        let fix = |s: &str| -> String { id3.then(|| cp1251_mojibake(s)).flatten().unwrap_or_else(|| s.to_string()) };
+        let get = |k: ItemKey| tag.get_string(&k).map(|s| fix(s.trim())).filter(|s| !s.is_empty());
         if let Some(t) = get(ItemKey::TrackTitle) {
             m.title = t;
         }
         m.artist = get(ItemKey::TrackArtist).unwrap_or_default();
         m.album = get(ItemKey::AlbumTitle).unwrap_or_default();
         m.album_artist = get(ItemKey::AlbumArtist).unwrap_or_default();
-        m.album_raw = tag.get_string(&ItemKey::AlbumTitle).unwrap_or_default().to_string();
+        m.album_raw = fix(tag.get_string(&ItemKey::AlbumTitle).unwrap_or_default());
         // Navidrome reads ALBUMARTIST and its aliases ("ALBUM ARTIST", "ALBUM_ARTIST"), all values, in that order
-        let mut aa: Vec<String> = tag.get_strings(&ItemKey::AlbumArtist).map(String::from).collect();
+        let mut aa: Vec<String> = tag.get_strings(&ItemKey::AlbumArtist).map(fix).collect();
         let unknown = |names: &[&str]| -> Vec<String> {
             tag.items()
                 .filter(|i| matches!(i.key(), ItemKey::Unknown(k) if names.iter().any(|n| k.eq_ignore_ascii_case(n))))
-                .filter_map(|i| i.value().text().map(String::from))
+                .filter_map(|i| i.value().text().map(fix))
                 .collect()
         };
         aa.extend(unknown(&["ALBUM ARTIST", "ALBUM_ARTIST"]));
@@ -259,7 +295,7 @@ pub fn read_meta(path: &Path) -> Meta {
             .or_else(|| get(ItemKey::OriginalReleaseDate))
             .and_then(|s| year_of(&s));
         // every genre tag, each split the way Navidrome splits them ("Pop, Rock", "Rap/Hip Hop", "A; B")
-        let all: Vec<String> = tag.get_strings(&ItemKey::Genre).map(String::from).collect();
+        let all: Vec<String> = tag.get_strings(&ItemKey::Genre).map(fix).collect();
         m.genre = join_genres(&all);
         m.isrc = get(ItemKey::Isrc);
         m.rg_track_gain = get(ItemKey::ReplayGainTrackGain).and_then(|s| db_value(&s));
@@ -683,6 +719,21 @@ pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
 #[cfg(test)]
 mod genre_tests {
     use super::*;
+
+    #[test]
+    fn cyrillic_read_as_latin1_is_read_again_western_accents_stay() {
+        // Windows-1251 bytes shown as Latin-1
+        assert_eq!(cp1251_mojibake("Àêâàðèóì").as_deref(), Some("Аквариум"));
+        assert_eq!(cp1251_mojibake("Ëó÷øåå ÷àñòü 2 äèñê 2").as_deref(), Some("Лучшее часть 2 диск 2"));
+        assert_eq!(cp1251_mojibake("¨æèê è ¸æèê").as_deref(), Some("Ёжик и ёжик"));
+        assert_eq!(cp1251_mojibake("ÄÄÒ - Ãîðîä").as_deref(), Some("ДДТ - Город"));
+        // Western names: an accent or two among ASCII letters
+        for s in ["Beyoncé", "Sigur Rós", "Mötley Crüe", "Ça plane pour moi", "Ágætis byrjun", "Björk", "Ação", "Où", "2×4",
+            "Café del Mar", "Plain ASCII", "", "Café © 2001", "Ӝ Àêâàðèóì"]
+        {
+            assert_eq!(cp1251_mojibake(s), None, "{s}");
+        }
+    }
 
     #[test]
     fn a_reader_that_falls_over_is_one_unreadable_file() {

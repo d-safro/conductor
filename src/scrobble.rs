@@ -123,7 +123,22 @@ enum Sent {
     Never(String),
 }
 
-async fn lb_submit(st: &AppState, token: &str, body: &Value) -> Sent {
+/// A play (or "playing now") for ListenBrainz. `user_id` is whose plays they are: a token of their own that
+/// ListenBrainz no longer takes is marked as needing a new link, as a Last.fm one is (the settings' token isn't).
+async fn lb_submit(st: &AppState, user_id: Option<&str>, token: &str, body: &Value) -> Sent {
+    let sent = lb_post(st, token, body).await;
+    if let (Sent::Never(m), Some(uid)) = (&sent, user_id)
+        && m == LB_REFUSED_TOKEN
+        && account(st, uid, LISTENBRAINZ).await.is_some_and(|a| a.secret == token)
+    {
+        mark_broken(st, uid, LISTENBRAINZ).await;
+    }
+    sent
+}
+
+const LB_REFUSED_TOKEN: &str = "the token isn't accepted";
+
+async fn lb_post(st: &AppState, token: &str, body: &Value) -> Sent {
     let r = http()
         .post(format!("{}/1/submit-listens", st.cfg.listenbrainz_url.trim_end_matches('/')))
         .header("Authorization", format!("Token {token}"))
@@ -133,7 +148,7 @@ async fn lb_submit(st: &AppState, token: &str, body: &Value) -> Sent {
     match r {
         Err(e) => Sent::Later(e.to_string()),
         Ok(r) if r.status().is_success() => Sent::Ok,
-        Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED => Sent::Never("the token isn't accepted".into()),
+        Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED => Sent::Never(LB_REFUSED_TOKEN.into()),
         Ok(r) if r.status() == reqwest::StatusCode::BAD_REQUEST => Sent::Never(format!("ListenBrainz refused it ({})", r.status())),
         Ok(r) => Sent::Later(format!("ListenBrainz answered {}", r.status())),
     }
@@ -331,11 +346,11 @@ pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, pla
     if let Some(token) = lb {
         let body = lb_body(&t, at, playing_now);
         if playing_now {
-            let _ = lb_submit(st, &token, &body).await;
+            let _ = lb_submit(st, Some(user_id), &token, &body).await;
         } else if waiting(st, user_id, LISTENBRAINZ).await {
             keep(st, Some(user_id), LISTENBRAINZ, &body).await;
         } else {
-            match lb_submit(st, &token, &body).await {
+            match lb_submit(st, Some(user_id), &token, &body).await {
                 Sent::Ok => {}
                 Sent::Later(e) => {
                     warn!("ListenBrainz: {e}; the play is kept and sent later");
@@ -368,37 +383,45 @@ pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, pla
 /// (and their later plays with it); plays for an account that's gone are dropped.
 pub async fn resend(st: &AppState) {
     type Row = (i64, String, Option<String>, String);
-    let rows: Vec<Row> = sqlx::query_as("SELECT id, payload, user_id, service FROM lb_queue ORDER BY id LIMIT 500")
-        .fetch_all(&st.db)
-        .await
-        .unwrap_or_default();
     let mut stuck: Vec<(Option<String>, String)> = Vec::new();
-    for (id, p, uid, service) in rows {
-        let who = (uid.clone(), service.clone());
-        if stuck.contains(&who) {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&p) else {
-            let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
-            continue;
-        };
-        let sent = match service.as_str() {
-            LASTFM => match &uid {
-                Some(u) => lastfm_send(st, u, &v).await,
-                None => Sent::Never("no user".into()),
-            },
-            _ => match lb_token(st, uid.as_deref()).await {
-                Some(token) => lb_submit(st, &token, &v).await,
-                None => Sent::Never("not linked any more".into()),
-            },
-        };
-        match sent {
-            Sent::Ok | Sent::Never(_) => {
-                let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+    // in pages, all the way through: one user's long wait (their token is being turned away for now) mustn't keep
+    // everyone else's plays behind it
+    let mut after = 0i64;
+    loop {
+        let rows: Vec<Row> = sqlx::query_as("SELECT id, payload, user_id, service FROM lb_queue WHERE id > ? ORDER BY id LIMIT 500")
+            .bind(after)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+        let Some(last) = rows.last() else { break };
+        after = last.0;
+        for (id, p, uid, service) in rows {
+            let who = (uid.clone(), service.clone());
+            if stuck.contains(&who) {
+                continue;
             }
-            Sent::Later(_) => {
-                let _ = sqlx::query("UPDATE lb_queue SET tries = tries + 1 WHERE id = ?").bind(id).execute(&st.db).await;
-                stuck.push(who);
+            let Ok(v) = serde_json::from_str::<Value>(&p) else {
+                let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+                continue;
+            };
+            let sent = match service.as_str() {
+                LASTFM => match &uid {
+                    Some(u) => lastfm_send(st, u, &v).await,
+                    None => Sent::Never("no user".into()),
+                },
+                _ => match lb_token(st, uid.as_deref()).await {
+                    Some(token) => lb_submit(st, uid.as_deref(), &token, &v).await,
+                    None => Sent::Never("not linked any more".into()),
+                },
+            };
+            match sent {
+                Sent::Ok | Sent::Never(_) => {
+                    let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+                }
+                Sent::Later(_) => {
+                    let _ = sqlx::query("UPDATE lb_queue SET tries = tries + 1 WHERE id = ?").bind(id).execute(&st.db).await;
+                    stuck.push(who);
+                }
             }
         }
     }
