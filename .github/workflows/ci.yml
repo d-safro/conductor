@@ -52,7 +52,8 @@ jobs:
           if ((Get-CimInstance Win32_Service -Filter "Name='Maestro'").StartMode -ne 'Auto') { throw "it won't start with Windows" }
           function Wait-Healthy {
             for ($i = 0; $i -lt 60; $i++) {
-              try { if ((Invoke-WebRequest "$base/health" -UseBasicParsing -TimeoutSec 5).Content.Trim() -eq 'ok') { return } } catch {}
+              # /health answers JSON: {"status":"ok"} (or "degraded" while a music folder isn't connected)
+              try { if ((Invoke-RestMethod "$base/health" -TimeoutSec 5).status -eq 'ok') { return } } catch {}
               Start-Sleep 1
             }
             throw "/health didn't say ok within a minute"
