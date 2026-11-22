@@ -111,6 +111,28 @@ pub fn router(state: Shared) -> Router {
         .with_state(state)
 }
 
+/// A request's address as it may be logged: passwords, tokens and keys in the query (`p`, `t`, `s`, `apiKey`,
+/// the /setup `token`) are left out.
+pub fn loggable_uri(uri: &axum::http::Uri) -> String {
+    const SECRET: &[&str] = &["p", "t", "s", "apikey", "token", "password"];
+    let Some(q) = uri.query() else { return uri.path().to_string() };
+    let kept: Vec<String> = form_urlencoded::parse(q.as_bytes())
+        .map(|(k, v)| if SECRET.contains(&k.to_ascii_lowercase().as_str()) { format!("{k}=…") } else { format!("{k}={v}") })
+        .collect();
+    format!("{}?{}", uri.path(), kept.join("&"))
+}
+
+type MakeSpan = fn(&axum::http::Request<Body>) -> tracing::Span;
+type Trace = tower_http::trace::TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>, MakeSpan>;
+
+/// Request logging (at debug level) without the secrets Subsonic apps put in the address.
+pub fn trace_layer() -> Trace {
+    fn span(r: &axum::http::Request<Body>) -> tracing::Span {
+        tracing::debug_span!(target: "tower_http::trace::make_span", "request", method = %r.method(), uri = %loggable_uri(r.uri()), version = ?r.version())
+    }
+    tower_http::trace::TraceLayer::new_for_http().make_span_with(span as MakeSpan)
+}
+
 async fn health(State(st): State<Shared>) -> Response {
     let offline: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library WHERE online = 0").fetch_one(&st.db).await.unwrap_or(1);
     let status = if offline == 0 { "ok" } else { "degraded" };
@@ -526,6 +548,15 @@ pub fn raw(status: StatusCode, headers: &[(header::HeaderName, String)], body: B
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn no_secrets_in_logged_addresses() {
+        let u: axum::http::Uri = "/rest/stream.view?u=me&p=enc%3A736563726574&t=abc&s=salt&apiKey=k1&id=42&c=app".parse().unwrap();
+        let l = loggable_uri(&u);
+        assert_eq!(l, "/rest/stream.view?u=me&p=…&t=…&s=…&apiKey=…&id=42&c=app");
+        assert_eq!(loggable_uri(&"/setup?token=abc".parse().unwrap()), "/setup?token=…");
+        assert_eq!(loggable_uri(&"/health".parse().unwrap()), "/health");
+    }
+
     #[test]
     fn xml_shape() {
         let v = json!({ "lyrics": { "artist": "A & B", "value": "la <la>" }, "list": { "x": [{ "id": "1" }, { "id": "2" }] } });

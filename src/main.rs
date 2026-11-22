@@ -220,7 +220,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         info!("No accounts yet. Make the first admin at {link} (or run `conductor setup` here)");
         println!("No accounts yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
     }
-    let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
+    let app = api::router(state).layer(api::trace_layer());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     info!(%addr, "Conductor listening");
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(shutdown).await?;
