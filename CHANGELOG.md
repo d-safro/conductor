@@ -35,6 +35,9 @@ What changed in each release, newest first. The full notes for each are on the
 - Interlude's voice failed while it was still downloading.
 - An export with a certain kind of date crashed the import.
 - `getUser` answered for any name.
+- Prelude's domain step: with Conductor on one of the computer's addresses (not 0.0.0.0), "only Caddy reaches it"
+  moved Conductor to 127.0.0.1 after the Caddyfile was written, so Caddy pointed at nothing. Run again, it no longer
+  moves Conductor back to 127.0.0.1 unasked; an email that isn't one is no longer written into the Caddyfile.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.

@@ -1394,12 +1394,38 @@ impl Wizard<'_> {
             }
         };
         let email = self.ask_or("domain-email", "Your email, for Let's Encrypt's notices about the certificate (Enter: none)", cur_email, "");
+        // it goes into the Caddyfile as it is: one word with an @, else none
+        let email = match email.trim() {
+            "" => None,
+            e if e.contains('@') && !e.contains(|c: char| c.is_whitespace() || c.is_control() || "{}\"#".contains(c)) => Some(e.to_string()),
+            e => {
+                self.ui.say(&format!("  ✗ \"{e}\" isn't an email address: none is given to Let's Encrypt"));
+                None
+            }
+        };
         for name in std::iter::once(&domain).chain(jam.as_ref()) {
             self.check_dns(name).await;
         }
         self.ui.say("    People reach it on ports 80 and 443: behind a router, forward those two to this computer.");
+        // with Caddy in front, only it needs to reach Conductor. Asked before the Caddyfile is written, which points
+        // at the address Conductor listens on; offered first only when Caddy is new (run again, the address you
+        // have now is the one you chose)
+        let had_caddy = stack::has_part(dir, "caddy");
+        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
+        if !local_only(&listen) {
+            let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
+            let docker = stack::has_part(dir, "audiomuse");
+            if docker {
+                self.ui.say("    (AudioMuse, in Docker, reaches Conductor over this computer's address: it needs more than 127.0.0.1)");
+            }
+            let q = format!("Let only Caddy reach Conductor (listen on 127.0.0.1:{port}; your apps use https://{domain} then, at home too)?");
+            if self.ui.yes(&q, !docker && !had_caddy && self.f.get("listen").is_none()) {
+                self.d.set("listen", format!("127.0.0.1:{port}"));
+                self.ui.say(&format!("  ✓ Conductor listens on 127.0.0.1:{port} (restart it for that)"));
+            }
+        }
         let (app, jam_at) = self.upstreams();
-        stack::caddy(dir, &stack::Caddy { domain: &domain, jam_domain: jam.as_deref(), email: Some(email.as_str()).filter(|e| !e.is_empty()), app: &app, jam: &jam_at })?;
+        stack::caddy(dir, &stack::Caddy { domain: &domain, jam_domain: jam.as_deref(), email: email.as_deref(), app: &app, jam: &jam_at })?;
         if stack::has_part(dir, "tunnel") {
             stack::remove_part(dir, "tunnel")?;
             self.ui.say("  (the Cloudflare Tunnel is out: Caddy does it now)");
@@ -1410,20 +1436,6 @@ impl Wizard<'_> {
         self.ui.say(&format!("  ✓ Jam guests and share links: {public}"));
         if cfg!(windows) {
             self.ui.say(&format!("    On Windows, if Docker's host network doesn't reach Conductor, Caddy for Windows runs the same file: caddy run --config {}", dir.join("caddy/Caddyfile").display()));
-        }
-        // with Caddy in front, only it needs to reach Conductor
-        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
-        if !local_only(&listen) {
-            let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
-            let docker = stack::has_part(dir, "audiomuse");
-            if docker {
-                self.ui.say("    (AudioMuse, in Docker, reaches Conductor over this computer's address: it needs more than 127.0.0.1)");
-            }
-            let q = format!("Let only Caddy reach Conductor (listen on 127.0.0.1:{port}; your apps use https://{domain} then, at home too)?");
-            if self.ui.yes(&q, !docker && self.f.get("listen").is_none()) {
-                self.d.set("listen", format!("127.0.0.1:{port}"));
-                self.ui.say(&format!("  ✓ Conductor listens on 127.0.0.1:{port} (restart it for that)"));
-            }
         }
         Ok(true)
     }

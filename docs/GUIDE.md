@@ -77,7 +77,7 @@ server's Tailscale address. Nothing is open to the internet.
   certificate from Let's Encrypt and sends `https://<domain>` to Conductor and `/jam/…` to the Jam listener (or a
   second name to it). Prelude checks the name points at this computer's public address; behind a router, forward
   ports 80 and 443 to it. It sets `jam_public_url`, and offers `listen = "127.0.0.1:…"` so only Caddy reaches
-  Conductor. (`--domain NAME [--jam-domain NAME] [--domain-email E]` for `--yes` runs.)
+  Conductor (the first time; run again, the address you have stays the default). (`--domain NAME [--jam-domain NAME] [--domain-email E]` for `--yes` runs.)
 - **A Cloudflare Tunnel** (no ports to open): paste the tunnel's token (kept in `tunnel.env`, readable only by you);
   cloudflared runs in the same folder (`tunnel.yml`). In Cloudflare's dashboard, give the tunnel a public hostname
   to `http://127.0.0.1:4533`, and the same name with the path `^/jam/` to `http://127.0.0.1:4535`.

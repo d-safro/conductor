@@ -566,6 +566,29 @@ async fn on_a_domain_with_caddy_then_a_tunnel() {
     assert!(!dir.join("tunnel.yml").exists() && !read(&dir.join("compose.yml")).contains("tunnel"));
 }
 
+#[tokio::test]
+async fn caddy_points_at_where_conductor_listens() {
+    let base = services().await;
+    let p = place(&base);
+    let dir = p.root.join("data/services");
+    // Conductor on one of this computer's addresses: "only Caddy" moves it to 127.0.0.1, and Caddy points there
+    std::fs::write(&p.config, format!("{}listen = \"192.0.2.10:4533\"\n", read(&p.config))).unwrap();
+    let out = yes(&p.config, &["--yes", "domain", "--domain", "music.invalid", "--domain-email", "me@example.com }\n:80 {"]).await;
+    assert!(out.contains("isn't an email address"), "{out}");
+    let caddyfile = read(&dir.join("caddy/Caddyfile"));
+    assert!(caddyfile.contains("reverse_proxy 127.0.0.1:4533") && !caddyfile.contains("192.0.2.10"), "{caddyfile}");
+    assert!(!caddyfile.contains("email") && !caddyfile.contains(":80"), "{caddyfile}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.listen.to_string(), "127.0.0.1:4533");
+    // you open it up again yourself: run again, that stays
+    let cfg = read(&p.config).replace("127.0.0.1:4533", "0.0.0.0:4533");
+    std::fs::write(&p.config, cfg).unwrap();
+    yes(&p.config, &["--yes", "domain"]).await;
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.listen.to_string(), "0.0.0.0:4533");
+    assert!(read(&dir.join("caddy/Caddyfile")).contains("reverse_proxy 127.0.0.1:4533"));
+}
+
 /// A fake drive: a folder of the test's own.
 fn drive(mount: &Path, label: &str, free_gb: u64, usb: bool) -> Drive {
     std::fs::create_dir_all(mount).unwrap();
