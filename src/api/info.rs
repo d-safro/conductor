@@ -139,7 +139,9 @@ pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
     }
     // 3. the same genre
     if ids.len() < count && !genre.is_empty() {
-        for t in items::tracks_where(c, "t.genre = ?", &[&genre], &format!("ORDER BY RANDOM() LIMIT {count}")).await? {
+        let first = crate::library::split_genres(&genre).into_iter().next().unwrap_or_default();
+        let cond = crate::library::has_genre_sql("t.genre");
+        for t in items::tracks_where(c, &cond, &[&first], &format!("ORDER BY RANDOM() LIMIT {count}")).await? {
             push(&mut ids, t.id);
         }
     }

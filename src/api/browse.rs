@@ -115,7 +115,8 @@ pub async fn album_list(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
         }
         "byGenre" => {
             let g = c.p.req("genre")?;
-            items::albums_where(c, "al.genre = ?", &[g], &format!("ORDER BY al.sort_name {page}")).await?
+            let cond = format!("al.id IN (SELECT t.album_id FROM track t WHERE {})", crate::library::has_genre_sql("t.genre"));
+            items::albums_where(c, &cond, &[g], &format!("ORDER BY al.sort_name {page}")).await?
         }
         other => return Err(ApiError::new(0, format!("Unknown list type: {other}"))),
     };
@@ -128,7 +129,7 @@ pub async fn random_songs(c: &Ctx) -> Result<Reply, ApiError> {
     let mut cond = vec!["1".to_string()];
     let mut binds: Vec<String> = vec![];
     if let Some(g) = c.p.get("genre").filter(|g| !g.is_empty()) {
-        cond.push("t.genre = ?".into());
+        cond.push(crate::library::has_genre_sql("t.genre"));
         binds.push(g.into());
     }
     if let Some(y) = c.p.int("fromYear") {
@@ -150,7 +151,7 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
     let offset = c.p.int("offset").unwrap_or(0).max(0);
     let rows = items::tracks_where(
         c,
-        "t.genre = ?",
+        &crate::library::has_genre_sql("t.genre"),
         &[g],
         &format!("ORDER BY t.album_name, t.disc, t.number LIMIT {count} OFFSET {offset}"),
     )
@@ -159,13 +160,20 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 pub async fn genres(c: &Ctx) -> Result<Reply, ApiError> {
-    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
-        "SELECT genre, COUNT(*), COUNT(DISTINCT album_id) FROM track WHERE genre IS NOT NULL AND missing_since IS NULL
-         GROUP BY genre ORDER BY genre COLLATE NOCASE",
-    )
-    .fetch_all(&c.st.db)
-    .await?;
-    let g: Vec<Value> = rows.into_iter().map(|(n, s, a)| json!({ "value": n, "songCount": s, "albumCount": a })).collect();
+    // each genre of a song counts ("Pop; Rock" is in Pop and in Rock)
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT genre, album_id FROM track WHERE genre IS NOT NULL AND genre != '' AND missing_since IS NULL")
+            .fetch_all(&c.st.db)
+            .await?;
+    let mut by: std::collections::BTreeMap<String, (String, i64, std::collections::HashSet<String>)> = Default::default();
+    for (g, album) in rows {
+        for name in crate::library::split_genres(&g) {
+            let e = by.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), 0, Default::default()));
+            e.1 += 1;
+            e.2.insert(album.clone());
+        }
+    }
+    let g: Vec<Value> = by.into_values().map(|(n, s, a)| json!({ "value": n, "songCount": s, "albumCount": a.len() })).collect();
     ok(json!({ "genres": { "genre": g } }))
 }
 

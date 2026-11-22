@@ -15,12 +15,23 @@ fn have_ffmpeg() -> bool {
 }
 
 fn tone(path: &Path, title: &str, artist: &str, album: &str, track: u32, secs: u32) {
+    tone_genre(path, title, artist, album, track, secs, "Test")
+}
+
+fn tone_genre(path: &Path, title: &str, artist: &str, album: &str, track: u32, secs: u32, genre: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let ok = Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("sine=frequency={}:duration={secs}", 220 * track)])
         .args(["-metadata", &format!("title={title}"), "-metadata", &format!("artist={artist}")])
         .args(["-metadata", &format!("album={album}"), "-metadata", &format!("track={track}"), "-metadata", "date=2021"])
-        .args(["-metadata", "genre=Test", "-metadata", "REPLAYGAIN_TRACK_GAIN=-6.50 dB", "-metadata", "ISRC=USABC2100001"])
+        .args([
+            "-metadata",
+            &format!("genre={genre}"),
+            "-metadata",
+            "REPLAYGAIN_TRACK_GAIN=-6.50 dB",
+            "-metadata",
+            "ISRC=USABC2100001",
+        ])
         .arg(path)
         .status()
         .unwrap()
@@ -1845,4 +1856,36 @@ async fn artist_info_and_similar_songs() {
     assert!(titles.contains(&"Two") && titles.contains(&"Three") && !titles.contains(&"One"), "{titles:?}");
     let r = s.ok("getSimilarSongs2", &[("id", &alpha)]).await;
     assert_eq!(r["similarSongs2"]["song"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn genres_split_like_navidrome() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    tone_genre(&s.music.join("Gamma/Mixed/01 Four.flac"), "Four", "Gamma", "Mixed", 1, 2, "Pop, Rock");
+    // a song scanned before genres were split
+    sqlx::query("UPDATE track SET genre = 'Folk/Rock' WHERE title = 'Two'").execute(&s.st.db).await.unwrap();
+    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let r = s.ok("getGenres", &[]).await;
+    let g: Vec<(String, i64)> = r["genres"]["genre"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x["value"].as_str().unwrap().to_string(), x["songCount"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(g, [("Folk".into(), 1), ("Pop".into(), 1), ("Rock".into(), 2), ("Test".into(), 2)], "{g:?}");
+    let r = s.ok("getSongsByGenre", &[("genre", "rock")]).await;
+    let mut titles: Vec<&str> =
+        r["songsByGenre"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    titles.sort();
+    assert_eq!(titles, ["Four", "Two"]);
+    let four = &r["songsByGenre"]["song"].as_array().unwrap().iter().find(|x| x["title"] == "Four").unwrap().clone();
+    assert_eq!(four["genre"], "Pop");
+    assert_eq!(four["genres"], serde_json::json!([{ "name": "Pop" }, { "name": "Rock" }]));
+    let r = s.ok("getAlbumList2", &[("type", "byGenre"), ("genre", "Pop")]).await;
+    assert_eq!(r["albumList2"]["album"][0]["name"], "Mixed");
+    let r = s.ok("getRandomSongs", &[("genre", "Folk")]).await;
+    assert_eq!(r["randomSongs"]["song"][0]["title"], "Two");
 }

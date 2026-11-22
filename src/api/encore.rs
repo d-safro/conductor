@@ -520,10 +520,8 @@ pub async fn listening_review(c: &Ctx) -> Result<Reply, ApiError> {
     let rows: Vec<(i64, &StatSong)> = rows.iter().filter_map(|(t, id)| songs.get(id).map(|s| (*t, s))).collect();
     let mut genres: HashMap<String, f64> = HashMap::new();
     for (_, s) in &rows {
-        for g in genres_of.get(&s.id).cloned().flatten().unwrap_or_default().split(';') {
-            if !g.trim().is_empty() {
-                *genres.entry(g.trim().to_string()).or_default() += s.duration_ms as f64 / 60_000.0;
-            }
+        for g in crate::library::split_genres(&genres_of.get(&s.id).cloned().flatten().unwrap_or_default()) {
+            *genres.entry(g).or_default() += s.duration_ms as f64 / 60_000.0;
         }
     }
     let mut genres: Vec<_> = genres.into_iter().collect();

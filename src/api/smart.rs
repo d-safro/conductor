@@ -131,6 +131,12 @@ fn condition(c: &Value, out: &mut Vec<Bind>) -> Result<String> {
     let (col, kind) = field(fname).ok_or_else(|| anyhow!("unknown field: {fname}"))?;
     let text_col = format!("{col} COLLATE NOCASE");
     let sql = match (op.as_str(), kind) {
+        // a song with several genres "is" each of them
+        ("is" | "isNot", Kind::Text) if fname.eq_ignore_ascii_case("genre") => {
+            out.push(Bind::Text(text(v)));
+            let has = crate::library::has_genre_sql("t.genre");
+            if op == "is" { has } else { format!("NOT ({has})") }
+        }
         ("is", Kind::Text) => {
             out.push(Bind::Text(text(v)));
             format!("{text_col} = ?")

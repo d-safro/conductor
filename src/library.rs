@@ -173,7 +173,9 @@ pub fn read_meta(path: &Path) -> Meta {
             .or_else(|| get(ItemKey::RecordingDate))
             .or_else(|| get(ItemKey::OriginalReleaseDate))
             .and_then(|s| year_of(&s));
-        m.genre = get(ItemKey::Genre);
+        // every genre tag, each split the way Navidrome splits them ("Pop, Rock", "Rap/Hip Hop", "A; B")
+        let all: Vec<String> = tag.get_strings(&ItemKey::Genre).map(String::from).collect();
+        m.genre = join_genres(&all);
         m.isrc = get(ItemKey::Isrc);
         m.rg_track_gain = get(ItemKey::ReplayGainTrackGain).and_then(|s| db_value(&s));
         m.rg_track_peak = get(ItemKey::ReplayGainTrackPeak).and_then(|s| db_value(&s));
@@ -309,6 +311,9 @@ fn read_all(files: Vec<FileStat>, threads: usize) -> Vec<(FileStat, Meta)> {
 pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatus>, full: bool) -> Result<ScanReport> {
     if status.scanning.swap(true, Ordering::SeqCst) {
         return Ok(ScanReport::default());
+    }
+    if let Err(e) = normalize_genres(db).await {
+        warn!("couldn't tidy genres: {e:#}");
     }
     let r = scan_inner(db, libs, status, full).await;
     status.scanning.store(false, Ordering::SeqCst);
@@ -471,4 +476,67 @@ pub fn track_path(libs: &[(i64, LibraryConfig)], library_id: i64, rel: &str) -> 
         p.push(part);
     }
     Some(p)
+}
+
+/// The genres in a genre tag: split at ";", "/" and "," (as Navidrome does), trimmed, without doubles.
+pub fn split_genres(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for g in s.split([';', '/', ',']).map(str::trim).filter(|g| !g.is_empty()) {
+        if !out.iter().any(|o| o.eq_ignore_ascii_case(g)) {
+            out.push(g.to_string());
+        }
+    }
+    out
+}
+
+/// Genre tags as stored: each genre once, joined with "; " (None when there are none).
+pub fn join_genres(tags: &[String]) -> Option<String> {
+    let mut all: Vec<String> = vec![];
+    for t in tags {
+        for g in split_genres(t) {
+            if !all.iter().any(|o| o.eq_ignore_ascii_case(&g)) {
+                all.push(g);
+            }
+        }
+    }
+    (!all.is_empty()).then(|| all.join("; "))
+}
+
+/// SQL true when the genre column `col` (stored "A; B") holds genre `?` (any case).
+pub fn has_genre_sql(col: &str) -> String {
+    format!("instr(';' || lower(replace(COALESCE({col}, ''), '; ', ';')) || ';', ';' || lower(trim(?)) || ';') > 0")
+}
+
+/// Genres scanned before they were split ("Pop, Rock") are stored the new way ("Pop; Rock").
+pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
+    let mut changed = 0;
+    for table in ["track", "album"] {
+        let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+            "SELECT id, genre FROM {table} WHERE genre LIKE '%,%' OR genre LIKE '%/%' OR genre LIKE '%;%'"
+        ))
+        .fetch_all(db)
+        .await?;
+        for (id, g) in rows {
+            let new = join_genres(std::slice::from_ref(&g));
+            if new.as_deref() != Some(g.as_str()) {
+                sqlx::query(&format!("UPDATE {table} SET genre = ? WHERE id = ?")).bind(new).bind(id).execute(db).await?;
+                changed += 1;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+#[cfg(test)]
+mod genre_tests {
+    use super::*;
+
+    #[test]
+    fn genres_split() {
+        assert_eq!(split_genres("Pop, Rock"), ["Pop", "Rock"]);
+        assert_eq!(split_genres("Rap/Hip Hop; rap"), ["Rap", "Hip Hop"]);
+        assert_eq!(split_genres(" ; "), Vec::<String>::new());
+        assert_eq!(join_genres(&["Rock".into(), "Pop; rock".into()]).as_deref(), Some("Rock; Pop"));
+        assert_eq!(join_genres(&[]), None);
+    }
 }

@@ -283,9 +283,11 @@ impl Lib {
         if let Some(ids) = crate::api::sonic::similar_ids(st, &s.id, n).await {
             return ids.iter().filter_map(|id| self.by_id.get(id).copied()).filter(|j| *j != i).collect();
         }
-        let Some(g) = s.genre.as_deref().filter(|g| !g.is_empty()) else { return vec![] };
+        let first =
+            |g: Option<&str>| g.and_then(|g| crate::library::split_genres(g).into_iter().next()).map(|g| g.to_lowercase());
+        let Some(g) = first(s.genre.as_deref()) else { return vec![] };
         let mut same: Vec<usize> =
-            (0..self.songs.len()).filter(|j| *j != i && self.songs[*j].genre.as_deref() == Some(g)).collect();
+            (0..self.songs.len()).filter(|j| *j != i && first(self.songs[*j].genre.as_deref()).as_ref() == Some(&g)).collect();
         same.shuffle(&mut rand::rngs::StdRng::seed_from_u64(seed_of(&s.id)));
         same.truncate(n);
         same

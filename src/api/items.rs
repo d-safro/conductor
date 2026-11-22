@@ -125,7 +125,7 @@ pub fn song_json(t: &TrackRow) -> Value {
         "displayArtist": t.artist_name,
         "albumArtists": [{ "id": t.album_artist_id, "name": t.album_artist_name }],
         "displayAlbumArtist": t.album_artist_name,
-        "genres": t.genre.iter().map(|g| json!({ "name": g })).collect::<Vec<_>>(),
+        "genres": t.genre.iter().flat_map(|g| crate::library::split_genres(g)).map(|g| json!({ "name": g })).collect::<Vec<_>>(),
     });
     if let Some(n) = t.number {
         put(&mut v, "track", n);
@@ -136,8 +136,8 @@ pub fn song_json(t: &TrackRow) -> Value {
     if let Some(y) = t.year {
         put(&mut v, "year", y);
     }
-    if let Some(g) = &t.genre {
-        put(&mut v, "genre", g.clone());
+    if let Some(g) = t.genre.as_deref().and_then(|g| crate::library::split_genres(g).into_iter().next()) {
+        put(&mut v, "genre", g); // the first; all of them are in "genres"
     }
     let mut rg = serde_json::Map::new();
     for (k, x) in [
@@ -189,13 +189,13 @@ pub fn album_json(a: &AlbumRow) -> Value {
         "sortName": a.sort_name,
         "artists": [{ "id": a.artist_id, "name": a.artist_name }],
         "displayArtist": a.artist_name,
-        "genres": a.genre.iter().map(|g| json!({ "name": g })).collect::<Vec<_>>(),
+        "genres": a.genre.iter().flat_map(|g| crate::library::split_genres(g)).map(|g| json!({ "name": g })).collect::<Vec<_>>(),
     });
     if let Some(y) = a.year {
         put(&mut v, "year", y);
     }
-    if let Some(g) = &a.genre {
-        put(&mut v, "genre", g.clone());
+    if let Some(g) = a.genre.as_deref().and_then(|g| crate::library::split_genres(g).into_iter().next()) {
+        put(&mut v, "genre", g);
     }
     if let Some(p) = a.last_played {
         put(&mut v, "played", iso(p));
