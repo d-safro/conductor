@@ -73,6 +73,10 @@ fn main() -> Result<()> {
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    // an older install's default folder (and its config.toml) gets the new name before anything looks for them
+    if config_path.is_none() && conductor::config::var_os("CONFIG").is_none() {
+        conductor::config::move_old_data_dir();
+    }
     // Prelude: `conductor setup`, and the first start in a terminal with nothing set up yet
     if let ["setup" | "prelude", rest @ ..] = a.as_slice() {
         conductor::prelude::cli(config_path, rest).await?;

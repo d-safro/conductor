@@ -289,23 +289,38 @@ fn old_name(name: &str) {
     }
 }
 
+/// The default data folder under the old name moves to the new one (when the new one isn't there yet and no data
+/// folder is set in the environment). Done before settings are looked for, since config.toml is in it.
+pub fn move_old_data_dir() {
+    if var_os("DATA_DIR").is_some() {
+        return;
+    }
+    let (old_dir, new_dir) = (data_dir_named(&OLD.to_lowercase()), default_data_dir());
+    if !new_dir.exists() && old_dir.is_dir() {
+        match std::fs::rename(&old_dir, &new_dir) {
+            Ok(()) => tracing::info!(from = %old_dir.display(), to = %new_dir.display(), "data folder moved to the new name"),
+            Err(e) => tracing::warn!(from = %old_dir.display(), "couldn't move the old data folder ({e}); starting a new one"),
+        }
+    }
+}
+
 /// Moves what an older version left under the old name: the default data folder (when the new one isn't there
 /// yet) and the database file in the data folder. Runs before the database is opened.
 pub fn move_old_names(cfg: &Config) {
-    let old_dir = data_dir_named(&OLD.to_lowercase());
-    if cfg.data_dir == default_data_dir() && !cfg.data_dir.exists() && old_dir.is_dir() {
-        match std::fs::rename(&old_dir, &cfg.data_dir) {
-            Ok(()) => tracing::info!(from = %old_dir.display(), to = %cfg.data_dir.display(), "data folder moved to the new name"),
-            Err(e) => tracing::warn!(from = %old_dir.display(), "couldn't move the old data folder ({e}); starting a new one"),
-        }
+    if cfg.data_dir == default_data_dir() {
+        move_old_data_dir();
     }
     let old_db = cfg.data_dir.join(format!("{}.db", OLD.to_lowercase()));
     let new_db = cfg.data_dir.join("conductor.db");
     if old_db.is_file() && !new_db.exists() {
-        for ext in ["", "-wal", "-shm"] {
+        // the database's journal first and the database itself last: while maestro.db is there, the move isn't
+        // finished and is taken up again next time. (Moved the other way round, a stop in between left
+        // conductor.db without its -wal, and what was in the -wal was lost.)
+        for ext in ["-wal", "-shm", ""] {
             let (a, b) = (PathBuf::from(format!("{}{ext}", old_db.display())), PathBuf::from(format!("{}{ext}", new_db.display())));
             if a.exists() && let Err(e) = std::fs::rename(&a, &b) {
-                tracing::warn!("couldn't rename {} ({e})", a.display());
+                tracing::warn!("couldn't rename {} ({e}); the database keeps its old name for now", a.display());
+                return;
             }
         }
         tracing::info!("database renamed to conductor.db");
@@ -314,7 +329,11 @@ pub fn move_old_names(cfg: &Config) {
 
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
-        let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from)).or_else(|| Some(default_config_path()).filter(|p| p.is_file()));
+        let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from)).or_else(|| {
+            // an older install's settings are in the old default folder: moved first, so they're found
+            move_old_data_dir();
+            Some(default_config_path()).filter(|p| p.is_file())
+        });
         let mut c: Config = match &path {
             Some(p) => {
                 let mut t: toml::Table = toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
@@ -514,6 +533,30 @@ mod tests {
             assert!(!old.exists());
             assert_eq!(std::fs::read(c.data_dir.join("conductor.db")).unwrap(), b"db");
             assert!(c.data_dir.join("conductor.db-wal").exists());
+            // the -wal can't be moved: the database isn't either (conductor.db would be opened without its -wal,
+            // and what's in it lost); next time it's taken up again
+            let dir = c.data_dir.clone();
+            for f in ["conductor.db", "conductor.db-wal"] {
+                std::fs::remove_file(dir.join(f)).unwrap();
+            }
+            std::fs::write(dir.join("maestro.db"), b"db2").unwrap();
+            std::fs::write(dir.join("maestro.db-wal"), b"wal2").unwrap();
+            std::fs::create_dir_all(dir.join("conductor.db-wal/in-the-way")).unwrap();
+            move_old_names(&c);
+            assert!(!dir.join("conductor.db").exists(), "not moved without its -wal");
+            assert_eq!(std::fs::read(dir.join("maestro.db-wal")).unwrap(), b"wal2");
+            std::fs::remove_dir_all(dir.join("conductor.db-wal")).unwrap();
+            move_old_names(&c);
+            assert_eq!(std::fs::read(dir.join("conductor.db")).unwrap(), b"db2");
+            assert_eq!(std::fs::read(dir.join("conductor.db-wal")).unwrap(), b"wal2");
+            assert!(!dir.join("maestro.db").exists());
+            // an older install that used the default folder: its settings are found on the first start
+            std::fs::remove_dir_all(&dir).unwrap();
+            std::fs::create_dir_all(&old).unwrap();
+            std::fs::write(old.join("config.toml"), "listen = \"127.0.0.1:4599\"\n").unwrap();
+            let c = Config::load(None).unwrap();
+            assert_eq!(c.listen.port(), 4599, "the old config.toml was read");
+            assert!(dir.join("config.toml").is_file() && !old.exists());
         }
         unsafe {
             std::env::remove_var(format!("{OLD}_SCAN_INTERVAL_MIN"));
