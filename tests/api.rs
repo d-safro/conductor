@@ -68,6 +68,7 @@ impl Server {
     fn no_network(c: &mut Config) {
         c.lyrics_online = false;
         c.covers_fetch = false;
+        c.concerts = false;
     }
 
     async fn start_with(tune: impl FnOnce(&mut Config)) -> Self {
@@ -1731,6 +1732,7 @@ async fn concerts_near_you() {
     .await;
     let s = Server::start_with(move |c| {
         c.catalog = false;
+        c.concerts = true;
         c.musicbrainz_url = mb;
     })
     .await;
@@ -1888,4 +1890,53 @@ async fn genres_split_like_navidrome() {
     assert_eq!(r["albumList2"]["album"][0]["name"], "Mixed");
     let r = s.ok("getRandomSongs", &[("genre", "Folk")]).await;
     assert_eq!(r["randomSongs"]["song"][0]["title"], "Two");
+}
+
+#[tokio::test]
+async fn music_lookup_mixes_shares_and_concerts_come_over() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    // what Navidrome had: music-lookup's Daily Mix 1 and a shared playlist (ids kept by import-navidrome)
+    let dm = s.ok("createPlaylist", &[("name", "Daily Mix 1"), ("songId", &one)]).await["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let party = s.ok("createPlaylist", &[("name", "Party")]).await["playlist"]["id"].as_str().unwrap().to_string();
+    let data = tempfile::tempdir().unwrap();
+    let w = |p: &str, v: Value| {
+        let f = data.path().join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, v.to_string()).unwrap();
+    };
+    w(
+        "mixes/state.json",
+        serde_json::json!({ "enabled": { "radar": false }, "playlists": { "daily-1": dm, "daily-2": "gone" },
+        "last": { "daily": 1700000000.5 }, "current": {}, "history": { "discover": ["dz-t-1"] }, "about": { "daily-1": { "count": 1, "at": 1700000000 } } }),
+    );
+    w(
+        "encore/playlist-shares.json",
+        serde_json::json!({ "AbCdEfGhIjKlMnOpQrStUvWx": { "playlist": party, "owner": USER, "created": 2000000000.0,
+        "added": [{ "id": one, "by": "Bob", "guest": "g1", "at": 1 }] } }),
+    );
+    w(
+        "concerts/concerts.json",
+        serde_json::json!({ "show": [{ "artist": "Alpha", "date": "2099-01-01", "venue": "Club" }], "first": { "alpha|2099-01-01|club": 5 },
+        "at": 1700000000, "city": "Berlin", "source": "MusicBrainz", "prefs": "{}" }),
+    );
+    let rep = maestro::import_nd::music_lookup(&s.st.db, data.path(), None).await.unwrap();
+    assert_eq!((rep.mix_playlists, rep.playlist_shares, rep.concerts), (1, 1, 1));
+    let r = s.ok("getMixes", &[]).await;
+    let mixes = r["mixes"]["mix"].as_array().unwrap();
+    assert_eq!(mixes.len(), 1);
+    assert_eq!(mixes[0]["playlistId"], dm.as_str()); // the same playlist goes on being Daily Mix 1
+    assert!(r["mixes"]["kind"].as_array().unwrap().iter().any(|k| k["kind"] == "radar" && k["enabled"] == false));
+    let sh = s.ok("playlistShares", &[]).await;
+    assert_eq!(sh["playlistShares"]["share"][0]["url"], "https://jam.example.test/jam/pl/AbCdEfGhIjKlMnOpQrStUvWx");
+    assert_eq!(sh["playlistShares"]["share"][0]["added"][0]["by"], "Bob");
+    let c = s.ok("getConcerts", &[]).await;
+    assert_eq!(c["concerts"]["show"][0]["venue"], "Club");
+    assert_eq!(c["concerts"]["city"], "Berlin");
 }

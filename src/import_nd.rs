@@ -34,6 +34,9 @@ pub struct LookupReport {
     pub podcasts: usize,
     pub podcast_episodes: usize,
     pub podcast_progress: usize,
+    pub mix_playlists: usize,
+    pub playlist_shares: usize,
+    pub concerts: usize,
 }
 
 /// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data), and its
@@ -136,7 +139,123 @@ pub async fn music_lookup(ours: &Db, data: &Path, state: Option<&Path>) -> Resul
         }
     }
     tx.commit().await?;
+    extras(ours, data, &users, &mut rep).await?;
     Ok(rep)
+}
+
+/// music-lookup's mixes (so its Discover Weekly, Daily Mix … playlists, brought over from Navidrome, go on being
+/// the mixes instead of a second set appearing), its shared-playlist links (so friends' links keep working) and
+/// the concerts it found (so shows already seen aren't "new" again). music-lookup made these for one user: the
+/// owner of its mix playlists, else the first admin.
+async fn extras(ours: &Db, data: &Path, users: &HashMap<String, String>, rep: &mut LookupReport) -> Result<()> {
+    let read = |p: &str| -> Option<serde_json::Value> { serde_json::from_str(&std::fs::read_to_string(data.join(p)).ok()?).ok() };
+    let first_admin: Option<String> =
+        sqlx::query_scalar("SELECT id FROM user WHERE is_admin = 1 ORDER BY rowid LIMIT 1").fetch_optional(ours).await?;
+    let mut owner = first_admin.clone();
+    if let Some(m) = read("mixes/state.json") {
+        let slots: Vec<(String, String)> = m["playlists"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, v)| v.as_str().filter(|v| !v.is_empty()).map(|v| (k.clone(), v.to_string())))
+            .collect();
+        for (_, pid) in &slots {
+            if let Some(o) = sqlx::query_scalar::<_, String>("SELECT owner_id FROM playlist WHERE id = ?")
+                .bind(pid)
+                .fetch_optional(ours)
+                .await?
+            {
+                owner = Some(o);
+                break;
+            }
+        }
+        if let Some(uid) = &owner {
+            for kind in crate::mixes::KINDS {
+                let list = |k: &str| {
+                    m[k][*kind].as_array().map(|a| serde_json::Value::from(a.clone()).to_string()).unwrap_or("[]".into())
+                };
+                sqlx::query(
+                    "INSERT OR REPLACE INTO mix_state (user_id, kind, enabled, last_at, current_json, history_json) VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(uid)
+                .bind(kind)
+                .bind(m["enabled"][*kind].as_bool().unwrap_or(true))
+                .bind(m["last"][*kind].as_f64().map(|t| t as i64))
+                .bind(list("current"))
+                .bind(list("history"))
+                .execute(ours)
+                .await?;
+            }
+            for (slot, pid) in slots {
+                let exists: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE id = ?").bind(&pid).fetch_one(ours).await?;
+                if exists == 0 {
+                    continue;
+                }
+                let about = &m["about"][&slot];
+                sqlx::query("INSERT OR REPLACE INTO mix_playlist (user_id, slot, playlist_id, song_count, made_at) VALUES (?, ?, ?, ?, ?)")
+                    .bind(uid)
+                    .bind(&slot)
+                    .bind(&pid)
+                    .bind(about["count"].as_i64().unwrap_or(0))
+                    .bind(about["at"].as_f64().unwrap_or(0.0) as i64)
+                    .execute(ours)
+                    .await?;
+                rep.mix_playlists += 1;
+            }
+        }
+    }
+    if let Some(sh) = read("encore/playlist-shares.json") {
+        for (token, v) in sh.as_object().into_iter().flatten() {
+            let (Some(pid), Some(uid)) = (v["playlist"].as_str(), v["owner"].as_str().and_then(|o| users.get(&o.to_lowercase())))
+            else {
+                continue;
+            };
+            let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE id = ?").bind(pid).fetch_one(ours).await?;
+            if exists == 0 {
+                continue;
+            }
+            sqlx::query("DELETE FROM playlist_share WHERE token = ? OR playlist_id = ?")
+                .bind(token)
+                .bind(pid)
+                .execute(ours)
+                .await?;
+            sqlx::query("INSERT INTO playlist_share (token, playlist_id, owner_id, created_at) VALUES (?, ?, ?, ?)")
+                .bind(token)
+                .bind(pid)
+                .bind(uid)
+                .bind(v["created"].as_f64().unwrap_or(0.0) as i64)
+                .execute(ours)
+                .await?;
+            for a in v["added"].as_array().into_iter().flatten() {
+                sqlx::query("INSERT INTO playlist_share_add (token, track_id, by_name, guest, added_at) VALUES (?, ?, ?, ?, ?)")
+                    .bind(token)
+                    .bind(a["id"].as_str().unwrap_or(""))
+                    .bind(a["by"].as_str().unwrap_or(""))
+                    .bind(a["guest"].as_str().unwrap_or(""))
+                    .bind(a["at"].as_i64().unwrap_or(0))
+                    .execute(ours)
+                    .await?;
+            }
+            rep.playlist_shares += 1;
+        }
+    }
+    if let (Some(c), Some(uid)) = (read("concerts/concerts.json"), owner.as_ref()) {
+        let shows = c["show"].as_array().cloned().unwrap_or_default();
+        sqlx::query(
+            "INSERT OR REPLACE INTO concerts (user_id, shows_json, first_json, city, source, prefs, at) VALUES (?, ?, ?, ?, ?, '', ?)",
+        )
+        .bind(uid)
+        .bind(serde_json::Value::from(shows.clone()).to_string())
+        .bind(c["first"].to_string())
+        .bind(c["city"].as_str().unwrap_or(""))
+        .bind(c["source"].as_str().unwrap_or(""))
+        .bind(c["at"].as_f64().unwrap_or(0.0) as i64)
+        .execute(ours)
+        .await?;
+        rep.concerts = shows.len();
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default, Serialize)]
