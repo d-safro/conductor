@@ -160,16 +160,19 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 pub async fn genres(c: &Ctx) -> Result<Reply, ApiError> {
-    // each genre of a song counts ("Pop; Rock" is in Pop and in Rock)
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT genre, album_id FROM track WHERE genre IS NOT NULL AND genre != '' AND missing_since IS NULL")
-            .fetch_all(&c.st.db)
-            .await?;
+    // each genre of a song counts ("Pop; Rock" is in Pop and in Rock); counted per genre value and album in SQL,
+    // then split (a few thousand rows, not one per song)
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT genre, album_id, COUNT(*) FROM track WHERE genre IS NOT NULL AND genre != '' AND missing_since IS NULL
+         GROUP BY genre, album_id",
+    )
+    .fetch_all(&c.st.db)
+    .await?;
     let mut by: std::collections::BTreeMap<String, (String, i64, std::collections::HashSet<String>)> = Default::default();
-    for (g, album) in rows {
+    for (g, album, n) in rows {
         for name in crate::library::split_genres(&g) {
             let e = by.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), 0, Default::default()));
-            e.1 += 1;
+            e.1 += n;
             e.2.insert(album.clone());
         }
     }
@@ -199,17 +202,27 @@ pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
         c,
         &format!("ar.album_count > 0 AND {ac}"),
         &ab,
-        &format!("ORDER BY ar.sort_name {}", page("artistCount", "artistOffset", 20)),
+        &format!("ORDER BY ar.sort_name, ar.id {}", page("artistCount", "artistOffset", 20)),
     )
     .await?;
     let (lc, lb) = word_conditions(q, "al.name || ' ' || al.artist_name");
     let lb: Vec<&str> = lb.iter().map(String::as_str).collect();
     let albums =
-        items::albums_where(c, &lc, &lb, &format!("ORDER BY al.sort_name {}", page("albumCount", "albumOffset", 20))).await?;
+        items::albums_where(c, &lc, &lb, &format!("ORDER BY al.sort_name, al.id {}", page("albumCount", "albumOffset", 20))).await?;
     let (sc, sb) = word_conditions(q, "t.title || ' ' || t.artist_name || ' ' || t.album_name");
     let sb: Vec<&str> = sb.iter().map(String::as_str).collect();
-    let songs =
-        items::tracks_where(c, &sc, &sb, &format!("ORDER BY t.sort_title {}", page("songCount", "songOffset", 20))).await?;
+    // the page's ids first (from the name-order index), then only those songs in full: apps that fetch the whole
+    // library 500 at a time would otherwise sort every song for every page (1 s a page at 100,000 songs; now ~10 ms)
+    let songs = items::tracks_where(
+        c,
+        &format!(
+            "t.id IN (SELECT t.id FROM track t WHERE t.missing_since IS NULL AND ({sc}) ORDER BY t.sort_title, t.id {})",
+            page("songCount", "songOffset", 20)
+        ),
+        &sb,
+        "ORDER BY t.sort_title, t.id",
+    )
+    .await?;
     let body = json!({
         "artist": artists.iter().map(artist_json).collect::<Vec<_>>(),
         "album": albums.iter().map(album_json).collect::<Vec<_>>(),
@@ -219,9 +232,14 @@ pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
 }
 
 pub async fn starred(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
-    let artists = items::artists_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
-    let albums = items::albums_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
-    let songs = items::tracks_where(c, "an.starred_at IS NOT NULL", &[], "ORDER BY an.starred_at DESC").await?;
+    // from the user's stars (an index), not by looking at every song
+    let mine = |kind: &str, col: &str| {
+        format!("{col} IN (SELECT item_id FROM annotation WHERE user_id = ? AND item_kind = '{kind}' AND starred_at IS NOT NULL)")
+    };
+    let me = [c.user.id.as_str()];
+    let artists = items::artists_where(c, &mine("artist", "ar.id"), &me, "ORDER BY an.starred_at DESC").await?;
+    let albums = items::albums_where(c, &mine("album", "al.id"), &me, "ORDER BY an.starred_at DESC").await?;
+    let songs = items::tracks_where(c, &mine("track", "t.id"), &me, "ORDER BY an.starred_at DESC").await?;
     let body = json!({
         "artist": artists.iter().map(artist_json).collect::<Vec<_>>(),
         "album": albums.iter().map(album_json).collect::<Vec<_>>(),

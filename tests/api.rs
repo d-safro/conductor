@@ -3469,3 +3469,31 @@ async fn backup_and_restore() {
     left.sort();
     assert_eq!(left, ["conductor-20260102-000000.zip", "conductor-20260103-000000.zip", "conductor-backup-mine.zip", "notes.txt"]);
 }
+
+#[tokio::test]
+async fn whole_library_paging_gets_each_song_once() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // apps that sync everything ask for "" a page at a time; every song once, in a stable order
+    let mut seen = vec![];
+    for off in 0..5 {
+        let r = s.ok("search3", &[("query", ""), ("artistCount", "0"), ("albumCount", "0"), ("songCount", "1"), ("songOffset", &off.to_string())]).await;
+        for song in r["searchResult3"]["song"].as_array().cloned().unwrap_or_default() {
+            seen.push(song["id"].as_str().unwrap().to_string());
+        }
+    }
+    let mut uniq = seen.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!((seen.len(), uniq.len()), (3, 3), "{seen:?}");
+    // a word still finds, and starred lists come from the stars
+    assert_eq!(s.ok("search3", &[("query", "Three")]).await["searchResult3"]["song"].as_array().unwrap().len(), 1);
+    s.ok("star", &[("id", &seen[0])]).await;
+    let st = s.ok("getStarred2", &[]).await;
+    assert_eq!(st["starred2"]["song"][0]["id"], seen[0].as_str());
+    let g = s.ok("getGenres", &[]).await;
+    assert_eq!(g["genres"]["genre"][0]["songCount"], 3);
+}
