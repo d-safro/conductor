@@ -697,3 +697,55 @@ async fn navidrome_again_on_a_server_in_use() {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM radio").fetch_one(&db).await.unwrap();
     assert_eq!(n, 1);
 }
+
+#[tokio::test]
+async fn a_spotify_playlist_brought_in_while_setting_up_a_new_server() {
+    // as a new server is set up: the music not scanned yet, then --transpose with --yes. The songs are matched
+    // against the music (it's scanned first) and the playlist comes in, without another question.
+    let have_ffmpeg = std::process::Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success());
+    if !have_ffmpeg {
+        return;
+    }
+    let base = services().await;
+    let p = place(&base);
+    let song = p.music.join("The Stranglers/La Folie/01 Golden Brown.flac");
+    std::fs::create_dir_all(song.parent().unwrap()).unwrap();
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=2"])
+        .args(["-metadata", "title=Golden Brown", "-metadata", "artist=The Stranglers", "-metadata", "album=La Folie"])
+        .arg(&song)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    let csv = p.root.join("Learn_to_play.csv");
+    std::fs::write(
+        &csv,
+        "\"Track URI\",\"Track Name\",\"Artist Name(s)\",\"Album Name\",\"Duration (ms)\",\"ISRC\"\n\
+         \"spotify:track:2AX5E86cn9n2dgioZEjirI\",\"Golden Brown\",\"The Stranglers\",\"La Folie\",\"206760\",\"\"\n\
+         \"spotify:track:0000000000000000000000\",\"A Song Nobody Has\",\"Nobody\",\"Nothing\",\"200000\",\"\"\n",
+    )
+    .unwrap();
+    let data = p.root.join("data");
+    let exe = env!("CARGO_BIN_EXE_conductor");
+    let cfg = p.config.to_str().unwrap();
+    let out = std::process::Command::new(exe)
+        .args(["--config", cfg, "setup", "--yes", "--music", p.music.to_str().unwrap(), "--data", data.to_str().unwrap()])
+        .args(["--listen", "127.0.0.1:0", "--admin", "tester", "--no-downloads", "--vpn", "none", "--no-domain", "--service", "none"])
+        .args(["--transpose", csv.to_str().unwrap()])
+        .env("CONDUCTOR_PASSWORD", "tester-pw-1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("1 playlists") && text.contains("✓ imported"), "{text}");
+    assert!(!text.contains("Also: \n"), "the summary says what else there is, or that there's nothing: {text}");
+    let db = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT p.name, (SELECT COUNT(*) FROM playlist_entry pe WHERE pe.playlist_id = p.id) FROM playlist p",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![("Learn to play".to_string(), 1)], "the playlist, with the song this library has");
+}

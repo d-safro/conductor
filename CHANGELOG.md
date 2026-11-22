@@ -26,6 +26,11 @@ What changed in each release, newest first. The full notes for each are on the
   and searches 5-100× quicker; first scan ~10 s, ~75 MB of memory.
 
 ### Fixed
+- Setting up a new server with an export to bring in (`--transpose`, or typed in Prelude): the songs were matched
+  before the music was scanned, so none matched, and with `--yes` nothing came in at all. The music is scanned
+  first now, and an export you name is brought in unless you say no.
+- Setting up next to another Conductor: the Jam listener's port (4535) was taken, and Jam and share links quietly
+  didn't work. Prelude picks a free port near it and says so.
 - MP3s whose Cyrillic tags were written as Windows-1251 but marked Latin-1 showed garbled names ("Àêâàðèóì" for
   «Аквариум»), and the same for UTF-8 tags marked Latin-1 ("ÐÐ½Ð´ÑÐµÐ¹" for «Андрей»); they're read right now, songs
   already scanned too (read again once). Western accents stay.

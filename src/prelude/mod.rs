@@ -520,6 +520,16 @@ impl Wizard<'_> {
             }
             Err(_) => self.ui.say(&format!("  ✗ {listen} isn't an address:port; keeping the current one")),
         }
+        // the Jam listener's usual port taken by something else (another Conductor, say): a free one near it, so
+        // guests and share links don't silently go nowhere
+        if self.d.cfg.get("jam_listen").is_none()
+            && let Ok(a) = Config::default().jam_listen.parse::<std::net::SocketAddr>()
+            && std::net::TcpListener::bind(a).is_err()
+        {
+            let p = self.port(a.port() + 1);
+            self.d.set("jam_listen", format!("127.0.0.1:{p}"));
+            self.ui.say(&format!("  ! {a} (for Jam guests and share links) is taken: they get 127.0.0.1:{p}"));
+        }
         Ok(())
     }
 
@@ -1588,6 +1598,11 @@ impl Wizard<'_> {
         }
         if !tp.is_empty() {
             let st = crate::api::AppState::new(db.clone(), secrets, cfg, libs);
+            // the songs are matched against the library, which a new server hasn't scanned yet (its service starts
+            // after this step): without this, everything showed as 0% here and nothing came in
+            if let Err(e) = crate::library::scan(&st.db, &st.libs, &st.scan, false).await {
+                self.ui.say(&format!("  ! the music couldn't be scanned first ({e:#}): fewer songs may match"));
+            }
             let p = crate::import::parse_path(Path::new(&tp))?;
             let plan = crate::import::jobs::plan(&st, &p, &Default::default()).await?;
             let r = &plan.report;
@@ -1601,7 +1616,8 @@ impl Wizard<'_> {
             ));
             let user: Option<String> = sqlx::query_scalar("SELECT id FROM user WHERE is_admin = 1 ORDER BY rowid LIMIT 1").fetch_optional(&db).await?;
             if let Some(user) = user
-                && self.ui.yes("Bring these in now (it can be undone in Podium's Transpose)?", false)
+                // asked for by name (a path typed, or --transpose): yes unless you say no
+                && self.ui.yes("Bring these in now (it can be undone in Podium's Transpose)?", true)
             {
                 let id = crate::db::random_id()[..16].to_string();
                 sqlx::query("INSERT INTO import_batch (id, user_id, input_json, status, created_at) VALUES (?, ?, ?, 'running', ?)")
@@ -1670,15 +1686,14 @@ impl Wizard<'_> {
             format!("Stagehand (downloads): {}", if set(&self.d, "slskd_url") { "on" } else { "off" }),
             format!("VPN for downloads: {vpn}{}", if self.d.bool("downloads_require_vpn") == Some(true) { ", downloads pause while it's down" } else { "" }),
             format!("From outside (Jam, share links): {}", self.d.str("jam_public_url").unwrap_or_else(|| "not set up".into())),
-            format!(
-                "Also: {}",
-                [("lidarr_url", "Lidarr"), ("listenbrainz_token", "ListenBrainz"), ("audiomuse_url", "AudioMuse"), ("songid_url", "Pitch"), ("mixinfo_dir", "Metronome"), ("jam_public_url", "Ensemble"), ("ollama_url", "AI")]
+            format!("Also: {}", {
+                let also: Vec<&str> = [("lidarr_url", "Lidarr"), ("listenbrainz_token", "ListenBrainz"), ("audiomuse_url", "AudioMuse"), ("songid_url", "Pitch"), ("mixinfo_dir", "Metronome"), ("jam_public_url", "Ensemble"), ("ollama_url", "AI")]
                     .iter()
                     .filter(|(k, _)| set(&self.d, k))
                     .map(|(_, n)| *n)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+                    .collect();
+                if also.is_empty() { "nothing else".to_string() } else { also.join(", ") }
+            }),
         ];
         self.ui.say("\nDone.");
         for l in lines {
