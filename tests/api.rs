@@ -3448,9 +3448,13 @@ async fn backup_and_restore() {
     pool.close().await;
     drop(pool);
 
-    // over a database that's there: only with --force, and what was there is kept aside
-    assert!(conductor::backup::restore(&cfg, &out, false).unwrap_err().to_string().contains("already a database"));
-    let r = conductor::backup::restore(&cfg, &out, true).unwrap();
+    // over a database that's there: only with --force, and what was there is kept aside. (A folder this test never
+    // opened: on Windows the database library holds the file a while after closing, and Conductor is stopped for a
+    // real restore anyway.)
+    let cfg2 = Config { data_dir: fresh.path().join("data2"), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    conductor::backup::restore(&cfg2, &out, false).unwrap();
+    assert!(conductor::backup::restore(&cfg2, &out, false).unwrap_err().to_string().contains("already a database"));
+    let r = conductor::backup::restore(&cfg2, &out, true).unwrap();
     let aside = r.moved_aside.unwrap();
     assert!(aside.join("conductor.db").is_file() && aside.join("secret.key").is_file());
 

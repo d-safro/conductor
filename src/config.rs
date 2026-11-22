@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -368,6 +368,56 @@ pub fn move_old_names(cfg: &Config) {
     }
 }
 
+/// Environment names read one by one in `Config::load` (their own meaning or parsing): the generic reading below
+/// leaves them alone. (A test checks every `var("…")` here is listed.)
+pub const ENV_EXPLICIT: &[&str] = &[
+    "AUDIOMUSE_TOKEN", "AUDIOMUSE_URL", "BACKUP_DIR", "BACKUP_KEEP", "CATALOG", "CONCERTS", "CONFIG", "COVERS", "DATA_DIR",
+    "DJ_MODEL", "DJ_VOICE_URL", "FFMPEG", "INFO_LANG", "INFO_ONLINE", "JAM_LISTEN", "JAM_PUBLIC_URL", "LASTFM_API_KEY",
+    "LIDARR_API_KEY", "LIDARR_DOWNLOADS", "LIDARR_URL", "LISTEN", "LISTENBRAINZ_TOKEN", "LISTENBRAINZ_USER", "LYRICS_ONLINE",
+    "MIXINFO_DIR", "MUSIC", "OLLAMA_URL", "PODCAST_CLEAN_DAYS", "PODCAST_DIR", "PODCAST_KEEP", "PODCAST_LOCAL", "READ_ONLY",
+    "SCAN_INTERVAL_MIN", "SCAN_THREADS", "SENTINEL", "SLSKD_API_KEY", "SLSKD_DOWNLOADS", "SLSKD_URL", "SONGID_URL",
+    "TRANSLATE_MODEL", "UPGRADES", "VPN", "VPN_IP_URL",
+    // not settings: read elsewhere
+    "ADMIN_USER", "ADMIN_PASSWORD", "PASSWORD", "IMPORT_PASSWORD", "ND_PASSWORD_KEY",
+];
+
+/// Every other `CONDUCTOR_<NAME>` (or the old `MAESTRO_<NAME>`) as the setting `<name>`: numbers and true/false as
+/// such, and a value the setting can't take that way as text, or for a list, comma-separated text. Names that aren't
+/// settings are ignored.
+fn env_settings() -> Result<Vec<(String, toml::Value)>> {
+    let fits = |k: &str, v: &toml::Value| {
+        let mut one = toml::Table::new();
+        one.insert(k.to_string(), v.clone());
+        toml::Value::Table(one).try_into::<Config>().is_ok()
+    };
+    let mut out: Vec<(String, toml::Value)> = vec![];
+    // the old names first, so the new ones win
+    for prefix in [format!("{OLD}_"), "CONDUCTOR_".to_string()] {
+        for (name, raw) in std::env::vars() {
+            let Some(rest) = name.strip_prefix(&prefix) else { continue };
+            if raw.trim().is_empty() || ENV_EXPLICIT.contains(&rest) {
+                continue;
+            }
+            if prefix != "CONDUCTOR_" {
+                old_name(rest);
+            }
+            let key = rest.to_lowercase();
+            let parsed = toml::from_str::<toml::Table>(&format!("v = {raw}"))
+                .ok()
+                .and_then(|mut t| t.remove("v"))
+                .filter(|v| !matches!(v, toml::Value::Datetime(_)));
+            let text = toml::Value::String(raw.clone());
+            let list = toml::Value::Array(raw.split(',').map(|x| toml::Value::String(x.trim().to_string())).filter(|x| x.as_str() != Some("")).collect());
+            let Some(v) = [parsed, Some(text), Some(list)].into_iter().flatten().find(|v| fits(&key, v)) else {
+                bail!("{name}: not a value the setting {key} can take");
+            };
+            out.retain(|(k, _)| *k != key);
+            out.push((key, v));
+        }
+    }
+    Ok(out)
+}
+
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
         let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from)).or_else(|| {
@@ -375,8 +425,7 @@ impl Config {
             move_old_data_dir();
             Some(default_config_path()).filter(|p| p.is_file())
         });
-        let mut catalog_set = false;
-        let mut c: Config = match &path {
+        let mut t: toml::Table = match &path {
             Some(p) => {
                 let mut t: toml::Table = toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
                     .with_context(|| format!("parsing {}", p.display()))?;
@@ -390,13 +439,20 @@ impl Config {
                         }
                     }
                 }
-                catalog_set = t.contains_key("catalog");
-                let mut c: Config = toml::Value::Table(t).try_into().with_context(|| format!("parsing {}", p.display()))?;
-                c.config_path = Some(p.clone());
-                c
+                t
             }
-            None => Config::default(),
+            None => toml::Table::new(),
         };
+        // any setting from the environment: CONDUCTOR_<NAME> (wins over the file)
+        for (k, v) in env_settings()? {
+            t.insert(k, v);
+        }
+        let mut catalog_set = t.contains_key("catalog");
+        let mut c: Config = toml::Value::Table(t).try_into().with_context(|| match &path {
+            Some(p) => format!("parsing {}", p.display()),
+            None => "reading the settings".into(),
+        })?;
+        c.config_path = path.clone();
         // empty: as if unset (Prelude's Docker file clears the image's defaults this way, to use config.toml)
         if let Some(v) = var_os("DATA_DIR").filter(|v| !v.is_empty()) {
             c.data_dir = v.into();
@@ -648,5 +704,44 @@ mod tests {
             std::env::remove_var(format!("{OLD}_JAM_LISTEN"));
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod docs_tests {
+    /// The settings' fields, from this file.
+    fn fields() -> Vec<String> {
+        let s = include_str!("config.rs");
+        let body = &s[s.find("pub struct Config {").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        body.lines()
+            .filter_map(|l| l.trim().strip_prefix("pub ").and_then(|r| r.split_once(':')).map(|(n, _)| n.trim().to_string()))
+            .filter(|n| n != "config_path" && n != "slskd_fast_test")
+            .collect()
+    }
+
+    #[test]
+    fn every_setting_is_in_the_reference() {
+        let doc = include_str!("../docs/CONFIG.md");
+        let missing: Vec<String> = fields().into_iter().filter(|f| !doc.contains(&format!("`{f}`"))).collect();
+        assert!(missing.is_empty(), "add these to docs/CONFIG.md: {missing:?}");
+    }
+
+    #[test]
+    fn every_environment_name_read_here_is_listed() {
+        let s = include_str!("config.rs");
+        let mut missing = vec![];
+        for (i, _) in s.match_indices("var(\"").chain(s.match_indices("var_os(\"")) {
+            if s[..i].ends_with("env::") || s[..i].ends_with('_') && !s[..i].ends_with("var_") {
+                continue; // std::env::var: not a CONDUCTOR_ name
+            }
+            let rest = &s[i..];
+            let name = &rest[rest.find('"').unwrap() + 1..];
+            let name = &name[..name.find('"').unwrap()];
+            if name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') && !super::ENV_EXPLICIT.contains(&name) {
+                missing.push(name.to_string());
+            }
+        }
+        assert!(missing.is_empty(), "add these to ENV_EXPLICIT: {missing:?}");
     }
 }
