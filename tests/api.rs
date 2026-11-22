@@ -395,6 +395,9 @@ async fn a_song_ffmpeg_cant_read_is_an_error_not_silence() {
     assert_eq!(v["subsonic-response"]["status"], "failed");
     // a good one still streams
     let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    // started part way in a format it can't make: still from that point (mp3), not the whole file from the start
+    let r = s.http.get(s.url("stream", &[("id", &one), ("format", "wav"), ("timeOffset", "1")])).send().await.unwrap();
+    assert_eq!(r.headers()["x-transcoded"], "mp3@320k");
     let r = s.http.get(s.url("stream", &[("id", &one), ("format", "mp3")])).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert!(r.bytes().await.unwrap().len() > 1000);

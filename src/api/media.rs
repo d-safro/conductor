@@ -61,7 +61,7 @@ pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
     let format = c.p.get("format").unwrap_or("").to_ascii_lowercase();
     let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
 
-    let transcode = if download || format == "raw" {
+    let mut transcode = if download || format == "raw" {
         None
     } else if !format.is_empty() && format != t.suffix {
         target(&format).map(|x| (x, if max > 0 { max } else { 192 }))
@@ -73,6 +73,11 @@ pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
         None
     };
 
+    if transcode.is_none() && offset > 0 && !download && format != "raw" {
+        // a format it can't make (format=flac, wav…): mp3 rather than the whole file from the start, which the app
+        // would play as if it began at the offset
+        transcode = target("mp3").map(|x| (x, if max > 0 { max } else { 320 }));
+    }
     match transcode {
         None => serve_file(c, &path, &t, download).await,
         Some((x, br)) => transcoded(c, &path, x, br.clamp(32, 512), offset).await,
