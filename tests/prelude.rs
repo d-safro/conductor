@@ -679,3 +679,20 @@ async fn music_auto_then_typing_a_path() {
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
     assert_eq!(c.libraries[0].path, p.music);
 }
+
+#[tokio::test]
+async fn navidrome_again_on_a_server_in_use() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    yes(&p.config, &["--yes", "music", "--music", p.music.to_str().unwrap()]).await;
+    yes(&p.config, &["--yes", "server", "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45939"]).await;
+    let db = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    sqlx::query("INSERT INTO radio (id, name, stream_url) VALUES ('r1', 'Mine', 'http://radio.invalid/')").execute(&db).await.unwrap();
+    // a Navidrome import would replace what's here: with --yes it isn't done, and the run goes on (no error)
+    let nd = p.root.join("navidrome.db");
+    let out = yes(&p.config, &["--yes", "import", "--import-navidrome", nd.to_str().unwrap()]).await;
+    assert!(out.contains("nothing changed (to do it: conductor import-navidrome"), "{out}");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM radio").fetch_one(&db).await.unwrap();
+    assert_eq!(n, 1);
+}

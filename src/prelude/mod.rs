@@ -1552,9 +1552,20 @@ impl Wizard<'_> {
         let db = crate::db::open(&cfg.data_dir.join("conductor.db")).await?;
         let secrets = crate::auth::Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
         let libs = crate::library::ensure_libraries(&db, &cfg.libraries).await?;
-        if !nd.is_empty() && self.ui.yes(&format!("Import Navidrome's users, ids, plays and playlists from {nd}?"), true) {
+        // a server in use: importing replaces its plays, hearts and playlists, so only when you say so (never with --yes)
+        let replace = !nd.is_empty() && crate::import_nd::has_data(&db).await?;
+        let go = !nd.is_empty()
+            && self.ui.yes(&format!("Import Navidrome's users, ids, plays and playlists from {nd}?"), true)
+            && (!replace
+                || self.ui.yes("This server has plays, hearts or playlists already: replace them all with Navidrome's (a backup first: conductor backup)?", false));
+        if replace && !go && !self.ui.auto() {
+            self.ui.say("  Navidrome not imported: nothing changed");
+        } else if replace && !go {
+            self.ui.say(&format!("  ✗ this server has plays, hearts or playlists already, which importing replaces: nothing changed (to do it: conductor import-navidrome {nd} --replace)"));
+        }
+        if go {
             let key = config::var("ND_PASSWORD_KEY").ok();
-            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None, key.as_deref(), false).await?;
+            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None, key.as_deref(), replace).await?;
             self.ui.say(&format!("  ✓ {} songs keep their ids, {} playlists, {} plays", rep.songs_matched_after_scan, rep.playlists, rep.plays));
             self.ui.say(&format!("  ✓ passwords carried over for {} of {} users", rep.passwords_carried, rep.users_imported));
             if !rep.users.is_empty() {

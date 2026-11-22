@@ -43,6 +43,8 @@ What changed in each release, newest first. The full notes for each are on the
 - Prelude's look at the drives: music found on a slow drive just as its time ran out was left out as empty; on
   Windows a music folder on a USB drive wasn't seen as on that drive (no drive guard offered); `--music auto` in a
   terminal, then "Type a path", offered "auto" as the folder.
+- Prelude's import step stopped with an error (pointing at a `--replace` it doesn't have) when given a Navidrome
+  database on a server already in use; it now asks before replacing, and with `--yes` leaves things as they are.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.
