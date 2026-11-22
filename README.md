@@ -41,7 +41,7 @@
 - **Safe to run for years:** a backup every day (database, its key and your settings, in one zip) and `conductor restore` to bring one back.
 - **Share and manage:** share links anyone can play without an account; users managed from any Subsonic app or Podium.
 
-Everything, in detail: [docs/FEATURES.md](docs/FEATURES.md). Installing, connecting apps, upgrading and troubleshooting: [docs/GUIDE.md](docs/GUIDE.md). Every setting: [docs/CONFIG.md](docs/CONFIG.md).
+Everything, in detail: [docs/FEATURES.md](docs/FEATURES.md). Installing, connecting apps, upgrading and troubleshooting: [docs/GUIDE.md](docs/GUIDE.md). Every setting: [docs/CONFIG.md](docs/CONFIG.md). What changed: [CHANGELOG.md](CHANGELOG.md); what stays the same from 1.0: [docs/STABILITY.md](docs/STABILITY.md).
 
 ## Get it
 
