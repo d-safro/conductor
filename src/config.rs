@@ -554,7 +554,12 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
-            write_private(&tmp.path().join("new.key"), b"k").unwrap();
+        }
+        // a new file (on every system; its mode is checked on Unix)
+        write_private(&tmp.path().join("new.key"), b"k").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(tmp.path().join("new.key")).unwrap().permissions().mode() & 0o777, 0o600);
         }
         assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2, "no temporary file left");
