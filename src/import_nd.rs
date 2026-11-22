@@ -44,7 +44,7 @@ pub struct LookupReport {
     pub requests_already_there: usize,
 }
 
-/// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /mnt/media/data), and its
+/// music-lookup's play log and sync values (DATA is music-lookup's data folder, e.g. /srv/music-lookup), and its
 /// podcasts (`state`: the folder with podcasts.json, e.g. spotify.py's state folder). Progress goes to every user
 /// (music-lookup kept one for everyone).
 pub async fn music_lookup(ours: &Db, data: &Path, state: Option<&Path>) -> Result<LookupReport> {

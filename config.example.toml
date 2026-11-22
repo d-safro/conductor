@@ -17,7 +17,7 @@ jam_listen = "127.0.0.1:4535"
 
 # Podcasts: where saved episodes go (not the music folder), how many of the newest to keep per show, and how
 # many days after you finish one it goes (0: never).
-# podcast_dir = "/mnt/media/data/podcasts"
+# podcast_dir = "/srv/podcasts"
 podcast_keep = 0
 podcast_clean_days = 7
 
@@ -26,7 +26,7 @@ catalog = true
 catalog_skip_clients = ["symfonium"]
 # slskd_url = "http://127.0.0.1:5030"
 # slskd_api_key = "…"                       # or CONDUCTOR_SLSKD_API_KEY
-# slskd_downloads = "/mnt/media/data/soulseek/complete"
+# slskd_downloads = "/srv/soulseek/complete"
 # import_library = "Music"
 # Songs you play but don't have: deleted this many hours after they arrive unless kept; at most this many a day.
 trial_hours = 24
@@ -80,7 +80,7 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 
 [[libraries]]
 name = "Music"
-path = "/mnt/media/data/media/music"
+path = "/srv/music"
 # A file that must be in the folder for it to count as connected. Without one, any content counts.
 # sentinel = ".library-id"
 # Files read at once while scanning: 1-2 for a spinning USB drive, 8 for an SSD.
