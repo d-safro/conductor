@@ -102,6 +102,22 @@ async fn am_get(c: &Ctx, endpoint: &str, q: &[(&str, String)]) -> Result<Value, 
     resp.json().await.map_err(|_| not_available())
 }
 
+/// Library songs that sound like this one, by AudioMuse (None when it isn't set up or answering).
+pub async fn similar_ids(st: &super::AppState, id: &str, n: usize) -> Option<Vec<String>> {
+    let base = st.cfg.audiomuse_url.clone()?;
+    let mut r = client().get(format!("{}/api/similar_tracks", base.trim_end_matches('/'))).query(&[
+        ("item_id", id),
+        ("n", &n.to_string()),
+        ("eliminate_duplicates", "true"),
+    ]);
+    if let Some(t) = &st.cfg.audiomuse_token {
+        r = r.bearer_auth(t);
+    }
+    let resp = r.send().await.ok().filter(|r| r.status().is_success())?;
+    let v: Value = resp.json().await.ok()?;
+    Some(songs_in(&v).into_iter().map(|(id, _)| id).collect())
+}
+
 /// The list of songs in an AudioMuse answer (a list, or one under a usual key), as (id, distance).
 fn songs_in(v: &Value) -> Vec<(String, Option<f64>)> {
     let list = match v {

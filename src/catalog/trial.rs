@@ -86,6 +86,9 @@ struct Row {
     keep: bool,
     arrived_at: Option<i64>,
     listed: bool,
+    /// fetched for one of the user's mixes: its own time on trial, not listed in "On trial"
+    mix: Option<String>,
+    trial_hours: Option<f64>,
 }
 
 /// Move a kept song from `folder`/ (Trial, Discovery) to Songs/; the library keeps its id, hearts and playlists.
@@ -156,7 +159,7 @@ async fn drop_it(st: &AppState, r: &Row, why: &str) -> Result<()> {
 /// Keep the liked ones, delete the expired or rejected ones, list the rest in each user's "On trial".
 pub async fn tick(st: &AppState) -> Result<()> {
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT key, title, local_id, rel, trial_user, keep, arrived_at, listed FROM request
+        "SELECT key, title, local_id, rel, trial_user, keep, arrived_at, listed, mix, trial_hours FROM request
          WHERE trial = 1 AND local_id IS NOT NULL ORDER BY arrived_at",
     )
     .fetch_all(&st.db)
@@ -178,12 +181,16 @@ pub async fn tick(st: &AppState) -> Result<()> {
         };
         let mut stay: Vec<&Row> = vec![];
         for r in rows.iter().filter(|r| r.trial_user.as_deref() == Some(user.as_str())) {
-            let other_lists: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM playlist_entry WHERE track_id = ? AND playlist_id != ?")
-                    .bind(&r.local_id)
-                    .bind(pid.as_deref().unwrap_or(""))
-                    .fetch_one(&st.db)
-                    .await?;
+            // in a playlist of someone's own (not "On trial", not one a mix made)
+            let other_lists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM playlist_entry WHERE track_id = ? AND playlist_id != ?
+                 AND playlist_id NOT IN (SELECT playlist_id FROM mix_playlist)",
+            )
+            .bind(&r.local_id)
+            .bind(pid.as_deref().unwrap_or(""))
+            .fetch_one(&st.db)
+            .await?;
+            let limit = r.trial_hours.map(|h| (h * 3600.0) as i64).unwrap_or(limit);
             let liked: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM annotation WHERE user_id = ? AND item_kind = 'track' AND item_id = ? AND (starred_at IS NOT NULL OR rating >= 4)",
             )
@@ -194,13 +201,13 @@ pub async fn tick(st: &AppState) -> Result<()> {
             if r.keep || other_lists > 0 || liked > 0 {
                 keep(st, r).await?;
                 changed = true;
-            } else if now() - r.arrived_at.unwrap_or_else(now) > limit {
+            } else if now() - r.arrived_at.unwrap_or_else(now) > limit || (r.trial_hours == Some(0.0)) {
                 drop_it(st, r, "not kept in time").await?;
                 changed = true;
-            } else if r.listed && pid.is_some() && !listed_now.contains(&r.local_id) {
+            } else if r.listed && r.mix.is_none() && pid.is_some() && !listed_now.contains(&r.local_id) {
                 drop_it(st, r, "taken out of On trial").await?; // you didn't like it
                 changed = true;
-            } else {
+            } else if r.mix.is_none() {
                 stay.push(r);
             }
         }

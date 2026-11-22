@@ -175,6 +175,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(maestro::listenbrainz::worker(state.clone()));
     tokio::spawn(maestro::spotify::worker(state.clone()));
     tokio::spawn(maestro::concerts::worker(state.clone()));
+    tokio::spawn(maestro::mixes::worker(state.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();

@@ -553,11 +553,47 @@ pub async fn song_discoveries(st: &AppState, title: &str, artist: &str, count: u
 
 /// Songs that went on trial in the last 24 hours (at most `trial_per_day`).
 pub async fn trials_today(st: &AppState) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE trial_at > ?")
+    sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE trial_at > ? AND mix IS NULL")
         .bind(now() - 86_400)
         .fetch_one(&st.db)
         .await
         .unwrap_or(0)
+}
+
+/// Add a request for this Deezer track (false when Deezer doesn't know it).
+async fn new_request(st: &AppState, key: &str, user_id: &str, trial: bool) -> Result<bool> {
+    let Some(tid) = dz_id(key, 't') else { return Ok(false) };
+    let t = st.catalog.dz.get(&format!("track/{tid}"), &[]).await;
+    if s(&t, "title").is_empty() {
+        return Ok(false);
+    }
+    let main = s(&t["artist"], "name").to_string();
+    let mut names = vec![main.clone()];
+    for c in t["contributors"].as_array().into_iter().flatten() {
+        let nm = s(c, "name");
+        if !nm.is_empty() && nm != main && names.len() < 4 {
+            names.push(nm.to_string());
+        }
+    }
+    sqlx::query(
+        "INSERT INTO request (key, title, artists_json, album, duration_ms, isrc, folder, trial, trial_at, trial_user, asked_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .bind(key)
+    .bind(s(&t, "title"))
+    .bind(serde_json::to_string(&names)?)
+    .bind(s(&t["album"], "title"))
+    .bind(n(&t, "duration") * 1000)
+    .bind(Some(s(&t, "isrc")).filter(|x| !x.is_empty()))
+    .bind(if trial { "Trial" } else { "Songs" })
+    .bind(trial)
+    .bind(if trial { Some(now()) } else { None })
+    .bind(if trial { Some(user_id) } else { None })
+    .bind(now())
+    .execute(&st.db)
+    .await?;
+    tracing::info!(song = %format!("{main} - {}", s(&t, "title")), trial, "asked for");
+    Ok(true)
 }
 
 /// Ask for this Deezer track. False when Deezer doesn't know it (or, on trial, today's trials are used up).
@@ -571,38 +607,8 @@ pub async fn ask(st: &AppState, key: &str, user_id: &str, star: bool, playlist: 
     if trial && known.is_none() && trials_today(st).await >= st.cfg.trial_per_day {
         return Ok(false); // enough trials today; it keeps playing the preview
     }
-    if known.is_none() {
-        let Some(tid) = dz_id(key, 't') else { return Ok(false) };
-        let t = st.catalog.dz.get(&format!("track/{tid}"), &[]).await;
-        if s(&t, "title").is_empty() {
-            return Ok(false);
-        }
-        let main = s(&t["artist"], "name").to_string();
-        let mut names = vec![main.clone()];
-        for c in t["contributors"].as_array().into_iter().flatten() {
-            let nm = s(c, "name");
-            if !nm.is_empty() && nm != main && names.len() < 4 {
-                names.push(nm.to_string());
-            }
-        }
-        sqlx::query(
-            "INSERT INTO request (key, title, artists_json, album, duration_ms, isrc, folder, trial, trial_at, trial_user, asked_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(key)
-        .bind(s(&t, "title"))
-        .bind(serde_json::to_string(&names)?)
-        .bind(s(&t["album"], "title"))
-        .bind(n(&t, "duration") * 1000)
-        .bind(Some(s(&t, "isrc")).filter(|x| !x.is_empty()))
-        .bind(if trial { "Trial" } else { "Songs" })
-        .bind(trial)
-        .bind(if trial { Some(now()) } else { None })
-        .bind(if trial { Some(user_id) } else { None })
-        .bind(now())
-        .execute(&st.db)
-        .await?;
-        tracing::info!(song = %format!("{main} - {}", s(&t, "title")), trial, "asked for");
+    if known.is_none() && !new_request(st, key, user_id, trial).await? {
+        return Ok(false);
     } else if known.as_deref() == Some("notfound") {
         // asked again later: look once more
         sqlx::query("UPDATE request SET status = 'retry', searches = 0, last_search = 0 WHERE key = ? AND last_search < ?")
@@ -670,6 +676,64 @@ pub async fn unheart(st: &AppState, key: &str, user_id: &str) -> Result<Option<S
         sqlx::query("DELETE FROM request WHERE key = ?").bind(key).execute(&st.db).await?;
     }
     Ok(local)
+}
+
+/// Ask for this Deezer track for one of a user's mixes: on trial for `hours` (not listed in "On trial", not
+/// counted in the day's trials). Kept like any trial song: heart it or add it to a playlist of yours.
+pub async fn ask_for_mix(st: &AppState, key: &str, user_id: &str, mix: &str, hours: f64) -> Result<bool> {
+    let known: Option<String> =
+        sqlx::query_scalar("SELECT status FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await?;
+    match known.as_deref() {
+        None => {
+            if !new_request(st, key, user_id, true).await? {
+                return Ok(false);
+            }
+            sqlx::query("UPDATE request SET mix = ?, trial_hours = ? WHERE key = ?")
+                .bind(mix)
+                .bind(hours)
+                .bind(key)
+                .execute(&st.db)
+                .await?;
+        }
+        Some("notfound") => {
+            sqlx::query("UPDATE request SET status = 'retry', searches = 0, last_search = 0 WHERE key = ? AND last_search < ?")
+                .bind(key)
+                .bind(now() - 3600)
+                .execute(&st.db)
+                .await?;
+        }
+        Some(_) => {}
+    }
+    st.acquire_wake.notify_one();
+    Ok(true)
+}
+
+/// Let a mix's song go: not arrived, it's no longer asked for; arrived and not kept, it's deleted.
+/// Songs someone kept or wants (hearted, in a playlist) aren't touched.
+pub async fn let_go_of_mix_song(st: &AppState, key: &str, mix: &str) -> Result<()> {
+    type Row = (Option<String>, Option<String>, bool, Option<i64>, bool);
+    let row: Option<Row> = sqlx::query_as("SELECT mix, local_id, trial, kept_at, keep FROM request WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&st.db)
+        .await?;
+    let Some((m, local, trial, kept_at, keep)) = row else { return Ok(()) };
+    let wanted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_want WHERE key = ?").bind(key).fetch_one(&st.db).await?;
+    if m.as_deref() != Some(mix) || !trial || kept_at.is_some() || keep || wanted > 0 {
+        return Ok(());
+    }
+    if local.is_some() {
+        // the trial check decides (it keeps a song liked in the meantime): make it due now
+        sqlx::query("UPDATE request SET trial_hours = 0 WHERE key = ?").bind(key).execute(&st.db).await?;
+    } else {
+        sqlx::query("DELETE FROM request WHERE key = ? AND local_id IS NULL").bind(key).execute(&st.db).await?;
+    }
+    Ok(())
+}
+
+/// The library album with this name by this artist, if you have it.
+pub async fn library_album(st: &AppState, artist: &str, title: &str) -> Option<String> {
+    refresh_index(st).await.ok()?;
+    st.catalog.lib.lock().unwrap().albums.get(&(ak(artist), alk(title))).cloned()
 }
 
 /// Songs asked for to go into this playlist that haven't arrived yet.

@@ -13,5 +13,6 @@ pub mod jam;
 pub mod library;
 pub mod listenbrainz;
 pub mod live;
+pub mod mixes;
 pub mod online;
 pub mod spotify;

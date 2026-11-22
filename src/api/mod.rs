@@ -9,7 +9,7 @@ pub(crate) mod media;
 mod native;
 pub mod podcasts;
 pub mod smart;
-mod sonic;
+pub mod sonic;
 mod translate;
 mod userdata;
 
@@ -275,6 +275,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.songId", "versions": [1] },
             { "name": "encore.automix", "versions": [1] },
             { "name": "encore.concerts", "versions": [1] },
+            { "name": "encore.mixes", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -338,6 +339,9 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "translateLyrics" => translate::translate_lyrics(c).await,
         "identifySong" => bridges::identify_song(c).await,
         "getMixInfo" => bridges::mix_info(c).await,
+        "getMixes" => crate::mixes::get_mixes(c).await,
+        "setMix" => crate::mixes::set_mix(c, false).await,
+        "refreshMix" => crate::mixes::set_mix(c, true).await,
         "getConcerts" => crate::concerts::get_concerts(c, false).await,
         "refreshConcerts" => crate::concerts::get_concerts(c, true).await,
         "getFolder" => encore::folder(c).await,

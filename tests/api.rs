@@ -110,6 +110,10 @@ impl Server {
         r["subsonic-response"].clone()
     }
 
+    async fn st_user(&self) -> String {
+        sqlx::query_scalar("SELECT id FROM user WHERE name = ?").bind(USER).fetch_one(&self.st.db).await.unwrap()
+    }
+
     async fn ok(&self, method: &str, params: &[(&str, &str)]) -> Value {
         let r = self.call(method, params).await;
         assert_eq!(r["status"], "ok", "{method}: {r}");
@@ -615,6 +619,14 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                 "/album/50/tracks" => json!({ "data": [pk, uh] }),
                 "/album/60/tracks" => json!({ "data": [one, half] }),
                 "/artist/8/albums" => json!({ "data": [first, second] }),
+                // for the mixes: related artists, top songs, radios, a release from today
+                "/artist/8/related" => json!({ "data": [th] }),
+                "/artist/7/top" => json!({ "data": [pk, uh] }),
+                "/artist/8/radio" => json!({ "data": [pk] }),
+                "/search/track" if q.contains("alpha") => json!({ "data": [one] }),
+                "/artist/7/albums" => json!({ "data": [{ "id": 51, "title": "New Single", "artist": th, "record_type": "single",
+                    "release_date": chrono::Local::now().format("%Y-%m-%d").to_string() }] }),
+                "/album/51/tracks" => json!({ "data": [uh] }),
                 "/artist/7" => th,
                 "/preview.mp3" => return ([("content-type", "audio/mpeg")], vec![0xffu8, 0xfb, 0x90, 0x00, 1, 2, 3]).into_response(),
                 "/img.png" => {
@@ -1723,4 +1735,79 @@ async fn concerts_near_you() {
     assert_eq!(list[0]["venue"], "Club");
     assert_eq!(list[0]["artist"], "Alpha");
     assert!(list[0]["first"].as_i64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn weekly_mixes() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["title"] == "One")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let now_ms = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()).to_string();
+    s.ok("scrobble", &[("id", &one), ("time", &now_ms)]).await;
+    s.ok(
+        "syncSet",
+        &[("key", "followedArtists"), ("value", r#"[{"name":"Talking Heads"}]"#), ("at", "1000"), ("id", "phone-aaaa1111")],
+    )
+    .await;
+
+    // the first ask makes them: Discover finds songs you don't have and fetches them on trial for a week
+    let r = s.ok("getMixes", &[]).await;
+    let kinds: Vec<&str> = r["mixes"]["kind"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["discover", "radar", "daily", "daylist"]);
+    let mut mixes = Value::Null;
+    wait_for(
+        async || {
+            maestro::mixes::tick(&s.st).await;
+            mixes = s.ok("getMixes", &[]).await["mixes"].clone();
+            mixes["mix"].as_array().unwrap().iter().any(|m| m["kind"] == "discover")
+        },
+        "Discover Weekly",
+    )
+    .await;
+    let dw = mixes["mix"].as_array().unwrap().iter().find(|m| m["kind"] == "discover").unwrap().clone();
+    assert_eq!(dw["name"], "Discover Weekly");
+    let pl = s.ok("getPlaylist", &[("id", dw["playlistId"].as_str().unwrap())]).await;
+    assert_eq!(pl["playlist"]["entry"][0]["title"], "Psycho Killer");
+    let pk = pl["playlist"]["entry"][0]["id"].as_str().unwrap().to_string();
+    let (mix, hours, rel): (Option<String>, Option<f64>, String) =
+        sqlx::query_as("SELECT mix, trial_hours, rel FROM request WHERE key = 'dz-t-900'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!((mix.as_deref(), hours), (Some("discover"), Some(168.0)));
+    assert!(rel.starts_with("Trial/"), "{rel}");
+    // Release Radar: today's single by an artist you follow
+    let radar: Option<String> =
+        sqlx::query_scalar("SELECT mix FROM request WHERE key = 'dz-t-901'").fetch_optional(&s.st.db).await.unwrap().flatten();
+    assert!(radar.is_some(), "the new single was asked for");
+    // a mix's song isn't in "On trial", and being in the mix doesn't keep it
+    maestro::catalog::trial::tick(&s.st).await.unwrap();
+    let on_trial = maestro::catalog::trial::playlist_id(&s.st, &s.st_user().await, false).await.unwrap();
+    if let Some(p) = on_trial {
+        let pl = s.ok("getPlaylist", &[("id", &p)]).await;
+        assert!(pl["playlist"]["entry"].as_array().is_none_or(|e| e.iter().all(|x| x["id"] != pk.as_str())));
+    }
+    let still: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-900'").fetch_one(&s.st.db).await.unwrap();
+    assert!(still.starts_with("Trial/"));
+    // heart it: kept (moved to Songs/)
+    s.ok("star", &[("id", &pk)]).await;
+    maestro::catalog::trial::tick(&s.st).await.unwrap();
+    let kept: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-900'").fetch_one(&s.st.db).await.unwrap();
+    assert!(kept.starts_with("Songs/"), "{kept}");
+    // a song that hasn't arrived is let go when the next mix comes
+    maestro::catalog::let_go_of_mix_song(&s.st, "dz-t-901", radar.as_deref().unwrap()).await.unwrap();
+    let gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE key = 'dz-t-901'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(gone, 0);
+    // off: its playlist goes
+    let r = s.ok("setMix", &[("kind", "discover"), ("enabled", "false")]).await;
+    assert!(r["mixes"]["mix"].as_array().unwrap().iter().all(|m| m["kind"] != "discover"));
+    assert_eq!(r["mixes"]["kind"][0]["enabled"], false);
+    assert_eq!(s.call("getPlaylist", &[("id", dw["playlistId"].as_str().unwrap())]).await["error"]["code"], 70);
 }
