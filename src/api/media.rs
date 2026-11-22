@@ -210,7 +210,7 @@ pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
 /// A cover picture for any id (song, album, artist, `pl-<playlist>`), at most `size` pixels on a side.
 /// Navidrome-style ids (`al-<id>_<hash>`, `mf-…`, `ar-…`) work too, for apps that remember them.
 pub async fn cover_for(st: &AppState, id: &str, size: Option<u32>) -> Result<Option<Vec<u8>>, ApiError> {
-    let cache = size.map(|s| st.cfg.cache_dir().join("covers").join(format!("{}_{s}.jpg", id.replace(['/', '\\', '.'], "_"))));
+    let cache = size.map(|s| st.cfg.cache_dir().join("covers").join(cache_name(id, s)));
     if let Some(p) = &cache
         && let Ok(b) = tokio::fs::read(p).await
     {
@@ -246,6 +246,14 @@ pub async fn cover_for(st: &AppState, id: &str, size: Option<u32>) -> Result<Opt
         let _ = tokio::fs::write(&p, &resized).await;
     }
     Ok(Some(resized))
+}
+
+/// The resized cover's file name for an id (any text an app sends): only letters, digits, "-" and "_", so it stays
+/// a name inside the cache folder everywhere. (Only "/", "\\" and "." were replaced: on Windows "C:x" made a path
+/// on drive C outside it, and "x:y" an alternate data stream.)
+fn cache_name(id: &str, size: u32) -> String {
+    let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    format!("{safe}_{size}.jpg")
 }
 
 /// A playlist's own picture (uploaded, or brought over from Navidrome).
@@ -416,6 +424,16 @@ pub async fn lyrics(c: &Ctx) -> Result<Reply, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cover_cache_names_stay_in_the_folder() {
+        assert_eq!(cache_name("al-1f2e_3a", 300), "al-1f2e_3a_300.jpg");
+        for id in ["C:secret", "x:stream", "..\\..\\x", "../../x", "\\\\?\\C:\\x"] {
+            let n = cache_name(id, 300);
+            assert!(n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !n.contains(".."), "{id} → {n}");
+            assert_eq!(std::path::Path::new("covers").join(&n).parent(), Some(std::path::Path::new("covers")));
+        }
+    }
+
     #[test]
     fn download_names() {
         assert_eq!(attachment("A - B.flac"), "attachment; filename=\"A - B.flac\"; filename*=UTF-8''A%20-%20B.flac");
