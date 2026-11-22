@@ -276,8 +276,10 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
         {
             w.make_downloader(None, a).await?;
             w.d.set("vpn", "none");
-            w.d.set("downloads_require_vpn", false);
             w.d.set("vpn_port_sync", false);
+            if !only.contains(&"vpn") {
+                w.d.set("downloads_require_vpn", false); // the VPN step didn't run: no VPN, nothing to wait for
+            }
             w.d.save()?;
         }
     }
@@ -503,11 +505,14 @@ impl Wizard<'_> {
             };
             let c = self.ui.choose("The downloader:", &["Inside a VPN (WireGuard; Linux with Docker)", "No VPN (this computer's own connection)"], def);
             if c == 1 {
+                self.d.set("downloads_require_vpn", false); // no VPN: nothing to wait for
                 return Ok(()); // made on its own after this step
             }
             self.vpn_gluetun().await?;
             if self.make.is_some() {
-                return Ok(()); // the VPN couldn't be set up: on its own, then
+                // the VPN couldn't be set up here: the downloader comes without one, and the kill switch you ask for
+                // keeps it from using the open connection
+                self.ui.say("  The downloader is set up without a VPN.");
             }
             let def = if self.f.has("no-require-vpn") { false } else { self.f.has("require-vpn") || self.d.bool("downloads_require_vpn").unwrap_or(true) };
             let kill = self.ui.yes("Pause downloads whenever the VPN is down (never use the open connection)?", def);
