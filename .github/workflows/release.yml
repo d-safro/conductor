@@ -2,7 +2,7 @@
 #   - tests on Windows, Linux x86-64 and Linux ARM64, then the files: conductor.exe (+ install.ps1, uninstall.ps1,
 #     the config example) zipped for Windows, and a static binary for each Linux;
 #   - the Docker image ghcr.io/d-safro/conductor (linux/amd64 and linux/arm64), from those same binaries, tagged
-#     with the version, its x.y and latest;
+#     with the version, and for a release (no "-" in it: not v1.2.0-rc1) its x.y and latest too;
 #   - a draft release with the files and SHA256SUMS.txt, to read over and publish.
 # Run by hand (workflow_dispatch), it only builds and tests.
 name: release
@@ -80,7 +80,11 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#v}"
           img=ghcr.io/${GITHUB_REPOSITORY,,}
-          echo "list=$img:$v,$img:${v%.*},$img:latest" >> "$GITHUB_OUTPUT"
+          if [[ "$v" == *-* ]]; then
+            echo "list=$img:$v" >> "$GITHUB_OUTPUT" # a pre-release never moves x.y or latest
+          else
+            echo "list=$img:$v,$img:${v%.*},$img:latest" >> "$GITHUB_OUTPUT"
+          fi
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -94,4 +98,5 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           notes="docs/release-notes/$GITHUB_REF_NAME.md"
           [ -f "$notes" ] || { echo "Conductor $v" > /tmp/notes.md; notes=/tmp/notes.md; }
-          gh release create "$GITHUB_REF_NAME" --draft --title "Conductor $v" --notes-file "$notes" out/*
+          pre=""; [[ "$v" == *-* ]] && pre="--prerelease"
+          gh release create "$GITHUB_REF_NAME" --draft $pre --title "Conductor $v" --notes-file "$notes" out/*

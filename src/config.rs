@@ -263,7 +263,8 @@ pub fn default_config_path() -> PathBuf {
 
 /// Write a file only its owner can read (secrets.toml, secret.key, the VPN's keys). It's made that way from the
 /// start, under a temporary name beside it, then renamed over the old one: never readable by others, not even for
-/// a moment, and never half written.
+/// a moment, and never half written. On Windows (no modes) its ACL is set instead, as well as it can be: this
+/// account, SYSTEM and administrators only.
 pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -282,6 +283,8 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
             use std::os::unix::fs::PermissionsExt;
             f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // a leftover temporary file had others' modes
         }
+        #[cfg(windows)]
+        restrict(&tmp); // before anything is written into it
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -291,6 +294,32 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
         let _ = std::fs::remove_file(&tmp);
     }
     res
+}
+
+/// Windows: the file's inherited access (all local users can read C:\ProgramData) is replaced by this account,
+/// SYSTEM and administrators. Best effort: without whoami or icacls the folder's access stays (install.ps1 makes
+/// Conductor's data folder private too).
+#[cfg(windows)]
+fn restrict(path: &std::path::Path) {
+    use std::process::Command;
+    let me = Command::new("whoami").args(["/user", "/fo", "csv", "/nh"]).output().ok().and_then(|o| current_sid(&String::from_utf8_lossy(&o.stdout)));
+    if let Some(sid) = me {
+        let _ = Command::new("icacls").arg(path).args(icacls_private(&sid)).output();
+    }
+}
+
+/// The SID in `whoami /user /fo csv /nh`'s answer ("host\\me","S-1-5-21-…").
+#[cfg(any(windows, test))]
+fn current_sid(csv: &str) -> Option<String> {
+    let sid = csv.lines().next()?.rsplit(',').next()?.trim().trim_matches('"');
+    sid.starts_with("S-1-").then(|| sid.to_string())
+}
+
+/// icacls' arguments: nothing inherited; full access for `sid`, SYSTEM and administrators (well-known SIDs, so any
+/// Windows language works).
+#[cfg(any(windows, test))]
+fn icacls_private(sid: &str) -> Vec<String> {
+    ["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F"].iter().map(|s| s.to_string()).chain([format!("*{sid}:F")]).collect()
 }
 
 /// secrets.toml beside a config file.
@@ -618,6 +647,14 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_files_on_windows() {
+        let sid = current_sid("\"desktop-1\\me\",\"S-1-5-21-1-2-3-1001\"\r\n").unwrap();
+        assert_eq!(sid, "S-1-5-21-1-2-3-1001");
+        assert_eq!(current_sid("INFO: no user\r\n"), None);
+        assert_eq!(icacls_private(&sid), ["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F", "*S-1-5-21-1-2-3-1001:F"]);
+    }
 
     #[test]
     fn private_files() {

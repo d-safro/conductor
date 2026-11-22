@@ -481,3 +481,24 @@ async fn yes_adds_the_admin_it_is_given() {
     let admins: Vec<String> = sqlx::query_scalar("SELECT name FROM user WHERE is_admin = 1 ORDER BY name").fetch_all(&db).await.unwrap();
     assert_eq!(admins, ["me", "second"]);
 }
+
+#[tokio::test]
+async fn user_add_if_missing_leaves_one_that_is_there() {
+    // install.ps1 run again (an upgrade) with -Admin: the admin is there already, and that isn't an error
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config.toml");
+    std::fs::write(&config, format!("data_dir = {:?}\n", tmp.path().to_str().unwrap())).unwrap();
+    let add = |pw: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_conductor"))
+            .args(["--config", config.to_str().unwrap(), "user", "add", "me", "--admin", "--if-missing"])
+            .env("CONDUCTOR_PASSWORD", pw)
+            .output()
+            .unwrap()
+    };
+    assert!(add("first-pw-1").status.success());
+    let again = add("second-pw-2");
+    assert!(again.status.success() && String::from_utf8_lossy(&again.stdout).contains("there already"), "{again:?}");
+    let db = conductor::db::open(&tmp.path().join("conductor.db")).await.unwrap();
+    let secrets = conductor::auth::Secrets::load_or_create(&tmp.path().join("secret.key")).unwrap();
+    assert!(conductor::auth::verify_password(&db, &secrets, "me", "first-pw-1").await.unwrap().is_some(), "its password unchanged");
+}
