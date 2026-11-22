@@ -350,6 +350,9 @@ impl Wizard<'_> {
         let mut wanted: Vec<String> = self.f.all("music").iter().map(|s| s.to_string()).collect();
         // --music auto: the folder the drives suggest
         let auto_pick = wanted.first().is_some_and(|w| w == "auto");
+        if auto_pick {
+            wanted[0] = String::new(); // not a folder: typed after all, nothing is offered
+        }
         if wanted.is_empty() {
             wanted = current.iter().map(|c| c.0.clone()).collect();
         }
@@ -363,7 +366,7 @@ impl Wizard<'_> {
             // made just now: empty, and that's fine
             let (path, new) = match look.then(|| self.pick_music()) {
                 Some(Some(p)) => p,
-                Some(None) if auto_pick => (String::new(), false),
+                Some(None) if auto_pick && self.ui.auto() => (String::new(), false),
                 _ => (self.ui.ask(q, &def), false),
             };
             look = false;
@@ -420,7 +423,7 @@ impl Wizard<'_> {
     }
 
     fn drive_of(&mut self, p: &Path) -> Option<drives::Drive> {
-        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let p = std::fs::canonicalize(p).map(drives::plain).unwrap_or_else(|_| p.to_path_buf());
         drives::drive_of(self.drives(), &p).cloned()
     }
 

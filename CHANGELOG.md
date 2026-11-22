@@ -40,6 +40,9 @@ What changed in each release, newest first. The full notes for each are on the
   moves Conductor back to 127.0.0.1 unasked; an email that isn't one is no longer written into the Caddyfile.
 - A better copy swapped in for a song with another file type (FLAC for an MP3) could leave the song twice in the
   library: the old file went only after scans were let run again.
+- Prelude's look at the drives: music found on a slow drive just as its time ran out was left out as empty; on
+  Windows a music folder on a USB drive wasn't seen as on that drive (no drive guard offered); `--music auto` in a
+  terminal, then "Type a path", offered "auto" as the folder.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.

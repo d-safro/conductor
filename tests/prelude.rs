@@ -667,3 +667,15 @@ async fn choosing_where_the_music_goes_in_a_terminal() {
     assert_eq!((c.libraries[0].path.as_path(), c.libraries[0].sentinel.as_deref()), (at.join("Music").as_path(), Some(".library-id")));
     assert!(at.join("Music/.library-id").is_file());
 }
+
+#[tokio::test]
+async fn music_auto_then_typing_a_path() {
+    let base = services().await;
+    let p = place(&base);
+    let a = drive(&p.root.join("drives/a"), "Empty", 40, false);
+    // --music auto in a terminal, then "Type a path": asked plainly (not with "auto" as the folder offered)
+    let out = scripted_with(&p.config, &["music", "--music", "auto"], &["2", p.music.to_str().unwrap(), "", ""], vec![a]).await;
+    assert!(!out.contains("[auto]") && !out.contains("A music folder is needed"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.libraries[0].path, p.music);
+}

@@ -288,7 +288,8 @@ fn look(dir: &Path, depth: usize, until: Instant, out: &mut Vec<PathBuf>) {
 pub fn count_songs(dir: &Path, cap: usize, until: Instant) -> (usize, bool) {
     let mut n = 0;
     for (i, e) in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()).enumerate() {
-        if n >= cap || (i % 256 == 0 && Instant::now() > until) {
+        // the time is checked from the 256th entry on: a folder found just as time ran out is still counted a bit
+        if n >= cap || (i > 0 && i % 256 == 0 && Instant::now() > until) {
             return (n, true);
         }
         if e.file_type().is_file() && e.path().extension().is_some_and(|x| crate::library::AUDIO.contains(&x.to_string_lossy().to_lowercase().as_str())) {
@@ -323,6 +324,21 @@ pub fn default_choice(drives: &[Drive], found: &[Found]) -> Pick {
         Some(i) => Pick::NewOn(i),
         None => Pick::Type,
     }
+}
+
+/// A path as the drives list has them: Windows' canonical paths start with \\?\ (\\?\D:\Music), which never
+/// starts with D:\ as a path, so that's taken off.
+pub fn plain(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        if let Some(unc) = rest.strip_prefix(r"UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if rest.as_bytes().get(1) == Some(&b':') {
+            return PathBuf::from(rest);
+        }
+    }
+    p
 }
 
 /// The drive a path is on (the longest mount point it's under).
@@ -452,5 +468,15 @@ mod tests {
         assert_eq!(got, [("a/Music".to_string(), 3), ("b/c/Musik".to_string(), 2)], "three levels down at most; not hidden or system folders; not empty ones");
         let (n, more) = count_songs(&root.join("d"), 3, Instant::now() + TIME);
         assert_eq!((n, more), (3, true), "stops at the cap");
+        // the looking took all the time: what's found is still counted a little, not dropped as empty
+        let late = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+        assert_eq!(count_songs(&root.join("a/Music"), MAX_SONGS, late), (3, false));
+    }
+
+    #[test]
+    fn windows_canonical_paths() {
+        assert_eq!(plain(PathBuf::from(r"\\?\D:\Music")), PathBuf::from(r"D:\Music"));
+        assert_eq!(plain(PathBuf::from(r"\\?\UNC\nas\share\Music")), PathBuf::from(r"\\nas\share\Music"));
+        assert_eq!(plain(PathBuf::from("/run/media/me/Music")), PathBuf::from("/run/media/me/Music"));
     }
 }
