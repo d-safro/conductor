@@ -170,18 +170,31 @@ pub fn ids() -> (u32, u32) {
 pub struct Lidarr<'a> {
     pub port: u16,
     pub key: &'a str,
-    /// the music folder and the downloads folder, mounted at the same places as here
+    /// the music folder and the downloads folder, mounted where `lidarr_paths` says
     pub music: &'a str,
     pub downloads: Option<&'a str>,
+    /// Windows paths (D:\Music) aren't paths in Lidarr's Linux container
+    pub windows: bool,
+}
+
+/// Where Lidarr sees the music and the downloads folders: at the same places as here, or on Windows at /music
+/// and /downloads (Conductor's lidarr_downloads then). (music, downloads)
+pub fn lidarr_paths(music: &str, downloads: Option<&str>, windows: bool) -> (String, Option<String>) {
+    let downloads = downloads.filter(|d| !d.is_empty());
+    if !windows {
+        return (music.to_string(), downloads.map(String::from));
+    }
+    ("/music".into(), downloads.map(|d| if d == music { "/music" } else { "/downloads" }.to_string()))
 }
 
 pub fn lidarr(dir: &Path, l: &Lidarr) -> Result<()> {
     let (uid, gid) = ids();
     private(&dir.join("lidarr.env"), &format!("# Lidarr's API key (Conductor has the same one). Keep it to yourself.\nLIDARR__AUTH__APIKEY={}\n", l.key))?;
     let z = opts(false);
-    let mut vols = format!("      - ./lidarr:/config{z}\n      - {}\n", q(&format!("{0}:{0}{z}", l.music)));
-    if let Some(d) = l.downloads.filter(|d| !d.is_empty() && *d != l.music) {
-        vols += &format!("      - {}\n", q(&format!("{d}:{d}{z}")));
+    let (music, downloads) = lidarr_paths(l.music, l.downloads, l.windows);
+    let mut vols = format!("      - ./lidarr:/config{z}\n      - {}\n", q(&format!("{}:{music}{z}", l.music)));
+    if let (Some(d), Some(inside)) = (l.downloads.filter(|d| *d != l.music), downloads) {
+        vols += &format!("      - {}\n", q(&format!("{d}:{inside}{z}")));
     }
     let yaml = format!(
         "# Lidarr: albums you want, which Conductor fetches from Soulseek (Stagehand) and files into your music.
@@ -301,9 +314,18 @@ fn music_mounts(music: &[String]) -> String {
     }
 }
 
-/// Pitch: the music folders, read-only; its fingerprints in pitch/data.
-pub fn pitch(dir: &Path, port: u16, music: &[String]) -> Result<()> {
+/// Pitch's memory limit in MB for this many songs. It keeps every song's hashes in memory (about 80 KB a song)
+/// and adding songs copies that once, so twice that, plus Python and the song being read. None: so big a library
+/// would need more than a limit can keep safe, so there's none.
+pub fn pitch_memory(songs: usize) -> Option<u64> {
+    let mb = (384 + (songs as u64 * 160).div_ceil(1024)).div_ceil(128) * 128;
+    (mb <= 16384).then_some(mb.max(768))
+}
+
+/// Pitch: the music folders, read-only; its fingerprints in pitch/data. Its memory limit fits `songs`.
+pub fn pitch(dir: &Path, port: u16, music: &[String], songs: usize) -> Result<()> {
     let (uid, gid) = ids();
+    let mem = pitch_memory(songs).map(|mb| format!("    mem_limit: {mb}m\n")).unwrap_or_default();
     let yaml = format!(
         "# Pitch, \"What's playing?\": fingerprints your songs once (slowly, newest first) and recognises short
 # recordings against them. Offline: nothing is sent anywhere, and it only knows your own songs.
@@ -321,8 +343,7 @@ services:
     ports:
       - \"127.0.0.1:{port}:4540\"
     cpus: 1
-    mem_limit: 768m
-    restart: unless-stopped
+{mem}    restart: unless-stopped
 ",
         music = music_mounts(music),
         z = opts(false),
@@ -442,6 +463,30 @@ pub fn exec(container: &str, args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pitch_memory_fits_the_library() {
+        assert_eq!(super::pitch_memory(2), Some(768));
+        assert_eq!(super::pitch_memory(2_000), Some(768));
+        assert_eq!(super::pitch_memory(10_000), Some(2048), "about 800 MB of hashes, twice while adding");
+        assert_eq!(super::pitch_memory(200_000), None);
+        let tmp = tempfile::tempdir().unwrap();
+        super::pitch(tmp.path(), 4540, &["/srv/music".into()], 10_000).unwrap();
+        assert!(std::fs::read_to_string(tmp.path().join("pitch.yml")).unwrap().contains("mem_limit: 2048m"));
+        super::pitch(tmp.path(), 4540, &["/srv/music".into()], 200_000).unwrap();
+        assert!(!std::fs::read_to_string(tmp.path().join("pitch.yml")).unwrap().contains("mem_limit"));
+    }
+
+    #[test]
+    fn lidarr_on_windows_sees_linux_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = super::Lidarr { port: 8686, key: "k", music: "D:\\Music", downloads: Some("D:\\Downloads"), windows: true };
+        super::lidarr(tmp.path(), &l).unwrap();
+        let y = std::fs::read_to_string(tmp.path().join("lidarr.yml")).unwrap();
+        assert!(y.contains(r#""D:\\Music:/music"#) && y.contains(r#""D:\\Downloads:/downloads"#), "{y}");
+        assert_eq!(super::lidarr_paths("D:\\Music", Some("D:\\Downloads"), true), ("/music".into(), Some("/downloads".into())));
+        assert_eq!(super::lidarr_paths("/srv/m", Some("/srv/d"), false), ("/srv/m".into(), Some("/srv/d".into())));
+    }
+
     #[test]
     fn music_folders_for_the_helpers() {
         let one = super::music_mounts(&["/srv/music".into()]);

@@ -307,6 +307,7 @@ async fn sets_up_the_whole_music_lab() {
     }
     let out = String::from_utf8(out).unwrap();
     assert!(!out.contains("pw-lab"), "{out}");
+    assert!(out.contains("your 2 songs") && out.contains("its limit: 768 MB"), "Pitch's memory fits the library: {out}");
     let dir = data.join("services");
     let main = read(&dir.join("compose.yml"));
     for part in ["downloads", "lidarr", "audiomuse", "pitch", "metronome", "ai"] {
@@ -454,4 +455,29 @@ async fn a_provider_that_needs_its_address() {
     let env = read(&dir.join("vpn.env"));
     assert!(env.contains("VPN_SERVICE_PROVIDER=mullvad") && env.contains("WIREGUARD_ADDRESSES=10.64.0.2/32"), "{env}");
     assert!(!read(&dir.join("downloads.yml")).contains("VPN_PORT_FORWARDING: \"on\""), "mullvad has no port forwarding");
+}
+
+#[tokio::test]
+async fn yes_adds_the_admin_it_is_given() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    yes(&p.config, &["--yes", "server", "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45937"]).await;
+    scripted(&p.config, &["admin"], &["me", "secret12", "secret12"]).await;
+    // `conductor setup admin --yes --admin NAME`, the password from the environment
+    let run = || {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_conductor"))
+            .args(["--config", p.config.to_str().unwrap(), "setup", "admin", "--yes", "--admin", "second"])
+            .env("CONDUCTOR_PASSWORD", "second-pw-1")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{o:?}");
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let out = run();
+    assert!(out.contains("✓ second can sign in") && !out.contains("second-pw-1"), "{out}");
+    assert!(run().contains("✓ second is an admin already"));
+    let db = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    let admins: Vec<String> = sqlx::query_scalar("SELECT name FROM user WHERE is_admin = 1 ORDER BY name").fetch_all(&db).await.unwrap();
+    assert_eq!(admins, ["me", "second"]);
 }

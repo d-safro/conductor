@@ -9,7 +9,8 @@ use anyhow::{Context, Result, bail};
 
 use super::{Draft, ui::Ui};
 
-pub fn unit(exe: &Path, config: &Path, user: Option<&str>) -> String {
+/// The unit: for you (`system` false), or a system one, run as `user` (None: root).
+pub fn unit(exe: &Path, config: &Path, system: bool, user: Option<&str>) -> String {
     format!(
         "# Conductor, set up by `conductor setup`.
 [Unit]
@@ -28,7 +29,7 @@ WantedBy={}
         exe.display(),
         config.display(),
         user.map(|u| format!("User={u}\n")).unwrap_or_default(),
-        if user.is_some() { "multi-user.target" } else { "default.target" }
+        if system { "multi-user.target" } else { "default.target" }
     )
 }
 
@@ -48,7 +49,7 @@ pub fn systemd_user(ui: &mut dyn Ui, exe: &Path, config: &Path) -> Result<()> {
         return Ok(());
     }
     std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(&path, unit(exe, config, None))?;
+    std::fs::write(&path, unit(exe, config, false, None))?;
     ui.say(&format!("  ✓ {}", path.display()));
     if ui.yes("Start it now and whenever you log in (systemctl --user enable --now conductor)?", true) {
         run(ui, &["systemctl", "--user", "daemon-reload"])?;
@@ -65,9 +66,36 @@ fn is_root() -> bool {
     Command::new("id").arg("-u").output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
 }
 
+/// Who the system service runs as: whoever owns the settings' folder. Under `sudo conductor setup` the settings
+/// were made in root's own folders (and the Docker helpers run as root), so it runs as root; settings in your own
+/// folder run as you. Not as root now: you (the unit is copied in with sudo).
+pub fn service_user(config: &Path, root: bool) -> Option<String> {
+    if !root {
+        return std::env::var("USER").ok().filter(|u| !u.is_empty() && u != "root");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dir = config.parent().filter(|d| d.is_dir()).unwrap_or(config);
+        let uid = std::fs::metadata(dir).ok()?.uid();
+        if uid == 0 {
+            return None;
+        }
+        let o = Command::new("id").args(["-nu", &uid.to_string()]).output().ok()?;
+        Some(String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|u| !u.is_empty())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = config;
+        None
+    }
+}
+
 pub fn systemd_system(ui: &mut dyn Ui, exe: &Path, config: &Path) -> Result<()> {
-    let user = std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "root".into());
-    let text = unit(exe, config, Some(&user));
+    let root = is_root();
+    let user = service_user(config, root);
+    let text = unit(exe, config, true, user.as_deref());
+    let user = user.unwrap_or_else(|| "root".into());
     if !is_root() {
         let tmp = config.with_file_name("conductor.service");
         std::fs::write(&tmp, &text)?;
@@ -169,5 +197,24 @@ fn ids() -> (u32, u32) {
     #[cfg(not(unix))]
     {
         (1000, 1000)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_unit_runs_as_who_owns_the_settings() {
+        let u = unit(Path::new("/usr/local/bin/conductor"), Path::new("/root/.local/share/conductor/config.toml"), true, None);
+        assert!(!u.contains("User=") && u.contains("WantedBy=multi-user.target"), "{u}");
+        let u = unit(Path::new("/usr/bin/conductor"), Path::new("/home/me/c/config.toml"), false, None);
+        assert!(u.contains("WantedBy=default.target"), "{u}");
+        // the settings' folder is ours here (not root's): the service runs as us
+        let tmp = tempfile::tempdir().unwrap();
+        let me = Command::new("id").arg("-un").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        if cfg!(unix) && me != "root" {
+            assert_eq!(service_user(&tmp.path().join("config.toml"), true).as_deref(), Some(me.as_str()));
+        }
     }
 }

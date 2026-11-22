@@ -411,7 +411,13 @@ impl Wizard<'_> {
         let db = crate::db::open(&cfg.data_dir.join("conductor.db")).await?;
         let secrets = crate::auth::Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
         let admins: Vec<String> = sqlx::query_scalar("SELECT name FROM user WHERE is_admin = 1 ORDER BY name").fetch_all(&db).await?;
-        if !admins.is_empty() && !self.ui.yes(&format!("Admins: {}. Add another?", admins.join(", ")), false) {
+        // --admin NAME: that admin is made if it isn't there yet (with --yes too)
+        let wanted = self.f.get("admin").map(String::from);
+        if let Some(n) = wanted.as_deref().filter(|n| admins.iter().any(|a| a == n)) {
+            self.ui.say(&format!("  ✓ {n} is an admin already"));
+            return Ok(());
+        }
+        if !admins.is_empty() && !self.ui.yes(&format!("Admins: {}. Add another?", admins.join(", ")), wanted.is_some()) {
             return Ok(());
         }
         let name = self.ask_or("admin", "Admin user name", None, if admins.is_empty() { "admin" } else { "" });
@@ -882,10 +888,15 @@ impl Wizard<'_> {
                     // the key Lidarr has already, if it's been set up here before
                     let key = stack::env_value(&dir.join("lidarr.env"), "LIDARR__AUTH__APIKEY").unwrap_or_else(|| new_key()[..32].to_string());
                     let dl = self.d.str("slskd_downloads");
-                    stack::lidarr(&dir, &stack::Lidarr { port, key: &key, music: &m, downloads: dl.as_deref() })?;
+                    let windows = cfg!(windows);
+                    stack::lidarr(&dir, &stack::Lidarr { port, key: &key, music: &m, downloads: dl.as_deref(), windows })?;
                     self.d.set("lidarr_url", format!("http://127.0.0.1:{port}"));
                     self.d.set("lidarr_api_key", key);
-                    self.d.unset("lidarr_downloads"); // it sees the downloads at the same place
+                    // where it sees the downloads: the same place, or on Windows /downloads in its container
+                    match stack::lidarr_paths(&m, dl.as_deref(), windows).1.filter(|_| windows) {
+                        Some(inside) => self.d.set("lidarr_downloads", inside),
+                        None => self.d.unset("lidarr_downloads"),
+                    }
                     self.ui.say(&format!("  ✓ Lidarr: its page will be http://127.0.0.1:{port}; your music is its root folder"));
                     made.push("lidarr");
                 }
@@ -970,9 +981,15 @@ impl Wizard<'_> {
             0 => match music.clone() {
                 Some(_) => {
                     let port = self.keep_port(stack::part_port(&dir, "pitch", 4540), 4540);
-                    stack::pitch(&dir, port, &self.all_music())?;
+                    let songs: usize = self.all_music().iter().filter_map(|m| check_music(Path::new(m)).ok()).sum();
+                    stack::pitch(&dir, port, &self.all_music(), songs)?;
                     self.d.set("songid_url", format!("http://127.0.0.1:{port}"));
-                    self.ui.say("  ✓ Pitch: it fingerprints your songs once, slowly, newest first (about 150 MB of memory for 2,000 songs)");
+                    let need = (songs as u64 * 80).div_ceil(1024).max(50);
+                    self.ui.say(&match stack::pitch_memory(songs) {
+                        Some(mb) => format!("  ✓ Pitch: it fingerprints your {songs} songs once, slowly, newest first (about {need} MB of memory; its limit: {mb} MB)"),
+                        None => format!("  ✓ Pitch: it fingerprints your {songs} songs once, slowly, newest first. It needs about {need} MB of memory, so it has no limit: make sure the computer has it"),
+                    });
+                    self.ui.say("    (with many more songs later, run conductor setup services again: the limit grows with them)");
                     made.push("pitch");
                 }
                 None => self.ui.say("  ✗ set the music folder up first (conductor setup music)"),
@@ -1121,6 +1138,7 @@ impl Wizard<'_> {
     /// Lidarr's root folder: the music folder (once it answers).
     async fn lidarr_root(&mut self) {
         let (Some(url), Some(key), Some(music)) = (self.d.str("lidarr_url"), self.d.str("lidarr_api_key"), self.first_music()) else { return };
+        let music = stack::lidarr_paths(&music, None, cfg!(windows)).0; // as Lidarr sees it
         let mut up = false;
         for _ in 0..45 {
             if http().get(format!("{url}/api/v1/system/status")).header("X-Api-Key", &key).send().await.is_ok_and(|r| r.status().is_success()) {
