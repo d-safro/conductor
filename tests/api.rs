@@ -539,6 +539,10 @@ async fn podcasts() {
     assert_eq!(eps[0]["downloaded"], false);
     let (newer, older) = (eps[0]["id"].as_str().unwrap().to_string(), eps[1]["id"].as_str().unwrap().to_string());
     assert_eq!(s.ok("getNewestPodcasts", &[("count", "1")]).await["newestPodcasts"]["episode"][0]["id"], newer);
+    // an episode in the play queue stays there for the next device
+    s.ok("savePlayQueue", &[("id", &newer), ("current", &newer), ("position", "5000")]).await;
+    let q = s.ok("getPlayQueue", &[]).await;
+    assert_eq!(q["playQueue"]["entry"][0]["id"], newer.as_str());
 
     // not saved here: streamed through from the podcast's server, seeking included
     let r = s.http.get(s.url("stream", &[("id", &older)])).header("Range", "bytes=10-19").send().await.unwrap();
@@ -776,6 +780,12 @@ async fn songs_you_dont_have() {
     );
     let r = s.http.get(s.url("stream", &[("id", "dz-t-900")])).send().await.unwrap();
     assert_eq!(r.headers()["content-type"], "audio/flac");
+
+    // ⬇ songs in the play queue stay there for the next device
+    s.ok("savePlayQueue", &[("id", &local), ("id", "dz-t-901"), ("current", "dz-t-901")]).await;
+    let q = s.ok("getPlayQueue", &[]).await;
+    let ids: Vec<&str> = q["playQueue"]["entry"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [local.as_str(), "dz-t-901"]);
 
     // a ⬇ song added to a playlist shows there while it's on its way
     let r = s.ok("createPlaylist", &[("name", "Wishlist"), ("songId", "dz-t-901")]).await;

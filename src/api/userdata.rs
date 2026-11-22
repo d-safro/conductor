@@ -343,9 +343,15 @@ pub async fn get_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
     let ids: Vec<String> = serde_json::from_str(&ids).unwrap_or_default();
     let mut entries = vec![];
     for id in &ids {
-        if let Ok(t) = items::track(c, id).await {
-            entries.push(items::song_json(&t));
-        }
+        // ⬇ songs and podcast episodes are queued too: keep them, or another device loses them
+        let e = if crate::catalog::dz_id(id, 't').is_some() {
+            super::catalog_api::queue_entry(c, id).await
+        } else if super::podcasts::is_podcast_id(id) {
+            super::podcasts::queue_entry(c, id).await
+        } else {
+            items::track(c, id).await.ok().map(|t| items::song_json(&t))
+        };
+        entries.extend(e);
     }
     let mut v = json!({ "username": c.user.name, "changed": iso(at), "changedBy": by, "position": pos, "entry": entries });
     if let Some(cur) = current {

@@ -481,6 +481,11 @@ async fn episode(c: &Ctx, id: &str) -> Result<EpRow, ApiError> {
         .ok_or_else(|| ApiError::not_found("Episode"))
 }
 
+/// An episode as an entry of a play queue (apps put episodes in their queues too).
+pub async fn queue_entry(c: &Ctx, id: &str) -> Option<Value> {
+    episode(c, id).await.ok().map(|e| ep_json(&e))
+}
+
 pub async fn get_episode(c: &Ctx) -> Result<Reply, ApiError> {
     let e = episode(c, c.p.req("id")?).await?;
     ok(json!({ "podcastEpisode": ep_json(&e) }))

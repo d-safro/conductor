@@ -110,6 +110,14 @@ async fn local_song(c: &Ctx, id: &str) -> Option<Value> {
     items::track(c, id).await.ok().map(|t| items::song_json(&t))
 }
 
+/// A ⬇ song as an entry of a play queue.
+pub async fn queue_entry(c: &Ctx, id: &str) -> Option<Value> {
+    match dz_song(c, id).await {
+        Ok(Reply::Ok(v)) => Some(v["song"].clone()),
+        _ => None,
+    }
+}
+
 async fn dz_song(c: &Ctx, id: &str) -> Result<Reply, ApiError> {
     let t = c.st.catalog.dz.get(&format!("track/{}", dz_id(id, 't').unwrap()), &[]).await;
     if sv(&t, "title").is_empty() {
