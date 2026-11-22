@@ -236,32 +236,6 @@ pub async fn top_songs(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 /// Without outside sources yet: songs by the same artist and in the same genre, shuffled.
-pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
-    let id = c.p.req("id")?;
-    let count = clamp(c.p.int("count"), 50, 500);
-    let (artist, genre) = match items::kind_of(c, id).await? {
-        Some("track") => {
-            let t = items::track(c, id).await?;
-            (t.artist_id, t.genre.unwrap_or_default())
-        }
-        Some("album") => {
-            let a = items::albums_where(c, "al.id = ?", &[id], "").await?.remove(0);
-            (a.artist_id, a.genre.unwrap_or_default())
-        }
-        Some("artist") => (id.to_string(), String::new()),
-        _ => return Err(ApiError::not_found("Item")),
-    };
-    let rows = items::tracks_where(
-        c,
-        "(t.artist_id = ? OR al.artist_id = ? OR (t.genre = ? AND t.genre != '')) AND t.id != ?",
-        &[&artist, &artist, &genre, id],
-        &format!("ORDER BY RANDOM() LIMIT {count}"),
-    )
-    .await?;
-    let songs: Vec<Value> = rows.iter().map(song_json).collect();
-    if id3 { ok(json!({ "similarSongs2": { "song": songs } })) } else { ok(json!({ "similarSongs": { "song": songs } })) }
-}
-
 pub async fn scan_status(c: &Ctx) -> Result<Reply, ApiError> {
     let s = &c.st.scan;
     let last = s.last_scan.load(Ordering::Relaxed);

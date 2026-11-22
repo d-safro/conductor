@@ -620,7 +620,7 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                 "/album/60/tracks" => json!({ "data": [one, half] }),
                 "/artist/8/albums" => json!({ "data": [first, second] }),
                 // for the mixes: related artists, top songs, radios, a release from today
-                "/artist/8/related" => json!({ "data": [th] }),
+                "/artist/8/related" => json!({ "data": [th, { "id": 9, "name": "The Beta Band", "picture_big": format!("{b}/img.png") }] }),
                 "/artist/7/top" => json!({ "data": [pk, uh] }),
                 "/artist/8/radio" => json!({ "data": [pk] }),
                 "/search/track" if q.contains("alpha") => json!({ "data": [one] }),
@@ -1810,4 +1810,29 @@ async fn weekly_mixes() {
     assert!(r["mixes"]["mix"].as_array().unwrap().iter().all(|m| m["kind"] != "discover"));
     assert_eq!(r["mixes"]["kind"][0]["enabled"], false);
     assert_eq!(s.call("getPlaylist", &[("id", dw["playlistId"].as_str().unwrap())]).await["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn artist_info_and_similar_songs() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    let r = s.ok("search3", &[("query", "")]).await;
+    let id = |t: &str| r["searchResult3"]["song"].as_array().unwrap().iter().find(|x| x["title"] == t).unwrap().clone();
+    let (one, three) = (id("One"), id("Three"));
+    let alpha = one["artistId"].as_str().unwrap().to_string();
+    let info = &s.ok("getArtistInfo2", &[("id", &alpha), ("count", "12")]).await["artistInfo2"];
+    let sim = info["similarArtist"].as_array().unwrap();
+    assert_eq!(sim.len(), 1, "only artists you have: {sim:?}");
+    assert_eq!(sim[0]["name"], "The Beta Band");
+    assert_eq!(sim[0]["id"], three["artistId"]);
+    let all = &s.ok("getArtistInfo2", &[("id", &alpha), ("includeNotPresent", "true")]).await["artistInfo2"];
+    assert!(all["similarArtist"].as_array().unwrap().iter().any(|a| a["id"] == "dz-r-7"));
+    // similar songs: the artist's own and the related artists' you have, not the song itself
+    let r = s.ok("getSimilarSongs2", &[("id", one["id"].as_str().unwrap()), ("count", "10")]).await;
+    let titles: Vec<&str> = r["similarSongs2"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"Two") && titles.contains(&"Three") && !titles.contains(&"One"), "{titles:?}");
+    let r = s.ok("getSimilarSongs2", &[("id", &alpha)]).await;
+    assert_eq!(r["similarSongs2"]["song"].as_array().unwrap().len(), 3);
 }

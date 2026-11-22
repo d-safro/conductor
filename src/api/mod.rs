@@ -4,6 +4,7 @@ mod bridges;
 mod browse;
 mod catalog_api;
 mod encore;
+mod info;
 mod items;
 pub(crate) mod media;
 mod native;
@@ -294,10 +295,10 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getStarred2" => browse::starred(c, true).await,
         "getStarred" => browse::starred(c, false).await,
         "getTopSongs" => browse::top_songs(c).await,
-        "getSimilarSongs2" => browse::similar_songs(c, true).await,
-        "getSimilarSongs" => browse::similar_songs(c, false).await,
-        "getArtistInfo2" => ok(json!({ "artistInfo2": {} })),
-        "getArtistInfo" => ok(json!({ "artistInfo": {} })),
+        "getSimilarSongs2" => info::similar_songs(c, true).await,
+        "getSimilarSongs" => info::similar_songs(c, false).await,
+        "getArtistInfo2" => info::artist_info(c, true).await,
+        "getArtistInfo" => info::artist_info(c, false).await,
         "getAlbumInfo2" | "getAlbumInfo" => ok(json!({ "albumInfo": {} })),
         "getScanStatus" => browse::scan_status(c).await,
         "startScan" => browse::start_scan(c).await,

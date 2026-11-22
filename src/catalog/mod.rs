@@ -498,6 +498,23 @@ pub async fn dz_artist(st: &AppState, name: &str) -> Option<Value> {
     hits.into_iter().next().filter(|a| same_artist(name, s(a, "name")))
 }
 
+/// This artist on Deezer and Deezer's related artists ({artist, related}), kept for a week.
+pub async fn artist_info(st: &AppState, name: &str) -> Option<Value> {
+    let key = ak(name);
+    if let Some(v) = cache_get(st, "artist_info", &key, 7).await {
+        return v.and_then(|v| serde_json::from_str(&v).ok());
+    }
+    let found = match dz_artist(st, name).await {
+        Some(a) => {
+            let related = st.catalog.dz.list(&format!("artist/{}/related", n(&a, "id")), &[("limit", "20")]).await;
+            Some(json!({ "artist": a, "related": related }))
+        }
+        None => None,
+    };
+    cache_put(st, "artist_info", &key, found.as_ref().map(|v| v.to_string()).as_deref()).await;
+    found
+}
+
 /// "Because you like X": top songs of Deezer's related artists for the artists you play and heart most.
 pub async fn discoveries(st: &AppState, user_id: &str) -> Vec<(String, String, Vec<Value>)> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
