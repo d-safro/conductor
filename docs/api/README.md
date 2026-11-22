@@ -20,5 +20,6 @@ Each one gets its own spec file here before it's built.
 | `encore.mixes` | `getMixes`, `setMix?kind=&enabled=`, `refreshMix?kind=` (discover · radar · daily · daylist) | done (per user; same answers as music-lookup) |
 | `encore.concerts` | `getConcerts`, `refreshConcerts` | done (per user; same answers as music-lookup) |
 | `encore.lyricsTranslation` | `translateLyrics?id=&lang=&mode=translate\|romanize&line=…` | done (needs `ollama_url`; "ai-off" otherwise) |
+| `encore.dj` | `getDjLine?next=&prev=&lang=` → `{djLine: {text, id, duration}}`, `djAudio?id=` (WAV) | done (needs `ollama_url` and `dj_voice_url`; "ai-off" otherwise) |
 | `encore.songId` | `POST identifySong` (recording as the body) | done (needs `songid_url`) |
 | `encore.automix` | `getMixInfo?id=&id=…` | done (needs `mixinfo_dir`) |

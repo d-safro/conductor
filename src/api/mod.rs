@@ -3,6 +3,7 @@
 mod bridges;
 mod browse;
 mod catalog_api;
+mod dj;
 mod encore;
 mod info;
 mod items;
@@ -273,6 +274,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.review", "versions": [1] },
             { "name": "encore.collabPlaylists", "versions": [1] },
             { "name": "encore.lyricsTranslation", "versions": [1] },
+            { "name": "encore.dj", "versions": [1] },
             { "name": "encore.songId", "versions": [1] },
             { "name": "encore.automix", "versions": [1] },
             { "name": "encore.concerts", "versions": [1] },
@@ -300,6 +302,8 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getArtistInfo2" => info::artist_info(c, true).await,
         "getArtistInfo" => info::artist_info(c, false).await,
         "getAlbumInfo2" | "getAlbumInfo" => info::album_info(c).await,
+        "getDjLine" => dj::line(c).await,
+        "djAudio" => dj::audio(c).await,
         "getScanStatus" => browse::scan_status(c).await,
         "startScan" => browse::start_scan(c).await,
         "stream" => media::stream(c, false).await,

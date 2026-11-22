@@ -56,6 +56,9 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 # translate_model = "gemma4:e2b-it-qat"
 # "What's playing?" against your own library (the song-id service), and Automix (the mix analyzer's folder)
 # songid_url = "http://127.0.0.1:4540"
+# Encore's DJ: lines by the Ollama above, read aloud by Piper (the dj-voice service); off unless both are set
+# dj_voice_url = "http://127.0.0.1:4541"
+# dj_model = "gemma4:e2b-it-qat"            # default: translate_model
 # mixinfo_dir = "/srv/mixinfo"
 # Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
 # concerts = true

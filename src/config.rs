@@ -85,6 +85,10 @@ pub struct Config {
     pub translate_model: String,
     /// The song-id service (optional): "What's playing?" against your own library. POST /identify, GET /status.
     pub songid_url: Option<String>,
+    /// Encore's DJ: lines written by the Ollama above (`dj_model`, else `translate_model`) and read by Piper (the
+    /// dj-voice service: POST /speak). Off unless both are set.
+    pub dj_voice_url: Option<String>,
+    pub dj_model: Option<String>,
     /// Automix: the mix analyzer's folder (info.jsonl in, wanted.txt out; paths relative to the music folder).
     pub mixinfo_dir: Option<PathBuf>,
     /// Concerts near you: Ticketmaster's Discovery API (with the key set in Encore), else MusicBrainz events.
@@ -166,6 +170,8 @@ impl Default for Config {
             ollama_url: None,
             translate_model: "gemma4:e2b-it-qat".into(),
             songid_url: None,
+            dj_voice_url: None,
+            dj_model: None,
             mixinfo_dir: None,
             ticketmaster_url: "https://app.ticketmaster.com/discovery/v2".into(),
             musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
@@ -278,6 +284,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_INFO_ONLINE") {
             c.info_online = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_DJ_VOICE_URL") {
+            c.dj_voice_url = Some(v).filter(|v| !v.is_empty());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_DJ_MODEL") {
+            c.dj_model = Some(v).filter(|v| !v.is_empty());
         }
         if let Ok(v) = std::env::var("MAESTRO_UPGRADES") {
             c.upgrades = v != "0" && v != "false";

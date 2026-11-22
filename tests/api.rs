@@ -2285,6 +2285,81 @@ async fn better_copy_swapped_in_same_id() {
 }
 
 #[tokio::test]
+async fn dj_lines() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::Mutex;
+    // Ollama: writes the line (and keeps the prompt it was given)
+    let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let p2 = prompts.clone();
+    let (ollama, _) = stand_in(move |path, _, body| {
+        (path == "/api/chat").then(|| {
+            let b: Value = serde_json::from_slice(body).unwrap();
+            p2.lock().unwrap().push(b["messages"][0]["content"].as_str().unwrap().to_string());
+            json!({ "message": { "content": json!({ "line": "Up next: \"One\" by Alpha." }).to_string() } })
+        })
+    })
+    .await;
+    // the voice: English only; one second of WAV
+    let mut wav = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    for (v, n) in [(16u32, 4), (1, 2), (1, 2), (8000, 4), (16000, 4), (2, 2), (16, 2)] {
+        wav.extend(&v.to_le_bytes()[..n]);
+    }
+    wav.extend(b"data");
+    wav.extend(16000u32.to_le_bytes());
+    wav.extend(vec![0u8; 16000]);
+    let w2 = wav.clone();
+    let vl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let voice = format!("http://{}", vl.local_addr().unwrap());
+    let app = axum::Router::new().route(
+        "/speak",
+        axum::routing::post(move |axum::Json(b): axum::Json<Value>| {
+            let w = w2.clone();
+            async move {
+                if b["voice"].as_str().unwrap().starts_with("en_") { (axum::http::StatusCode::OK, w) } else { (axum::http::StatusCode::NOT_FOUND, vec![]) }
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(vl, app).await.unwrap() });
+
+    let off = Server::start().await;
+    let one = off.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(off.ok("getDjLine", &[("next", &one)]).await["djLine"]["error"], "ai-off");
+
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.ollama_url = Some(ollama.clone());
+        c.dj_voice_url = Some(voice.clone());
+    })
+    .await;
+    let song = async |q: &str| s.ok("search3", &[("query", q)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let (one, two) = (song("One").await, song("Two").await);
+    s.ok("star", &[("id", &one)]).await;
+    // no Russian voice: English then
+    let l = s.ok("getDjLine", &[("next", &one), ("prev", &two), ("lang", "ru")]).await["djLine"].clone();
+    assert_eq!(l["text"], "Up next: One by Alpha.");
+    assert_eq!(l["duration"], 1.0);
+    let id = l["id"].as_str().unwrap().to_string();
+    {
+        let ps = prompts.lock().unwrap();
+        assert_eq!(ps.len(), 2, "written again in English");
+        assert!(ps[0].contains("spoken Russian") && ps[1].contains("spoken English"));
+        assert!(ps[1].contains("\"title\":\"One\"") && ps[1].contains("\"you liked it\":true") && ps[1].contains("\"you have played it\":\"never\""), "{}", ps[1]);
+        assert!(ps[1].contains("Previous song: {\"album\":\"First Album\",\"artist\":\"Alpha\""), "{}", ps[1]);
+    }
+    // kept: asking again is free; the audio plays
+    assert_eq!(s.ok("getDjLine", &[("next", &one), ("prev", &two), ("lang", "ru")]).await["djLine"], l);
+    assert_eq!(prompts.lock().unwrap().len(), 2);
+    let a = s.http.get(s.url("djAudio", &[("id", &id)])).send().await.unwrap();
+    assert_eq!(a.headers()["content-type"], "audio/wav");
+    assert_eq!(a.bytes().await.unwrap().to_vec(), wav);
+    assert_eq!(s.call("djAudio", &[("id", "../../maestro.db")]).await["error"]["code"], 70);
+    assert_eq!(s.ok("getDjLine", &[("next", "nope")]).await["djLine"]["error"], "unknown song");
+}
+
+#[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {
         return;

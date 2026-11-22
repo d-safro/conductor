@@ -16,7 +16,7 @@ use crate::db::now;
 
 const MAX_LINES: usize = 400;
 /// One translation at a time (a small GPU); others wait.
-static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
+pub(super) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
 const LANGS: &[(&str, &str)] = &[
     ("en", "English"),

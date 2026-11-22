@@ -54,6 +54,9 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   near the town set in Encore; Ticketmaster with the key set there, else MusicBrainz events (`concerts`).
 - **Lyrics translation** (`translateLyrics`, optional): translated or romanized line by line by a local **Ollama**
   (`ollama_url`, `translate_model`); kept once done.
+- **DJ** (`getDjLine` / `djAudio`, optional): before a song, a line or two about it written by the same Ollama
+  (`dj_model`, else `translate_model`) and read aloud by Piper (the dj-voice service, `dj_voice_url`), in 13
+  languages. Only facts the library has (title, artist, album, year, genre, your plays and hearts); lines are kept.
 - **Song ID** (`identifySong`, optional): a short recording is matched against your own library by the song-id
   service (`songid_url`). **Automix** (`getMixInfo`, optional): intro / outro / tempo from the mix analyzer's
   `info.jsonl` (`mixinfo_dir`); songs not measured yet are put first in its `wanted.txt`.
