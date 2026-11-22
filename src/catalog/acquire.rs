@@ -577,7 +577,9 @@ async fn adopt(st: &AppState) -> Result<()> {
             give_up(st, &key, "its file is gone").await?;
         }
     }
-    if waiting.is_empty() {
+    // a scan running now (a full one can take hours) would make this one return at once, seeing nothing: the songs
+    // would look unseen and be given up on while their files are there. Next round, then
+    if waiting.is_empty() || st.scan.scanning.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
     library::scan(&st.db, &st.libs, &st.scan, false).await?;
@@ -831,14 +833,11 @@ async fn swap_in(st: &AppState, u: &Upgrade, src: &Path) -> Result<String> {
     let new = root.join(&new_rel);
     let dir = old.parent().ok_or_else(|| anyhow!("no folder"))?.to_path_buf();
     let tmp = dir.join(format!(".conductor-upgrade-{}.{ext}", u.req.key));
-    let done = put_in_place(st, u, src, &tmp, lib, &new_rel, &new).await;
+    let done = put_in_place(st, u, src, &tmp, lib, &new_rel, &new, &old).await;
     if done.is_err() {
         let _ = tokio::fs::remove_file(&tmp).await; // never left behind
     }
     done?;
-    if new != old {
-        let _ = tokio::fs::remove_file(&old).await;
-    }
     Ok(new_rel)
 }
 
@@ -852,8 +851,10 @@ async fn taken(st: &AppState, lib: i64, root: &Path, rel: &str) -> Result<bool> 
     Ok(song > 0 || tokio::fs::try_exists(root.join(rel)).await.unwrap_or(true))
 }
 
-/// `swap_in`'s steps from the hidden copy on: check it, move the song's row, rename it into place.
-async fn put_in_place(st: &AppState, u: &Upgrade, src: &Path, tmp: &Path, lib: i64, new_rel: &str, new: &Path) -> Result<()> {
+/// `swap_in`'s steps from the hidden copy on: check it, move the song's row, rename it into place, and remove the
+/// old file (still while scans wait: one in between would add it back as a song of its own).
+#[allow(clippy::too_many_arguments)]
+async fn put_in_place(st: &AppState, u: &Upgrade, src: &Path, tmp: &Path, lib: i64, new_rel: &str, new: &Path, old: &Path) -> Result<()> {
     if tokio::fs::rename(src, tmp).await.is_err() {
         tokio::fs::copy(src, tmp).await.with_context(|| format!("copying to {}", tmp.display()))?;
         let _ = tokio::fs::remove_file(src).await;
@@ -876,6 +877,9 @@ async fn put_in_place(st: &AppState, u: &Upgrade, src: &Path, tmp: &Path, lib: i
         .await?;
     tokio::fs::rename(tmp, new).await.context("moving the new file into place")?; // on error the transaction is dropped: nothing changed
     tx.commit().await?;
+    if new != old {
+        let _ = tokio::fs::remove_file(old).await;
+    }
     Ok(())
 }
 

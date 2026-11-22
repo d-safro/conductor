@@ -566,6 +566,29 @@ async fn on_a_domain_with_caddy_then_a_tunnel() {
     assert!(!dir.join("tunnel.yml").exists() && !read(&dir.join("compose.yml")).contains("tunnel"));
 }
 
+#[tokio::test]
+async fn caddy_points_at_where_conductor_listens() {
+    let base = services().await;
+    let p = place(&base);
+    let dir = p.root.join("data/services");
+    // Conductor on one of this computer's addresses: "only Caddy" moves it to 127.0.0.1, and Caddy points there
+    std::fs::write(&p.config, format!("{}listen = \"192.0.2.10:4533\"\n", read(&p.config))).unwrap();
+    let out = yes(&p.config, &["--yes", "domain", "--domain", "music.invalid", "--domain-email", "me@example.com }\n:80 {"]).await;
+    assert!(out.contains("isn't an email address"), "{out}");
+    let caddyfile = read(&dir.join("caddy/Caddyfile"));
+    assert!(caddyfile.contains("reverse_proxy 127.0.0.1:4533") && !caddyfile.contains("192.0.2.10"), "{caddyfile}");
+    assert!(!caddyfile.contains("email") && !caddyfile.contains(":80"), "{caddyfile}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.listen.to_string(), "127.0.0.1:4533");
+    // you open it up again yourself: run again, that stays
+    let cfg = read(&p.config).replace("127.0.0.1:4533", "0.0.0.0:4533");
+    std::fs::write(&p.config, cfg).unwrap();
+    yes(&p.config, &["--yes", "domain"]).await;
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.listen.to_string(), "0.0.0.0:4533");
+    assert!(read(&dir.join("caddy/Caddyfile")).contains("reverse_proxy 127.0.0.1:4533"));
+}
+
 /// A fake drive: a folder of the test's own.
 fn drive(mount: &Path, label: &str, free_gb: u64, usb: bool) -> Drive {
     std::fs::create_dir_all(mount).unwrap();
@@ -643,4 +666,33 @@ async fn choosing_where_the_music_goes_in_a_terminal() {
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
     assert_eq!((c.libraries[0].path.as_path(), c.libraries[0].sentinel.as_deref()), (at.join("Music").as_path(), Some(".library-id")));
     assert!(at.join("Music/.library-id").is_file());
+}
+
+#[tokio::test]
+async fn music_auto_then_typing_a_path() {
+    let base = services().await;
+    let p = place(&base);
+    let a = drive(&p.root.join("drives/a"), "Empty", 40, false);
+    // --music auto in a terminal, then "Type a path": asked plainly (not with "auto" as the folder offered)
+    let out = scripted_with(&p.config, &["music", "--music", "auto"], &["2", p.music.to_str().unwrap(), "", ""], vec![a]).await;
+    assert!(!out.contains("[auto]") && !out.contains("A music folder is needed"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.libraries[0].path, p.music);
+}
+
+#[tokio::test]
+async fn navidrome_again_on_a_server_in_use() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    yes(&p.config, &["--yes", "music", "--music", p.music.to_str().unwrap()]).await;
+    yes(&p.config, &["--yes", "server", "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45939"]).await;
+    let db = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    sqlx::query("INSERT INTO radio (id, name, stream_url) VALUES ('r1', 'Mine', 'http://radio.invalid/')").execute(&db).await.unwrap();
+    // a Navidrome import would replace what's here: with --yes it isn't done, and the run goes on (no error)
+    let nd = p.root.join("navidrome.db");
+    let out = yes(&p.config, &["--yes", "import", "--import-navidrome", nd.to_str().unwrap()]).await;
+    assert!(out.contains("nothing changed (to do it: conductor import-navidrome"), "{out}");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM radio").fetch_one(&db).await.unwrap();
+    assert_eq!(n, 1);
 }

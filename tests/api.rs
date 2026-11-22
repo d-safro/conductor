@@ -3243,6 +3243,45 @@ async fn a_filed_song_whose_file_is_gone_stops_the_scans() {
 }
 
 #[tokio::test]
+async fn a_filed_song_waits_for_a_long_scan() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let (base, _) = stand_in(|path, _q, _| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+    })
+    .await;
+    // filed long ago, its file there, while a scan of the whole library (hours, on a slow drive) is running: the
+    // song isn't given up on because that scan hasn't reached it yet
+    let rel = "Songs/Alpha/Alpha - Six.flac";
+    std::fs::create_dir_all(s.music.join("Songs/Alpha")).unwrap();
+    std::fs::write(s.music.join(rel), b"not really a song").unwrap();
+    sqlx::query("INSERT INTO request (key, title, artists_json, status, rel, arrived_at, asked_at) VALUES ('dz-t-6', 'Six', '[\"Alpha\"]', 'done', ?, 1, 1)")
+        .bind(rel)
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    s.st.scan.scanning.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    let status: String = sqlx::query_scalar("SELECT status FROM request WHERE key = 'dz-t-6'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(status, "done", "still waiting for the scan");
+    s.st.scan.scanning.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tokio::test]
 async fn proxy_carries_the_download_traffic() {
     if !have_ffmpeg() {
         return;

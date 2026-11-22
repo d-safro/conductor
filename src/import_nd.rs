@@ -458,6 +458,18 @@ fn nd_time(s: Option<String>) -> Option<i64> {
     s.and_then(|s| db::parse_iso(&s))
 }
 
+/// This server has plays, hearts, playlists, play queues, radio stations or song ids already: a Navidrome import
+/// replaces them all (whether they came from Navidrome before or were made here since).
+pub async fn has_data(ours: &Db) -> Result<bool> {
+    for t in ["annotation", "play", "playlist", "play_queue", "radio", "id_override"] {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}")).fetch_one(ours).await?;
+        if n > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// `replace`: this server has plays, hearts, playlists… already (from an import before, or since): they're all
 /// replaced by Navidrome's. Without it, the import refuses to run over them.
 #[allow(clippy::too_many_arguments)]
@@ -471,18 +483,12 @@ pub async fn run(
     nd_password_key: Option<&str>,
     replace: bool,
 ) -> Result<ImportReport> {
-    if !replace {
-        // everything below is replaced, whether it came from Navidrome or was made here since
-        for t in ["annotation", "play", "playlist", "play_queue", "radio", "id_override"] {
-            let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}")).fetch_one(ours).await?;
-            if n > 0 {
-                bail!(
-                    "this server has plays, hearts, playlists or song ids already (from an import before, or since): \
-                     importing replaces them all with Navidrome's. Run it with --replace to do that (a backup first: \
-                     conductor backup)"
-                );
-            }
-        }
+    if !replace && has_data(ours).await? {
+        bail!(
+            "this server has plays, hearts, playlists or song ids already (from an import before, or since): \
+             importing replaces them all with Navidrome's. Run it with --replace to do that (a backup first: \
+             conductor backup)"
+        );
     }
     let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", nd_path.display()))?.read_only(true);
     let nd = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.context("opening the Navidrome database")?;

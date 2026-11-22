@@ -350,6 +350,9 @@ impl Wizard<'_> {
         let mut wanted: Vec<String> = self.f.all("music").iter().map(|s| s.to_string()).collect();
         // --music auto: the folder the drives suggest
         let auto_pick = wanted.first().is_some_and(|w| w == "auto");
+        if auto_pick {
+            wanted[0] = String::new(); // not a folder: typed after all, nothing is offered
+        }
         if wanted.is_empty() {
             wanted = current.iter().map(|c| c.0.clone()).collect();
         }
@@ -363,7 +366,7 @@ impl Wizard<'_> {
             // made just now: empty, and that's fine
             let (path, new) = match look.then(|| self.pick_music()) {
                 Some(Some(p)) => p,
-                Some(None) if auto_pick => (String::new(), false),
+                Some(None) if auto_pick && self.ui.auto() => (String::new(), false),
                 _ => (self.ui.ask(q, &def), false),
             };
             look = false;
@@ -420,7 +423,7 @@ impl Wizard<'_> {
     }
 
     fn drive_of(&mut self, p: &Path) -> Option<drives::Drive> {
-        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let p = std::fs::canonicalize(p).map(drives::plain).unwrap_or_else(|_| p.to_path_buf());
         drives::drive_of(self.drives(), &p).cloned()
     }
 
@@ -1343,7 +1346,15 @@ impl Wizard<'_> {
             0 => self.domain_caddy(&dir).await?,
             1 => self.domain_tunnel(&dir)?,
             2 => {
-                self.domain_funnel();
+                // Funnel does it now: Caddy or a tunnel set up before would keep Conductor open on its old name too
+                if self.domain_funnel() {
+                    for (part, name) in [("caddy", "Caddy"), ("tunnel", "the Cloudflare Tunnel")] {
+                        if stack::has_part(&dir, part) && self.ui.yes(&format!("Take {name} out (Funnel does it now)?"), true) {
+                            stack::remove_part(&dir, part)?;
+                            self.ui.say(&format!("  ✓ {name} is out (its container goes at the next docker compose up)"));
+                        }
+                    }
+                }
                 false
             }
             _ => {
@@ -1394,12 +1405,38 @@ impl Wizard<'_> {
             }
         };
         let email = self.ask_or("domain-email", "Your email, for Let's Encrypt's notices about the certificate (Enter: none)", cur_email, "");
+        // it goes into the Caddyfile as it is: one word with an @, else none
+        let email = match email.trim() {
+            "" => None,
+            e if e.contains('@') && !e.contains(|c: char| c.is_whitespace() || c.is_control() || "{}\"#".contains(c)) => Some(e.to_string()),
+            e => {
+                self.ui.say(&format!("  ✗ \"{e}\" isn't an email address: none is given to Let's Encrypt"));
+                None
+            }
+        };
         for name in std::iter::once(&domain).chain(jam.as_ref()) {
             self.check_dns(name).await;
         }
         self.ui.say("    People reach it on ports 80 and 443: behind a router, forward those two to this computer.");
+        // with Caddy in front, only it needs to reach Conductor. Asked before the Caddyfile is written, which points
+        // at the address Conductor listens on; offered first only when Caddy is new (run again, the address you
+        // have now is the one you chose)
+        let had_caddy = stack::has_part(dir, "caddy");
+        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
+        if !local_only(&listen) {
+            let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
+            let docker = stack::has_part(dir, "audiomuse");
+            if docker {
+                self.ui.say("    (AudioMuse, in Docker, reaches Conductor over this computer's address: it needs more than 127.0.0.1)");
+            }
+            let q = format!("Let only Caddy reach Conductor (listen on 127.0.0.1:{port}; your apps use https://{domain} then, at home too)?");
+            if self.ui.yes(&q, !docker && !had_caddy && self.f.get("listen").is_none()) {
+                self.d.set("listen", format!("127.0.0.1:{port}"));
+                self.ui.say(&format!("  ✓ Conductor listens on 127.0.0.1:{port} (restart it for that)"));
+            }
+        }
         let (app, jam_at) = self.upstreams();
-        stack::caddy(dir, &stack::Caddy { domain: &domain, jam_domain: jam.as_deref(), email: Some(email.as_str()).filter(|e| !e.is_empty()), app: &app, jam: &jam_at })?;
+        stack::caddy(dir, &stack::Caddy { domain: &domain, jam_domain: jam.as_deref(), email: email.as_deref(), app: &app, jam: &jam_at })?;
         if stack::has_part(dir, "tunnel") {
             stack::remove_part(dir, "tunnel")?;
             self.ui.say("  (the Cloudflare Tunnel is out: Caddy does it now)");
@@ -1410,20 +1447,6 @@ impl Wizard<'_> {
         self.ui.say(&format!("  ✓ Jam guests and share links: {public}"));
         if cfg!(windows) {
             self.ui.say(&format!("    On Windows, if Docker's host network doesn't reach Conductor, Caddy for Windows runs the same file: caddy run --config {}", dir.join("caddy/Caddyfile").display()));
-        }
-        // with Caddy in front, only it needs to reach Conductor
-        let listen = self.d.str("listen").unwrap_or_else(|| "0.0.0.0:4533".into());
-        if !local_only(&listen) {
-            let port = listen.rsplit(':').next().unwrap_or("4533").to_string();
-            let docker = stack::has_part(dir, "audiomuse");
-            if docker {
-                self.ui.say("    (AudioMuse, in Docker, reaches Conductor over this computer's address: it needs more than 127.0.0.1)");
-            }
-            let q = format!("Let only Caddy reach Conductor (listen on 127.0.0.1:{port}; your apps use https://{domain} then, at home too)?");
-            if self.ui.yes(&q, !docker && self.f.get("listen").is_none()) {
-                self.d.set("listen", format!("127.0.0.1:{port}"));
-                self.ui.say(&format!("  ✓ Conductor listens on 127.0.0.1:{port} (restart it for that)"));
-            }
         }
         Ok(true)
     }
@@ -1487,11 +1510,12 @@ impl Wizard<'_> {
         Ok(true)
     }
 
-    fn domain_funnel(&mut self) {
+    /// True when Funnel is set up (Tailscale is here and signed in).
+    fn domain_funnel(&mut self) -> bool {
         let run = |args: &[&str]| std::process::Command::new("tailscale").args(args).output().ok().filter(|o| o.status.success());
         if run(&["version"]).is_none() {
             self.ui.say("  ✗ Tailscale isn't on this computer: install it (tailscale.com/download), sign in (tailscale up), then run conductor setup domain");
-            return;
+            return false;
         }
         let name = run(&["status", "--json"])
             .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
@@ -1499,7 +1523,7 @@ impl Wizard<'_> {
             .filter(|s| !s.is_empty());
         let Some(name) = name else {
             self.ui.say("  ✗ Tailscale isn't signed in, so this computer has no name yet: tailscale up, then conductor setup domain");
-            return;
+            return false;
         };
         let (app, jam) = self.upstreams();
         self.ui.say(&format!("  Funnel puts the Jam listener (it serves nothing but Jam and share pages) on the internet at https://{name};"));
@@ -1520,6 +1544,7 @@ impl Wizard<'_> {
         }
         self.d.set("jam_public_url", format!("https://{name}"));
         self.ui.say(&format!("  ✓ Jam guests and share links: https://{name}"));
+        true
     }
 
     // ── 8. import ──
@@ -1537,9 +1562,20 @@ impl Wizard<'_> {
         let db = crate::db::open(&cfg.data_dir.join("conductor.db")).await?;
         let secrets = crate::auth::Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
         let libs = crate::library::ensure_libraries(&db, &cfg.libraries).await?;
-        if !nd.is_empty() && self.ui.yes(&format!("Import Navidrome's users, ids, plays and playlists from {nd}?"), true) {
+        // a server in use: importing replaces its plays, hearts and playlists, so only when you say so (never with --yes)
+        let replace = !nd.is_empty() && crate::import_nd::has_data(&db).await?;
+        let go = !nd.is_empty()
+            && self.ui.yes(&format!("Import Navidrome's users, ids, plays and playlists from {nd}?"), true)
+            && (!replace
+                || self.ui.yes("This server has plays, hearts or playlists already: replace them all with Navidrome's (a backup first: conductor backup)?", false));
+        if replace && !go && !self.ui.auto() {
+            self.ui.say("  Navidrome not imported: nothing changed");
+        } else if replace && !go {
+            self.ui.say(&format!("  ✗ this server has plays, hearts or playlists already, which importing replaces: nothing changed (to do it: conductor import-navidrome {nd} --replace)"));
+        }
+        if go {
             let key = config::var("ND_PASSWORD_KEY").ok();
-            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None, key.as_deref(), false).await?;
+            let rep = crate::import_nd::run(&cfg, &db, &secrets, &libs, Path::new(&nd), None, key.as_deref(), replace).await?;
             self.ui.say(&format!("  ✓ {} songs keep their ids, {} playlists, {} plays", rep.songs_matched_after_scan, rep.playlists, rep.plays));
             self.ui.say(&format!("  ✓ passwords carried over for {} of {} users", rep.passwords_carried, rep.users_imported));
             if !rep.users.is_empty() {
