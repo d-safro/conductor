@@ -1,11 +1,15 @@
 # Installs Maestro as a Windows service. Run in PowerShell as administrator, from the unzipped release folder:
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Music "D:\Music"
+# Without questions (e.g. scripted): -Admin NAME with the password in the MAESTRO_PASSWORD environment variable,
+# or -SkipAdmin when you already have an admin user.
 # Puts maestro.exe (and ffmpeg.exe, if it's in this folder) into C:\Program Files\Maestro, writes
 # C:\ProgramData\maestro\config.toml (kept if it exists), installs and starts the service, and opens port 4533
 # for the local network only if you pass -OpenFirewall.
 param(
   [Parameter(Mandatory = $true)][string]$Music,
   [string]$Listen = "0.0.0.0:4533",
+  [string]$Admin,
+  [switch]$SkipAdmin,
   [switch]$OpenFirewall
 )
 $ErrorActionPreference = "Stop"
@@ -39,14 +43,20 @@ scan_threads = 4
 }
 $exe = Join-Path $dir "maestro.exe"
 if (-not $svc) { & $exe --config $cfg service install }
-$admin = Read-Host "Name for the first admin user (Enter to skip if you already have one)"
-if ($admin) {
-  $pw = Read-Host "Password for $admin" -AsSecureString
-  $env:MAESTRO_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw))
-  & $exe --config $cfg user add $admin --admin
-  Remove-Item Env:\MAESTRO_PASSWORD
+if ($Admin -and $env:MAESTRO_PASSWORD) {
+  & $exe --config $cfg user add $Admin --admin
+  if ($LASTEXITCODE -ne 0) { throw "couldn't add the admin user" }
+} elseif (-not $SkipAdmin) {
+  $name = if ($Admin) { $Admin } else { Read-Host "Name for the first admin user (Enter to skip if you already have one)" }
+  if ($name) {
+    $pw = Read-Host "Password for $name" -AsSecureString
+    $env:MAESTRO_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw))
+    & $exe --config $cfg user add $name --admin
+    Remove-Item Env:\MAESTRO_PASSWORD
+  }
 }
 & $exe service start
+if ($LASTEXITCODE -ne 0) { throw "the service didn't start; see $data\maestro.log" }
 if ($OpenFirewall) {
   New-NetFirewallRule -DisplayName "Maestro (music server)" -Direction Inbound -Protocol TCP -LocalPort ($Listen.Split(':')[-1]) -Profile Private -Action Allow | Out-Null
   Write-Host "Opened the port for private networks."

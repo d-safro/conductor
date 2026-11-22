@@ -26,7 +26,11 @@ pub fn command(args: &[String], config: Option<PathBuf>) -> Result<()> {
         Some("install") => install(config),
         Some("uninstall") => uninstall(),
         Some("start") => {
-            open(ServiceAccess::START)?.start::<&str>(&[])?;
+            let svc = open(ServiceAccess::START | ServiceAccess::QUERY_STATUS)?;
+            svc.start::<&str>(&[])?;
+            if !wait_for(&svc, ServiceState::Running, 30) {
+                bail!("Maestro didn't start within 30 s; see maestro.log in its data folder");
+            }
             println!("Maestro started");
             Ok(())
         }
@@ -77,11 +81,25 @@ fn install(config: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Wait up to `secs` for the service to reach `state`.
+fn wait_for(svc: &windows_service::service::Service, state: ServiceState, secs: u64) -> bool {
+    for _ in 0..secs * 4 {
+        match svc.query_status() {
+            Ok(s) if s.current_state == state => return true,
+            Ok(s) if state == ServiceState::Running && s.current_state == ServiceState::Stopped => return false, // it gave up
+            _ => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
+    false
+}
+
 fn uninstall() -> Result<()> {
     let svc = open(ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE)?;
     if svc.query_status()?.current_state != ServiceState::Stopped {
         let _ = svc.stop();
-        std::thread::sleep(Duration::from_secs(2));
+        if !wait_for(&svc, ServiceState::Stopped, 30) {
+            eprintln!("Maestro is taking long to stop; it's removed once it has");
+        }
     }
     svc.delete()?;
     println!("Maestro service removed (its data stays)");

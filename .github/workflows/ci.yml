@@ -18,3 +18,75 @@ jobs:
         run: choco install ffmpeg -y --no-progress
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+  windows-service:
+    # The release build installed as a Windows service with install.ps1 (as a user would, no questions asked),
+    # checked from outside, restarted, then removed with uninstall.ps1.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - name: a music folder with one song (a second of silence as WAV)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\ci-music\Artist | Out-Null
+          $rate = 8000; $n = $rate
+          $ms = New-Object IO.MemoryStream; $w = New-Object IO.BinaryWriter($ms)
+          $w.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $w.Write([int](36 + $n * 2)); $w.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt '))
+          $w.Write([int]16); $w.Write([int16]1); $w.Write([int16]1); $w.Write([int]$rate); $w.Write([int]($rate * 2)); $w.Write([int16]2); $w.Write([int16]16)
+          $w.Write([Text.Encoding]::ASCII.GetBytes('data')); $w.Write([int]($n * 2)); $w.Write((New-Object byte[] ($n * 2)))
+          [IO.File]::WriteAllBytes('C:\ci-music\Artist\Song.wav', $ms.ToArray())
+      - name: install (install.ps1 in Windows PowerShell 5.1)
+        shell: pwsh
+        env: { MAESTRO_PASSWORD: ci-only-secret }
+        run: |
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item target/release/maestro.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1 pkg/
+          powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -Admin ci
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+      - name: it runs, starts with Windows, answers /health and a ping, scans and streams the song
+        shell: pwsh
+        run: |
+          $base = "http://127.0.0.1:4533"
+          if ((Get-Service Maestro).Status -ne 'Running') { throw "the service isn't running" }
+          if ((Get-CimInstance Win32_Service -Filter "Name='Maestro'").StartMode -ne 'Auto') { throw "it won't start with Windows" }
+          function Wait-Healthy {
+            for ($i = 0; $i -lt 60; $i++) {
+              try { if ((Invoke-WebRequest "$base/health" -UseBasicParsing -TimeoutSec 5).Content.Trim() -eq 'ok') { return } } catch {}
+              Start-Sleep 1
+            }
+            throw "/health didn't say ok within a minute"
+          }
+          Wait-Healthy
+          $q = "u=ci&p=ci-only-secret&v=1.16.1&c=ci&f=json"
+          $ping = Invoke-RestMethod "$base/rest/ping?$q"
+          if ($ping.'subsonic-response'.status -ne 'ok') { throw "ping: $($ping | ConvertTo-Json -Depth 5)" }
+          $songs = @()
+          for ($i = 0; $i -lt 30 -and $songs.Count -lt 1; $i++) {
+            $songs = @((Invoke-RestMethod "$base/rest/search3?$q&query=").'subsonic-response'.searchResult3.song | Where-Object { $_ })
+            if ($songs.Count -lt 1) { Start-Sleep 1 }
+          }
+          if ($songs.Count -ne 1) { throw "the song wasn't scanned" }
+          $audio = Invoke-WebRequest "$base/rest/stream?$q&id=$($songs[0].id)" -UseBasicParsing
+          if ($audio.RawContentLength -lt 16000) { throw "streaming gave $($audio.RawContentLength) bytes" }
+          if (-not (Test-Path C:\ProgramData\maestro\maestro.log)) { throw "no log file" }
+          # a restart (stop and start through Windows) comes back
+          Restart-Service Maestro
+          Wait-Healthy
+          Write-Host "service OK"
+      - name: Maestro's log
+        if: always()
+        shell: pwsh
+        run: Get-Content C:\ProgramData\maestro\maestro.log -Tail 80 -ErrorAction SilentlyContinue
+      - name: remove (uninstall.ps1)
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File pkg/uninstall.ps1 -RemoveData
+          if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 failed" }
+          if (Get-Service Maestro -ErrorAction SilentlyContinue) { throw "the service is still there" }
+          $up = $true
+          try { Invoke-WebRequest http://127.0.0.1:4533/health -UseBasicParsing -TimeoutSec 3 | Out-Null } catch { $up = $false }
+          if ($up) { throw "something still answers on 4533" }
+          if (Test-Path "$env:ProgramFiles\Maestro") { throw "the program folder is left behind" }
+          if (Test-Path "$env:ProgramData\maestro") { throw "the data folder is left behind (-RemoveData)" }
+          Write-Host "removed cleanly"
