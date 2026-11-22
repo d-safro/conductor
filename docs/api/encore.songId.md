@@ -1,0 +1,73 @@
+# `encore.songId`
+
+<!-- Written by tools/api_docs.py from its EXTENSIONS, the handlers in src/ and docs/api/shapes/: edit those, then run it. -->
+
+Pitch: what's playing? A short recording is matched against your own library (`songid_url`).
+
+## `identifySong`
+
+POST, the recording as the body.
+
+| Field | Type |
+|---|---|
+| `songIdentification` | object |
+| `songIdentification.found` | boolean |
+| `songIdentification.indexing` | boolean |
+| `songIdentification.offset` | number |
+| `songIdentification.score` | number |
+| `songIdentification.song` | object |
+| `songIdentification.song.album` | string |
+| `songIdentification.song.albumArtists` | array |
+| `songIdentification.song.albumArtists[]` | object |
+| `songIdentification.song.albumArtists[].id` | string |
+| `songIdentification.song.albumArtists[].name` | string |
+| `songIdentification.song.albumId` | string |
+| `songIdentification.song.artist` | string |
+| `songIdentification.song.artistId` | string |
+| `songIdentification.song.artists` | array |
+| `songIdentification.song.artists[]` | object |
+| `songIdentification.song.artists[].id` | string |
+| `songIdentification.song.artists[].name` | string |
+| `songIdentification.song.bitDepth` | number |
+| `songIdentification.song.bitRate` | number |
+| `songIdentification.song.bpm` | number |
+| `songIdentification.song.channelCount` | number |
+| `songIdentification.song.comment` | string |
+| `songIdentification.song.contentType` | string |
+| `songIdentification.song.contributors` | array |
+| `songIdentification.song.coverArt` | string |
+| `songIdentification.song.created` | string |
+| `songIdentification.song.displayAlbumArtist` | string |
+| `songIdentification.song.displayArtist` | string |
+| `songIdentification.song.displayComposer` | string |
+| `songIdentification.song.duration` | number |
+| `songIdentification.song.explicitStatus` | string |
+| `songIdentification.song.genre` | string |
+| `songIdentification.song.genres` | array |
+| `songIdentification.song.genres[]` | object |
+| `songIdentification.song.genres[].name` | string |
+| `songIdentification.song.id` | string |
+| `songIdentification.song.isDir` | boolean |
+| `songIdentification.song.isVideo` | boolean |
+| `songIdentification.song.isrc` | array |
+| `songIdentification.song.isrc[]` | string |
+| `songIdentification.song.mediaType` | string |
+| `songIdentification.song.moods` | array |
+| `songIdentification.song.musicBrainzId` | string |
+| `songIdentification.song.parent` | string |
+| `songIdentification.song.path` | string |
+| `songIdentification.song.playCount` | number |
+| `songIdentification.song.replayGain` | object |
+| `songIdentification.song.replayGain.trackGain` | number |
+| `songIdentification.song.samplingRate` | number |
+| `songIdentification.song.size` | number |
+| `songIdentification.song.sortName` | string |
+| `songIdentification.song.suffix` | string |
+| `songIdentification.song.title` | string |
+| `songIdentification.song.track` | number |
+| `songIdentification.song.type` | string |
+| `songIdentification.song.userRating` | number |
+| `songIdentification.song.year` | number |
+| `songIdentification.songs` | number |
+
+From 1.0, a field here may gain company but never goes away or changes type (see [STABILITY.md](../STABILITY.md)).

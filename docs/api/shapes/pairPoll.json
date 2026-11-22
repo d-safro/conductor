@@ -1,0 +1,23 @@
+{
+  "pair": [
+    "object"
+  ],
+  "pair.login": [
+    "object"
+  ],
+  "pair.login.localAddress": [
+    "string"
+  ],
+  "pair.login.pass": [
+    "string"
+  ],
+  "pair.login.server": [
+    "string"
+  ],
+  "pair.login.user": [
+    "string"
+  ],
+  "pair.status": [
+    "string"
+  ]
+}

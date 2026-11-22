@@ -1,0 +1,14 @@
+{
+  "pair": [
+    "object"
+  ],
+  "pair.code": [
+    "string"
+  ],
+  "pair.expires": [
+    "number"
+  ],
+  "pair.token": [
+    "string"
+  ]
+}

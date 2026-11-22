@@ -471,16 +471,19 @@ async fn encore_extensions() {
     // sign in with your phone: the new device has no login yet
     let open = |m: &str, q: &str| format!("{}/rest/{m}?f=json&c=test{q}", s.base);
     let start: Value = s.http.get(open("pairStart", "&name=Laptop")).send().await.unwrap().json().await.unwrap();
+    contract::observe("pairStart", &start["subsonic-response"]);
     let pair = &start["subsonic-response"]["pair"];
     let (code, token) = (pair["code"].as_str().unwrap().to_string(), pair["token"].as_str().unwrap().to_string());
     assert_eq!(code.len(), 6);
     let w: Value = s.http.get(open("pairPoll", &format!("&token={token}&wait=0"))).send().await.unwrap().json().await.unwrap();
+    contract::observe("pairPoll", &w["subsonic-response"]);
     assert_eq!(w["subsonic-response"]["pair"]["status"], "waiting");
     let wrong = serde_json::json!({"server": "https://x", "user": "someone-else", "pass": "p"}).to_string();
     assert_eq!(s.call("pairApprove", &[("code", &code), ("login", &wrong)]).await["error"]["code"], 10);
     let login = serde_json::json!({"server": "https://music.example", "user": USER, "pass": PASS}).to_string();
     assert_eq!(s.ok("pairApprove", &[("code", &code), ("login", &login)]).await["pair"]["name"], "Laptop");
     let done: Value = s.http.get(open("pairPoll", &format!("&token={token}&wait=0"))).send().await.unwrap().json().await.unwrap();
+    contract::observe("pairPoll", &done["subsonic-response"]);
     assert_eq!(done["subsonic-response"]["pair"]["status"], "done");
     assert_eq!(done["subsonic-response"]["pair"]["login"]["user"], USER);
     let again: Value =
@@ -4993,6 +4996,7 @@ async fn every_call_has_a_recorded_shape() {
             }
         }
     }
+    calls.extend(["pairStart".to_string(), "pairPoll".to_string()]); // answered before login (src/api/mod.rs)
     let files = ["stream", "download", "getCoverArt", "getAvatar", "djAudio"];
     // calls that only answer with the catalog, a downloader or a service (their shapes come from the tests that have those)
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/api/shapes");
