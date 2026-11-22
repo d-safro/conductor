@@ -97,13 +97,23 @@ async fn serve_file(c: &Ctx, path: &Path, t: &items::TrackRow, download: bool) -
     {
         parts.headers.insert(header::CONTENT_TYPE, v);
     }
-    if download {
-        let name = format!("{} - {}.{}", t.artist_name, t.title, t.suffix).replace(['/', '\\', '"'], "_");
-        if let Ok(v) = format!("attachment; filename=\"{name}\"").parse() {
-            parts.headers.insert(header::CONTENT_DISPOSITION, v);
-        }
+    if download && let Ok(v) = attachment(&format!("{} - {}.{}", t.artist_name, t.title, t.suffix)).parse() {
+        parts.headers.insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(Reply::Raw(axum::response::Response::from_parts(parts, Body::new(body))))
+}
+
+/// Content-Disposition for saving as `name`: a plain ASCII name for old clients and the real one (RFC 6266
+/// filename*), so names in any language keep their letters. (A header can only hold ASCII: before, a name with
+/// "ö" or "日" made the header fail and the file was saved as "download.view".)
+pub fn attachment(name: &str) -> String {
+    let name: String = name.chars().map(|c| if c.is_control() || "/\\\"".contains(c) { '_' } else { c }).collect();
+    let plain: String = name.chars().map(|c| if c.is_ascii() { c } else { '_' }).collect();
+    let utf8: String = name
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{utf8}")
 }
 
 async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, offset: i64) -> Result<Reply, ApiError> {
@@ -401,6 +411,13 @@ pub async fn lyrics(c: &Ctx) -> Result<Reply, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn download_names() {
+        assert_eq!(attachment("A - B.flac"), "attachment; filename=\"A - B.flac\"; filename*=UTF-8''A%20-%20B.flac");
+        assert_eq!(attachment("Björk - Jóga/\"x\".flac"), "attachment; filename=\"Bj_rk - J_ga__x_.flac\"; filename*=UTF-8''Bj%C3%B6rk%20-%20J%C3%B3ga__x_.flac");
+        assert!(attachment("日本.mp3").parse::<axum::http::HeaderValue>().is_ok());
+    }
+
     #[test]
     fn lrc() {
         let (s, l) = parse_lyrics("[ar:Someone]\n[00:01.50]one\n[00:03.00][00:05.25]two\n");
