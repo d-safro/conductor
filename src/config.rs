@@ -711,7 +711,7 @@ mod tests {
 mod docs_tests {
     /// The settings' fields, from this file.
     fn fields() -> Vec<String> {
-        let s = include_str!("config.rs");
+        let s = include_str!("config.rs").replace("\r\n", "\n"); // a Windows checkout has CRLF
         let body = &s[s.find("pub struct Config {").unwrap()..];
         let body = &body[..body.find("\n}\n").unwrap()];
         body.lines()
