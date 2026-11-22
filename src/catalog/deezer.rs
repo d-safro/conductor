@@ -18,12 +18,10 @@ pub struct Deezer {
 }
 
 impl Deezer {
-    pub fn new(base: &str) -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("Conductor/", env!("CARGO_PKG_VERSION")))
-            .timeout(Duration::from_secs(10))
-            .build()
-            .expect("http client");
+    /// `proxy`: Conductor's download traffic goes through it when set (see net.rs).
+    pub fn new(base: &str, proxy: Option<&str>) -> Self {
+        let b = reqwest::Client::builder().user_agent(concat!("Conductor/", env!("CARGO_PKG_VERSION"))).timeout(Duration::from_secs(10));
+        let http = crate::net::with_proxy(b, proxy).build().expect("http client");
         Self { base: base.trim_end_matches('/').to_string(), http, cache: Mutex::default() }
     }
 

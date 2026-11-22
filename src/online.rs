@@ -10,12 +10,11 @@ use tracing::{info, warn};
 
 use crate::{api::AppState, db::now, library};
 
-fn http() -> reqwest::Client {
-    reqwest::Client::builder()
+fn http(st: &AppState) -> reqwest::Client {
+    let b = reqwest::Client::builder()
         .user_agent(concat!("Conductor/", env!("CARGO_PKG_VERSION"), " (self-hosted music server)"))
-        .timeout(Duration::from_secs(15))
-        .build()
-        .expect("http client")
+        .timeout(Duration::from_secs(15));
+    crate::net::with_proxy(b, crate::net::metadata_proxy(&st.cfg).as_deref()).build().expect("http client")
 }
 
 // ── lyrics ──
@@ -38,7 +37,7 @@ pub async fn lyrics(st: &AppState, track_id: &str, title: &str, artist: &str, al
     let d = duration_s.to_string();
     let url = format!("{}/api/get", st.cfg.lrclib_url.trim_end_matches('/'));
     let q = [("track_name", title), ("artist_name", artist), ("album_name", album), ("duration", d.as_str())];
-    let r = http().get(&url).query(&q).send().await.ok()?;
+    let r = http(st).get(&url).query(&q).send().await.ok()?;
     let body = if r.status().is_success() {
         let v: Value = r.json().await.ok()?;
         v["syncedLyrics"].as_str().or(v["plainLyrics"].as_str()).filter(|s| !s.trim().is_empty()).map(String::from)
@@ -76,7 +75,7 @@ pub async fn find_cover(st: &AppState, artist: &str, album: &str) -> Option<Stri
         if latin { same_artist } else { same_artist || (same_title && nt.chars().count() >= 4) }
     };
     let term = format!("{artist} {title}");
-    let it: Value = http()
+    let it: Value = http(st)
         .get(format!("{}/search", st.cfg.itunes_url.trim_end_matches('/')))
         .query(&[("term", term.as_str()), ("entity", "album"), ("limit", "5")])
         .send()
@@ -178,7 +177,7 @@ pub async fn covers_once(st: &AppState) -> Result<usize> {
             continue;
         };
         let res: Result<()> = async {
-            let data = http().get(&url).timeout(Duration::from_secs(30)).send().await?.bytes().await?;
+            let data = http(st).get(&url).timeout(Duration::from_secs(30)).send().await?.bytes().await?;
             if data.len() < 5000 || !data.starts_with(&[0xff, 0xd8, 0xff]) {
                 anyhow::bail!("not a JPEG");
             }

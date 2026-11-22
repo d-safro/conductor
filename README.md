@@ -17,7 +17,7 @@ rename), and an older install's data folder and database are moved to the new na
 
 | Name | What it is |
 |---|---|
-| Prelude | the setup wizard (`conductor setup`; coming next) |
+| Prelude | the setup wizard (`conductor setup`) |
 | Podium | the admin page (`/admin`) |
 | Recital | the web player (in progress) |
 | Transpose | bringing your music in from other services |
@@ -154,10 +154,27 @@ Needs **ffmpeg** on the PATH for transcoding (playing files as they are works wi
 
 ```bash
 cargo build --release
-cp config.example.toml config.toml        # set your music folder
-CONDUCTOR_PASSWORD='…' ./target/release/conductor --config config.toml user add me --admin
-./target/release/conductor --config config.toml          # serves on 127.0.0.1:4533
+./target/release/conductor setup      # Prelude: asks for everything, checks it, writes the settings
+./target/release/conductor            # serves (the first time in a terminal, Prelude runs first by itself)
 ```
+
+**Prelude** (`conductor setup`, or `conductor prelude`) walks through the music folders, the data folder and port,
+the first admin, downloads (slskd, tested), **a VPN for downloads**, the other services, bringing your history in
+(Navidrome, music-lookup, Transpose) and running it as a service (systemd, the Windows service, or Docker). Run it
+again to change one part (`conductor setup vpn`); `--yes` with flags answers everything for scripts
+(`conductor setup --help`). Keys and passwords go to `secrets.toml` (mode 600) beside `config.toml`.
+Before anyone has an account, `/setup` in a browser makes the first admin: only from the server itself, or with the
+one-time link Conductor prints when it starts.
+
+**Downloads through a VPN** (Prelude's VPN step): slskd already behind one (checked: the address downloads use
+differs from this computer's); or set one up (Linux with Docker: gluetun with slskd inside, from a WireGuard .conf
+of any provider or a provider's key, with the forwarded port kept on slskd's listen port); or a SOCKS5/HTTP proxy for
+Conductor's own download traffic (on Windows, a VPN app with split tunnelling works too); or none. With
+`downloads_require_vpn` (the kill switch) downloads wait whenever the VPN check fails, never using the open
+connection; Podium and `/health` show the VPN's state and exit country (never the address).
+
+By hand instead: `cp config.example.toml config.toml`, set your music folder, then
+`CONDUCTOR_PASSWORD='…' conductor --config config.toml user add me --admin` and `conductor --config config.toml`.
 
 Or with the environment only: `CONDUCTOR_MUSIC=/path/to/music CONDUCTOR_ADMIN_USER=me CONDUCTOR_ADMIN_PASSWORD=… conductor`.
 

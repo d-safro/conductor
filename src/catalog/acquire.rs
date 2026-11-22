@@ -570,6 +570,7 @@ pub async fn worker(st: Arc<AppState>) {
     let mut last_wanted = 0;
     loop {
         if let Some(lid) = &lidarr
+            && !crate::vpn::paused(&st)
             && sl.logged_in().await
             && let Err(e) = super::lidarr::tick(&st, &sl, lid, &mut last_wanted).await
         {
@@ -593,6 +594,9 @@ async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
     }
     check_transfers(st, sl).await?;
     adopt(st).await?;
+    if crate::vpn::paused(st) {
+        return Ok(()); // the kill switch: finished downloads are filed, nothing new is searched or fetched
+    }
     let in_flight: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE status = 'queued'").fetch_one(&st.db).await?;
     if in_flight >= IN_FLIGHT {
         return Ok(());

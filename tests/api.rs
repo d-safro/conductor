@@ -111,7 +111,7 @@ impl Server {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = api::router(st.clone());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
         Server { base, http: reqwest::Client::new(), st, _dir: dir, music }
     }
 
@@ -2594,6 +2594,186 @@ async fn import_upload_of_one_file_labelled_as_a_form() {
     let id = r["subsonic-response"]["import"]["id"].as_str().unwrap_or_else(|| panic!("{r}")).to_string();
     let b = wait_import(&s, &id, "preview").await;
     assert_eq!(b["report"]["matched"]["plays"], 1, "{b}");
+}
+
+#[tokio::test]
+async fn kill_switch_pauses_downloads_while_the_vpn_is_down() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+    let up = Arc::new(AtomicBool::new(false));
+    let searches = Arc::new(AtomicUsize::new(0));
+    let (u2, s2) = (up.clone(), searches.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        Some(match path {
+            "/check" if u2.load(SeqCst) => json!({ "public_ip": "10.64.0.2", "country": "Netherlands" }),
+            "/check" => return None, // the tunnel's control server doesn't answer
+            "/home" => json!({ "ip": "198.51.100.7" }),
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/searches" if !body.is_empty() => {
+                s2.fetch_add(1, SeqCst);
+                json!({})
+            }
+            p if p.ends_with("/responses") => json!([]),
+            p if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+        c.vpn = "existing".into();
+        c.vpn_check_url = Some(format!("{base}/check"));
+        c.vpn_ip_url = format!("{base}/home");
+        c.downloads_require_vpn = true;
+        c.vpn_check_secs = 1;
+    })
+    .await;
+    sqlx::query("INSERT INTO request (key, title, artists_json, album, status, asked_at) VALUES ('dz-t-5', 'Five', '[\"Alpha\"]', '', 'retry', 1)")
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    let health = async || -> Value { s.http.get(format!("{}/health", s.base)).send().await.unwrap().json().await.unwrap() };
+    // paused before the first check, and while it fails
+    assert!(conductor::vpn::paused(&s.st));
+    tokio::spawn(conductor::vpn::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!(searches.load(SeqCst), 0, "nothing searched while the VPN is down");
+    let h = health().await;
+    assert_eq!((h["vpn"]["up"].as_bool(), h["vpn"]["downloadsPaused"].as_bool()), (Some(false), Some(true)), "{h}");
+    // up again: downloads go on
+    up.store(true, SeqCst);
+    wait_for(async || searches.load(SeqCst) > 0, "a search once the VPN is up").await;
+    let h = health().await;
+    assert_eq!((h["vpn"]["up"].as_bool(), h["vpn"]["country"].as_str(), h["vpn"]["downloadsPaused"].as_bool()), (Some(true), Some("Netherlands"), Some(false)));
+    assert!(!h.to_string().contains("10.64.0.2") && !h.to_string().contains("198.51.100.7"), "addresses are never shown");
+    // down again: paused again
+    up.store(false, SeqCst);
+    wait_for(async || conductor::vpn::paused(&s.st), "the pause").await;
+}
+
+#[tokio::test]
+async fn proxy_carries_the_download_traffic() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    // a stand-in proxy: whatever it's asked for, it answers (and counts)
+    let (proxy, through) = stand_in(|path, _q, _| {
+        Some(match path {
+            "/search" => json!({ "data": [{ "id": 77, "title": "Proxied Song", "duration": 3, "artist": { "id": 1, "name": "Via Proxy" },
+                "album": { "id": 2, "title": "P" } }] }),
+            "/ip" => json!({ "ip": "203.0.113.50", "country": "Sweden" }),
+            _ => json!({ "data": [] }),
+        })
+    })
+    .await;
+    let (home, _) = stand_in(|path, _, _| (path == "/ip").then(|| json!({ "ip": "198.51.100.7" }))).await;
+    let s = Server::start_with(|c| {
+        c.catalog = true;
+        c.deezer_url = "http://deezer.invalid".into(); // only reachable through the proxy
+        c.proxy = Some(proxy.clone());
+        c.vpn = "proxy".into();
+        c.vpn_ip_url = format!("{home}/ip");
+    })
+    .await;
+    let r = s.ok("search3", &[("query", "proxied")]).await;
+    assert!(r.to_string().contains("Proxied Song"), "the catalog answered through the proxy: {r}");
+    assert!(through.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    // the VPN check in proxy mode: the address seen through the proxy differs from this computer's
+    let st = conductor::vpn::check(&s.st.cfg).await;
+    assert_eq!((st.up, st.country.as_deref()), (Some(true), Some("Sweden")), "{st:?}");
+    // a proxy that can't be read fails closed
+    let mut bad = s.st.cfg.clone();
+    bad.proxy = Some("not a proxy".into());
+    assert_eq!(conductor::vpn::check(&bad).await.up, Some(false));
+}
+
+#[tokio::test]
+async fn setup_page_only_before_anyone_has_an_account() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let s = Server::start().await;
+    let url = |p: &str| format!("{}{p}", s.base);
+    let token = s.st.setup_token.clone();
+    // someone has an account: closed, token or not
+    assert_eq!(s.http.get(url("/setup")).send().await.unwrap().status(), 404);
+    assert_eq!(s.http.get(url(&format!("/setup?token={token}"))).send().await.unwrap().status(), 404);
+    // nobody yet: open from this computer
+    sqlx::query("DELETE FROM user").execute(&s.st.db).await.unwrap();
+    let page = s.http.get(url("/setup")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.text().await.unwrap().contains("Prelude"));
+    let st: Value = s.http.get(url("/setup/api/status")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["libraries"][0]["connected"], true);
+    let body = json!({ "name": "first", "password": "longenough" });
+    assert_eq!(s.http.post(url("/setup/api/admin")).json(&body).send().await.unwrap().status(), 403, "needs the header");
+    let short = json!({ "name": "first", "password": "123" });
+    assert_eq!(s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&short).send().await.unwrap().status(), 400);
+    let made = s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&body).send().await.unwrap();
+    assert_eq!(made.status(), 200);
+    // closed for good
+    assert_eq!(s.http.get(url("/setup")).send().await.unwrap().status(), 404);
+    let again = s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&json!({ "name": "second", "password": "longenough" })).send().await.unwrap();
+    assert_eq!(again.status(), 404);
+    let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user WHERE is_admin = 1").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(admins, 1);
+}
+
+#[tokio::test]
+async fn slskd_follows_the_vpns_forwarded_port() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::Mutex;
+    let written: Arc<Mutex<Option<String>>> = Arc::default();
+    let reconnects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (w2, r2) = (written.clone(), reconnects.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        Some(match path {
+            "/v1/publicip/ip" => json!({ "public_ip": "10.64.0.2", "country": "Switzerland" }),
+            "/home" => json!({ "ip": "198.51.100.7" }),
+            "/v1/portforward" => json!({ "port": 41234 }),
+            "/api/v0/options/yaml" if body.is_empty() => json!("soulseek:\n  username: me\n  listen_port: 50300\n"),
+            "/api/v0/options/yaml" => {
+                *w2.lock().unwrap() = serde_json::from_slice::<String>(body).ok();
+                json!({})
+            }
+            "/api/v0/server" => {
+                r2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({})
+            }
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.vpn = "gluetun".into();
+        c.vpn_check_url = Some(format!("{base}/v1/publicip/ip"));
+        c.vpn_check_key = Some("control-key".into());
+        c.vpn_ip_url = format!("{base}/home");
+        c.vpn_port_sync = true;
+        c.vpn_check_secs = 1;
+    })
+    .await;
+    tokio::spawn(conductor::vpn::worker(s.st.clone()));
+    wait_for(async || written.lock().unwrap().is_some(), "slskd's configuration to be written").await;
+    assert_eq!(written.lock().unwrap().as_deref(), Some("soulseek:\n  username: me\n  listen_port: 41234\n"));
+    wait_for(async || reconnects.load(std::sync::atomic::Ordering::SeqCst) >= 2, "slskd to reconnect").await;
+    wait_for(async || conductor::vpn::status(&s.st).forwarded_port == Some(41234), "the status").await;
 }
 
 #[tokio::test]

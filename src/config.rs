@@ -109,6 +109,30 @@ pub struct Config {
     /// "{lang}" is replaced with the language
     pub wikipedia_url: String,
     pub coverart_url: String,
+    /// Downloads through a VPN (Prelude sets these): "none", "existing" (slskd already runs behind one), "gluetun"
+    /// (slskd inside a gluetun container Prelude set up) or "proxy" (Conductor's own download traffic through `proxy`).
+    pub vpn: String,
+    /// Asked for the public address the downloads use: JSON with "public_ip" or "ip" (and "country"), e.g. gluetun's
+    /// control server at /v1/publicip/ip. The address itself is never logged or shown.
+    pub vpn_check_url: Option<String>,
+    /// Sent as X-API-Key to vpn_check_url (gluetun's control server). A secret: keep it in secrets.toml.
+    pub vpn_check_key: Option<String>,
+    /// Where this computer's own public address is asked for, to compare (any JSON answer with "ip").
+    pub vpn_ip_url: String,
+    /// The kill switch: while the VPN check fails, downloads wait (never over the open connection).
+    pub downloads_require_vpn: bool,
+    /// Seconds between VPN checks.
+    pub vpn_check_secs: u64,
+    /// Keep slskd's Soulseek listen port on the VPN's forwarded port (from gluetun's control server).
+    pub vpn_port_sync: bool,
+    /// A SOCKS5 or HTTP proxy for Conductor's own download traffic (the ⬇ catalog and its previews), e.g.
+    /// socks5h://user:pass@127.0.0.1:1080. A secret when it has a password: keep it in secrets.toml.
+    pub proxy: Option<String>,
+    /// Also send cover, lyrics and artist-info fetches through the proxy.
+    pub proxy_metadata: bool,
+    /// Where this was read from (None: defaults and the environment only).
+    #[serde(skip)]
+    pub config_path: Option<PathBuf>,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -187,6 +211,16 @@ impl Default for Config {
             wikidata_url: "https://www.wikidata.org".into(),
             wikipedia_url: "https://{lang}.wikipedia.org".into(),
             coverart_url: "https://coverartarchive.org".into(),
+            vpn: "none".into(),
+            vpn_check_url: None,
+            vpn_check_key: None,
+            vpn_ip_url: "https://ipinfo.io/json".into(),
+            downloads_require_vpn: false,
+            vpn_check_secs: 180,
+            vpn_port_sync: false,
+            proxy: None,
+            proxy_metadata: false,
+            config_path: None,
             slskd_fast_test: false,
         }
     }
@@ -205,8 +239,22 @@ fn data_dir_named(name: &str) -> PathBuf {
     }
 }
 
-fn default_data_dir() -> PathBuf {
+pub fn default_data_dir() -> PathBuf {
     data_dir_named("conductor")
+}
+
+/// Settings that are secrets: kept in secrets.toml (mode 600) beside config.toml, not in config.toml itself.
+pub const SECRET_KEYS: &[&str] =
+    &["slskd_api_key", "lidarr_api_key", "listenbrainz_token", "lastfm_api_key", "audiomuse_token", "vpn_check_key", "proxy"];
+
+/// The config file used when none is given: config.toml in the data folder (CONDUCTOR_DATA_DIR, else the default).
+pub fn default_config_path() -> PathBuf {
+    var_os("DATA_DIR").map(PathBuf::from).unwrap_or_else(default_data_dir).join("config.toml")
+}
+
+/// secrets.toml beside a config file.
+pub fn secrets_path(config: &std::path::Path) -> PathBuf {
+    config.with_file_name("secrets.toml")
 }
 
 /// Settings from the environment: CONDUCTOR_<name>, or the old MAESTRO_<name> (still read; noted in the log).
@@ -266,10 +314,25 @@ pub fn move_old_names(cfg: &Config) {
 
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
-        let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from));
+        let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from)).or_else(|| Some(default_config_path()).filter(|p| p.is_file()));
         let mut c: Config = match &path {
-            Some(p) => toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
-                .with_context(|| format!("parsing {}", p.display()))?,
+            Some(p) => {
+                let mut t: toml::Table = toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
+                    .with_context(|| format!("parsing {}", p.display()))?;
+                // the secrets beside it (only the keys that are secrets)
+                let sp = secrets_path(p);
+                if let Ok(text) = std::fs::read_to_string(&sp) {
+                    let secrets: toml::Table = toml::from_str(&text).with_context(|| format!("parsing {}", sp.display()))?;
+                    for (k, v) in secrets {
+                        if SECRET_KEYS.contains(&k.as_str()) {
+                            t.insert(k, v);
+                        }
+                    }
+                }
+                let mut c: Config = toml::Value::Table(t).try_into().with_context(|| format!("parsing {}", p.display()))?;
+                c.config_path = Some(p.clone());
+                c
+            }
             None => Config::default(),
         };
         if let Some(v) = var_os("DATA_DIR") {
@@ -358,6 +421,24 @@ impl Config {
         }
         if let Ok(v) = var("UPGRADES") {
             c.upgrades = v != "0" && v != "false";
+        }
+        if let Ok(v) = var("VPN") {
+            c.vpn = v;
+        }
+        for (name, slot) in [("VPN_CHECK_URL", &mut c.vpn_check_url), ("VPN_CHECK_KEY", &mut c.vpn_check_key), ("PROXY", &mut c.proxy)] {
+            if let Ok(v) = var(name) {
+                *slot = Some(v).filter(|v| !v.is_empty());
+            }
+        }
+        if let Ok(v) = var("VPN_IP_URL") {
+            c.vpn_ip_url = v;
+        }
+        for (name, slot) in
+            [("DOWNLOADS_REQUIRE_VPN", &mut c.downloads_require_vpn), ("VPN_PORT_SYNC", &mut c.vpn_port_sync), ("PROXY_METADATA", &mut c.proxy_metadata)]
+        {
+            if let Ok(v) = var(name) {
+                *slot = v != "0" && v != "false";
+            }
         }
         if let Ok(v) = var("LASTFM_API_KEY") {
             c.lastfm_api_key = Some(v).filter(|v| !v.is_empty());

@@ -63,8 +63,8 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn new(deezer_url: &str) -> Self {
-        Self { dz: deezer::Deezer::new(deezer_url), lib: Mutex::default(), generation: Default::default() }
+    pub fn new(deezer_url: &str, proxy: Option<&str>) -> Self {
+        Self { dz: deezer::Deezer::new(deezer_url, proxy), lib: Mutex::default(), generation: Default::default() }
     }
 }
 

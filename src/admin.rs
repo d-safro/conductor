@@ -159,6 +159,7 @@ async fn status(State(st): State<Shared>, h: HeaderMap) -> Response {
         "requests": by_status.into_iter().map(|(s, n)| (s, json!(n))).collect::<serde_json::Map<_, _>>(),
         "onTrial": count(&st, "SELECT COUNT(*) FROM request WHERE trial = 1").await,
         "lidarr": count(&st, "SELECT COUNT(*) FROM lidarr_grab WHERE status != 'done'").await,
+        "vpn": crate::vpn::status(&st), "downloadsPaused": crate::vpn::paused(&st), "requireVpn": st.cfg.downloads_require_vpn,
         "services": { "slskd": set(&st.cfg.slskd_url), "lidarr": set(&st.cfg.lidarr_url), "audiomuse": set(&st.cfg.audiomuse_url),
                       "jam": set(&st.cfg.jam_public_url), "catalog": st.cfg.catalog, "lyrics": st.cfg.lyrics_online, "covers": st.cfg.covers_fetch },
     }))

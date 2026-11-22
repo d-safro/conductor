@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prelude · Conductor</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --ok:#1d7a46; --bad:#b3261e;
+          font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --ok:#5fc98a; --bad:#ff8a80; color-scheme: dark; } }
+  body { margin:0; background:var(--bg); color:var(--fg); }
+  main { max-width:520px; margin:8vh auto; padding:0 16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:16px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 10px; }
+  .muted { color:var(--muted); } .ok { color:var(--ok); } .err { color:var(--bad); min-height:1.5em; }
+  label { display:block; margin:8px 0; } input { font:inherit; width:100%; box-sizing:border-box; padding:8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  button { font:inherit; padding:8px 16px; border-radius:6px; border:0; background:var(--accent); color:#fff; cursor:pointer; margin-top:8px; }
+  img { width:56px; height:56px; } code { font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card"><img src="/favicon.svg" alt=""><h1>Prelude</h1><p class="muted">Setting up Conductor: make your admin account.
+    The rest (music folders, downloads, the VPN, other services) is set up with <code>conductor setup</code> on the server.</p></div>
+  <div class="card"><h2>Music folders</h2><div id="libs" class="muted">…</div></div>
+  <form class="card" id="f"><h2>Your admin account</h2>
+    <label>Name <input id="n" autocomplete="username" required></label>
+    <label>Password <input id="p" type="password" autocomplete="new-password" minlength="6" required></label>
+    <label>Once more <input id="p2" type="password" autocomplete="new-password" minlength="6" required></label>
+    <button>Make it</button><p class="err" id="e" role="alert"></p></form>
+  <div class="card" id="done" hidden><h2 class="ok">Done</h2><p>Sign in at <a href="/admin">Podium</a>, and point your music apps (Encore, …) at this address.</p></div>
+</main>
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+const q = token ? `?token=${encodeURIComponent(token)}` : '';
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+fetch('/setup/api/status' + q).then((r) => r.json()).then((s) => {
+  document.getElementById('libs').innerHTML = s.libraries.length ? s.libraries.map((l) => `<div>${esc(l.path)} · ${l.connected ? '<span class="ok">connected</span>' : '<span class="err">not connected</span>'}</div>`).join('')
+    : 'None yet: run <code>conductor setup music</code> on the server.';
+}).catch(() => {});
+document.getElementById('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const e = document.getElementById('e'); e.textContent = '';
+  if (document.getElementById('p').value !== document.getElementById('p2').value) { e.textContent = 'The passwords differ.'; return; }
+  const r = await fetch('/setup/api/admin' + q, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Conductor': '1' },
+    body: JSON.stringify({ name: document.getElementById('n').value, password: document.getElementById('p').value }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { e.textContent = j.error || 'That didn\'t work.'; return; }
+  ev.target.hidden = true; document.getElementById('done').hidden = false;
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 //! Conductor: a music server for Encore and any Subsonic / OpenSubsonic app.
 //!
-//!   conductor [--config FILE] [serve]          run the server (default)
+//!   conductor [--config FILE] [serve]          run the server (default; the first time in a terminal: Prelude first)
+//!   conductor [--config FILE] setup [PART] [--yes …]  Prelude, the setup wizard (also `prelude`; see src/prelude)
 //!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
 //!   conductor [--config FILE] user add NAME [--admin]     password from CONDUCTOR_PASSWORD or stdin
 //!   conductor [--config FILE] user passwd NAME
@@ -71,13 +72,25 @@ fn main() -> Result<()> {
 }
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Prelude: `conductor setup`, and the first start in a terminal with nothing set up yet
+    if let ["setup" | "prelude", rest @ ..] = a.as_slice() {
+        conductor::prelude::cli(config_path, rest).await?;
+        return Ok(());
+    }
+    let first_start = matches!(a.as_slice(), [] | ["serve"])
+        && config_path.is_none()
+        && conductor::config::var_os("CONFIG").is_none()
+        && conductor::config::var_os("MUSIC").is_none()
+        && !conductor::config::default_config_path().is_file()
+        && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let config_path = if first_start { Some(conductor::prelude::cli(None, &[]).await?) } else { config_path };
     let cfg = Config::load(config_path)?;
     conductor::config::move_old_names(&cfg);
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
     let pool = db::open(&cfg.data_dir.join("conductor.db")).await?;
     let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
     let libs = library::ensure_libraries(&pool, &cfg.libraries).await?;
-    let a: Vec<&str> = args.iter().map(String::as_str).collect();
 
     match a.as_slice() {
         [] | ["serve"] => serve(cfg, pool, secrets, libs, shutdown).await,
@@ -180,6 +193,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(conductor::api::podcasts::worker(state.clone()));
     tokio::spawn(conductor::catalog::acquire::worker(state.clone()));
     tokio::spawn(conductor::online::worker(state.clone()));
+    tokio::spawn(conductor::vpn::worker(state.clone()));
     tokio::spawn(conductor::listenbrainz::worker(state.clone()));
     tokio::spawn(conductor::spotify::worker(state.clone()));
     tokio::spawn(conductor::concerts::worker(state.clone()));
@@ -194,10 +208,17 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         });
     }
 
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user").fetch_one(&state.db).await.unwrap_or(1);
+    if users == 0 {
+        let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
+        let link = format!("http://{host}:{}/setup?token={}", addr.port(), state.setup_token);
+        info!("No accounts yet. Make the first admin at {link} (or run `conductor setup` here)");
+        println!("No accounts yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
+    }
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     info!(%addr, "Conductor listening");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(shutdown).await?;
     Ok(())
 }
 

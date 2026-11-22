@@ -83,7 +83,7 @@
       <div class="grid" id="tiles"></div>
       <div class="card"><h2>Music folders</h2><table id="libs"></table>
         <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p></div>
-      <div class="card"><h2>Connected services</h2><div id="services"></div></div>
+      <div class="card"><h2>Connected services</h2><div id="vpnLine"></div><div id="services"></div></div>
     </section>
     <section id="downloads" hidden>
       <div class="card"><h2>Songs asked for</h2><p class="muted">Hearted ⬇ songs, songs added to playlists, and songs on trial.</p><table id="reqs"></table></div>
@@ -154,6 +154,10 @@ async function loadStatus() {
   $('libs').innerHTML = '<tr><th>Name</th><th>Folder</th><th>State</th></tr>' + s.libraries.map((l) =>
     `<tr><td>${esc(l.name)}</td><td><code>${esc(l.path)}</code></td><td>${l.connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>'}</td></tr>`).join('');
   $('scanNote').textContent = s.scanning ? 'Scanning…' : `Last scan: ${when(s.lastScan)}`;
+  const v = s.vpn || {};
+  $('vpnLine').innerHTML = s.downloadsPaused
+    ? `<p class="err"><b>Downloads paused: the VPN is down.</b> ${esc(v.problem || '')} Checked again every few minutes.</p>`
+    : v.mode && v.mode !== 'none' ? `<p>VPN for downloads (${esc(v.mode)}): ${v.up ? `<span class="pill ok">up</span>${v.country ? ' · ' + esc(v.country) : ''}` : v.up === false ? `<span class="pill bad">down</span> ${esc(v.problem || '')}` : 'not checked yet'}${s.requireVpn ? ' · downloads wait while it\'s down' : ''}</p>` : '';
   $('services').innerHTML = Object.entries(s.services).map(([k, v]) => `<span class="pill ${v ? 'ok' : ''}">${esc(k)}: ${v ? 'on' : 'off'}</span>`).join(' ');
 }
 async function loadReqs() {

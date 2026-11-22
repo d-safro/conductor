@@ -62,6 +62,16 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 # mixinfo_dir = "/srv/mixinfo"
 # Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
 # concerts = true
+# Downloads through a VPN (`conductor setup vpn` sets these): "none", "existing" (slskd already behind one), "gluetun"
+# (slskd inside gluetun, set up by Prelude) or "proxy" (Conductor's own download traffic through `proxy`)
+# vpn = "none"
+# vpn_check_url = "http://127.0.0.1:8000/v1/publicip/ip"   # gluetun's control server; key in secrets.toml (vpn_check_key)
+# downloads_require_vpn = true          # the kill switch: downloads wait while the VPN check fails
+# vpn_port_sync = false                 # keep slskd's listen port on the VPN's forwarded port
+# proxy = "socks5h://127.0.0.1:1080"    # (in secrets.toml when it has a password)
+# proxy_metadata = false                # covers and lyrics through the proxy too
+# Keys, tokens and passwords can live in secrets.toml beside this file (Prelude puts them there):
+# slskd_api_key, lidarr_api_key, listenbrainz_token, lastfm_api_key, audiomuse_token, vpn_check_key, proxy.
 # Imports from Last.fm (scrobbles and loved songs by user name) need a free API key: last.fm/api/account/create
 # lastfm_api_key = "…"                       # or CONDUCTOR_LASTFM_API_KEY
 # Artist biographies and album notes from MusicBrainz → Wikidata → Wikipedia (no key), kept once found

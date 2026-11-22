@@ -59,11 +59,16 @@ pub struct AppState {
     pub acquire_wake: tokio::sync::Notify,
     /// one Soulseek search at a time
     pub search_pace: tokio::sync::Mutex<()>,
+    /// the VPN downloads go through, as last checked (vpn.rs)
+    pub vpn: std::sync::RwLock<crate::vpn::Status>,
+    /// opens /setup from another computer while nobody has an account (printed at start)
+    pub setup_token: String,
 }
 
 impl AppState {
     pub fn new(db: Db, secrets: Secrets, cfg: Config, libs: Vec<(i64, LibraryConfig)>) -> Self {
-        let catalog = crate::catalog::Catalog::new(&cfg.deezer_url);
+        let catalog = crate::catalog::Catalog::new(&cfg.deezer_url, crate::net::downloads_proxy(&cfg).as_deref());
+        let cfg_vpn = cfg.vpn.clone();
         Self {
             catalog,
             acquire_wake: Default::default(),
@@ -77,6 +82,8 @@ impl AppState {
             native_tokens: Mutex::default(),
             live: Default::default(),
             podcast_wake: Default::default(),
+            vpn: std::sync::RwLock::new(crate::vpn::Status { mode: cfg_vpn, ..Default::default() }),
+            setup_token: crate::db::random_id(),
         }
     }
 }
@@ -99,6 +106,7 @@ pub fn router(state: Shared) -> Router {
         .merge(native::routes())
         .merge(crate::admin::routes())
         .merge(crate::brand::routes())
+        .merge(crate::prelude::web::routes())
         .route("/", get(|| async { "Conductor. Point a Subsonic app at this address." }))
         .with_state(state)
 }
@@ -106,7 +114,12 @@ pub fn router(state: Shared) -> Router {
 async fn health(State(st): State<Shared>) -> Response {
     let offline: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library WHERE online = 0").fetch_one(&st.db).await.unwrap_or(1);
     let status = if offline == 0 { "ok" } else { "degraded" };
-    axum::Json(json!({ "status": status })).into_response()
+    let mut out = json!({ "status": status });
+    if st.cfg.vpn != "none" || st.cfg.downloads_require_vpn {
+        let v = crate::vpn::status(&st);
+        out["vpn"] = json!({ "mode": v.mode, "up": v.up, "country": v.country, "downloadsPaused": crate::vpn::paused(&st) });
+    }
+    axum::Json(out).into_response()
 }
 
 /// Request parameters from the query string and a form body, keeping repeated keys (id=1&id=2).
