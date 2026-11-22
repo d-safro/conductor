@@ -40,6 +40,17 @@
   #login .card { display:flex; flex-direction:column; gap:10px; }
   .muted { color:var(--muted); } .err { color:var(--bad); min-height:1.5em; }
   code { font-size:13px; word-break:break-all; }
+  .song { border-top:1px solid var(--line); padding:12px 0; }
+  .song:first-of-type { border-top:0; }
+  .song .head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .song .head b { font-weight:600; }
+  .song form.row { margin-top:8px; }
+  .song form.row input { flex:1 1 260px; min-width:0; }
+  .results { margin-top:8px; }
+  .results td.file { word-break:break-word; max-width:420px; }
+  .yes { color:var(--ok); } .no { color:var(--muted); }
+  .bar { display:inline-block; width:80px; height:6px; background:var(--line); border-radius:3px; vertical-align:middle; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); }
 </style>
 </head>
 <body>
@@ -58,6 +69,7 @@
     <nav id="tabs">
       <button data-tab="status" aria-current="page">Status</button>
       <button data-tab="downloads">Downloads</button>
+      <button data-tab="pick">Pick by hand</button>
       <button data-tab="lidarr">Lidarr albums</button>
       <button data-tab="users">Users</button>
     </nav>
@@ -73,6 +85,16 @@
     </section>
     <section id="downloads" hidden>
       <div class="card"><h2>Songs asked for</h2><p class="muted">Hearted ⬇ songs, songs added to playlists, and songs on trial.</p><table id="reqs"></table></div>
+    </section>
+    <section id="pick" hidden>
+      <div class="card"><h2>Pick a file by hand</h2>
+        <p class="muted">Songs the automatic search couldn't get. Search Soulseek in your own words, see every audio file it finds,
+          and choose one; it's filed like any download. Ticks: the song's title is in the file name, an artist is in its path,
+          it's from the album asked from. "Fits" means the automatic search would take it too.</p>
+        <p class="err" id="pickErr" role="alert"></p>
+        <div id="pickList"></div></div>
+      <div class="card"><h2>On their way</h2><table id="pickDl"></table></div>
+      <div class="card"><h2>Set aside</h2><table id="pickSkipped"></table></div>
     </section>
     <section id="lidarr" hidden>
       <div class="card"><h2>Albums Lidarr wants</h2><table id="grabs"></table></div>
@@ -108,7 +130,7 @@ async function loadStatus() {
   $('who').textContent = `${s.you} · Maestro ${s.version}`;
   const r = s.requests || {};
   const tiles = [['Songs', s.songs], ['Albums', s.albums], ['Artists', s.artists], ['Playlists', s.playlists], ['Podcasts', s.podcasts],
-    ['Missing files', s.missing], ['Waiting to download', (r.retry || 0) + (r.queued || 0)], ['On trial', s.onTrial], ['Lidarr albums open', s.lidarr]];
+    ['Missing files', s.missing], ['Waiting to download', (r.retry || 0) + (r.queued || 0)], ['To pick by hand', r.notfound || 0], ['On trial', s.onTrial], ['Lidarr albums open', s.lidarr]];
   $('tiles').innerHTML = tiles.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
   $('libs').innerHTML = '<tr><th>Name</th><th>Folder</th><th>State</th></tr>' + s.libraries.map((l) =>
     `<tr><td>${esc(l.name)}</td><td><code>${esc(l.path)}</code></td><td>${l.connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>'}</td></tr>`).join('');
@@ -124,6 +146,75 @@ async function loadReqs() {
     return `<tr><td>${esc(artist)} – ${esc(x.title)}${x.trial ? ' <span class="pill">trial</span>' : ''}</td><td>${pill(st)}</td><td class="num">${x.searches}</td><td>${when(x.asked_at)}</td><td>${acts}</td></tr>`;
   }).join('') || '<tr><td class="muted">Nothing asked for yet.</td></tr>';
 }
+const secs = (s) => s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '';
+const tick = (ok) => ok ? '<span class="yes">✓</span>' : '<span class="no">–</span>';
+const results = {};   // key → last search results, kept while the list refreshes
+function resultsTable(key, res) {
+  if (!res) return '';
+  if (!res.results.length) return '<p class="muted">Nothing found. Try other words (the artist alone, or the title alone).</p>';
+  return `<table class="results"><tr><th>File</th><th>Format</th><th>Length</th><th>From</th><th>Title</th><th>Artist</th><th>Album</th><th>Fits</th><th></th></tr>` +
+    res.results.map((f, i) => `<tr><td class="file"><span class="muted">${esc(f.folder)}/</span>${esc(f.name)}</td>
+      <td>${esc(f.ext)}${f.bitrate ? ' ' + f.bitrate : ''}</td><td class="num">${secs(f.length)}</td>
+      <td>${esc(f.user)}<br><span class="muted">${f.free ? 'free slot' : `queue ${f.queue}`}</span></td>
+      <td>${tick(f.titleOk)}</td><td>${tick(f.artistOk)}</td><td>${tick(f.sameAlbum)}</td><td>${tick(f.match)}</td>
+      <td><button class="act primary" data-take="${esc(key)}" data-i="${i}">Pick</button></td></tr>`).join('') + '</table>' +
+    (res.total > res.results.length ? `<p class="muted">${res.total - res.results.length} more not shown; narrow the search.</p>` : '');
+}
+async function loadPick() {
+  const d = await api('pick');
+  const songs = d.songs || [];
+  const note = !d.slskd ? '<p class="muted">slskd isn\'t set up (slskd_url, slskd_api_key), so there is nothing to search.</p>'
+    : d.readOnly ? '<p class="muted">Read-only: you can search, but nothing is downloaded.</p>' : '';
+  const picks = songs.filter((s) => s.group === 'pick');
+  // keep what's being typed and shown while the list refreshes
+  const typed = {};
+  document.querySelectorAll('#pickList form[data-search]').forEach((f) => (typed[f.dataset.search] = f.querySelector('input').value));
+  $('pickList').innerHTML = note + (picks.map((s) => `<div class="song" id="song-${esc(s.key)}">
+      <div class="head"><b>${esc(s.artist)} – ${esc(s.title)}</b><span class="muted">${esc(s.album)} ${s.ms ? '· ' + secs(s.ms / 1000) : ''}</span>
+        ${pill(s.status)} <span class="muted">${s.searches} search${s.searches === 1 ? '' : 'es'}${s.found ? ', someone has it' : ''}</span>
+        <button class="act" data-skip="${esc(s.key)}">Set aside</button></div>
+      ${s.note ? `<p class="err">${esc(s.note)}</p>` : ''}
+      <form class="row" data-search="${esc(s.key)}"><input aria-label="Search Soulseek for ${esc(s.title)}" value="${esc(typed[s.key] ?? s.query)}"><button>Search Soulseek</button>
+        <span class="muted" data-wait></span></form>
+      <div data-res>${resultsTable(s.key, results[s.key])}</div></div>`).join('') || '<p class="muted">Nothing to pick: every song asked for was found.</p>');
+  const dl = songs.filter((s) => s.group === 'downloading' || s.group === 'done');
+  $('pickDl').innerHTML = dl.length ? '<tr><th>Song</th><th>File</th><th>From</th><th>State</th></tr>' + dl.map((s) =>
+    `<tr><td>${esc(s.artist)} – ${esc(s.title)}${s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ''}</td><td class="file">${esc(s.group === 'done' ? s.rel : s.file)}</td><td>${esc(s.user || '')}</td>
+     <td>${s.group === 'done' ? pill('done') : `${esc(s.state)} <span class="bar"><i style="width:${s.percent}%"></i></span>`}</td></tr>`).join('')
+    : '<tr><td class="muted">Nothing picked by hand is downloading.</td></tr>';
+  const sk = songs.filter((s) => s.group === 'skipped');
+  $('pickSkipped').innerHTML = sk.length ? sk.map((s) => `<tr><td>${esc(s.artist)} – ${esc(s.title)}</td><td><button class="act" data-unskip="${esc(s.key)}">Bring back</button></td></tr>`).join('')
+    : '<tr><td class="muted">None.</td></tr>';
+}
+document.addEventListener('submit', async (e) => {
+  const f = e.target, key = f.dataset.search;
+  if (!key) return;
+  e.preventDefault();
+  const wait = f.querySelector('[data-wait]');
+  wait.textContent = 'Searching (about 10 s)…';
+  f.querySelector('button').disabled = true;
+  try {
+    results[key] = await api(`pick/${encodeURIComponent(key)}/search`, { method: 'POST', body: JSON.stringify({ q: f.querySelector('input').value }) });
+    f.parentElement.querySelector('[data-res]').innerHTML = resultsTable(key, results[key]);
+    wait.textContent = `${results[key].total} files`;
+  } catch (x) { wait.textContent = x.message; }
+  f.querySelector('button').disabled = false;
+});
+document.addEventListener('click', async (e) => {
+  const d = e.target.dataset || {};
+  if (!(d.take || d.skip || d.unskip)) return;
+  $('pickErr').textContent = '';
+  try {
+    if (d.take) {
+      const f = results[d.take].results[+d.i];
+      e.target.disabled = true;
+      await api(`pick/${encodeURIComponent(d.take)}`, { method: 'POST', body: JSON.stringify({ user: f.user, filename: f.filename, size: f.size }) });
+      delete results[d.take];
+    }
+    if (d.skip || d.unskip) await api(`pick/${encodeURIComponent(d.skip || d.unskip)}/skip`, { method: 'POST', body: JSON.stringify({ on: !!d.skip }) });
+    loadPick();
+  } catch (x) { $('pickErr').textContent = x.message; e.target.disabled = false; }
+});
 async function loadGrabs() {
   const rows = await api('lidarr');
   $('grabs').innerHTML = '<tr><th>Album</th><th>State</th><th>From</th><th>Searches</th><th></th></tr>' + rows.map((g) =>
@@ -136,7 +227,7 @@ async function loadUsers() {
   $('userList').innerHTML = '<tr><th>Name</th><th>Role</th><th></th></tr>' + rows.map((u) =>
     `<tr><td>${esc(u.name)}</td><td>${u.admin ? 'admin' : 'user'}</td><td><button class="act" data-pw="${esc(u.name)}">Set password</button> <button class="act" data-key="${esc(u.name)}">New API key</button></td></tr>`).join('');
 }
-const loaders = { status: loadStatus, downloads: loadReqs, lidarr: loadGrabs, users: loadUsers };
+const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, lidarr: loadGrabs, users: loadUsers };
 let current = 'status';
 function go(tab) {
   current = tab;
@@ -183,7 +274,14 @@ $('addUser').addEventListener('submit', async (e) => {
   catch (x) { $('userErr').textContent = x.message; }
 });
 api('status').then(() => { show(true); go('status'); }).catch(() => show(false));
-setInterval(() => { if (!$('app').hidden && current !== 'users') loaders[current]().catch(() => {}); }, 15000);
+let searching = 0;
+document.addEventListener('submit', (e) => { if (e.target.dataset.search) { searching++; setTimeout(() => searching--, 20000); } }, true);
+// refresh the open tab, but not while you're typing or a search is running on the pick tab
+setInterval(() => {
+  if ($('app').hidden || current === 'users') return;
+  if (current === 'pick' && (searching > 0 || $('pickList').contains(document.activeElement))) return;
+  loaders[current]().catch(() => {});
+}, 15000);
 </script>
 </body>
 </html>

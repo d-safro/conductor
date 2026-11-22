@@ -2078,6 +2078,103 @@ async fn music_lookup_requests_come_over() {
 }
 
 #[tokio::test]
+async fn pick_a_file_by_hand() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    tone(&tmp.path().join("four.flac"), "Four", "Alpha", "First Album", 4, 2);
+    let flac = std::fs::read(tmp.path().join("four.flac")).unwrap();
+    let remote = r"Music\Alpha\First Album\04 Four.flac";
+    let sent = Arc::new(AtomicBool::new(false));
+    let (sent2, dl2) = (sent.clone(), downloads.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/searches" => json!({}),
+            p if p.ends_with("/responses") => json!([{ "username": "peer", "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000, "files": [
+                { "filename": remote, "size": flac.len(), "bitRate": 0, "length": 2, "extension": "flac" },
+                { "filename": r"Music\Alpha\Live\Four (Live).flac", "size": 9, "length": 2 },
+                { "filename": r"Music\Alpha\First Album\cover.jpg", "size": 9 }] }]),
+            p if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+            "/api/v0/transfers/downloads/peer" if !body.is_empty() => {
+                let d = dl2.join("First Album");
+                std::fs::create_dir_all(&d).unwrap();
+                std::fs::write(d.join("04 Four.flac"), &flac).unwrap();
+                sent2.store(true, SeqCst);
+                json!({})
+            }
+            "/api/v0/transfers/downloads" => {
+                if sent2.load(SeqCst) {
+                    json!([{ "username": "peer", "directories": [{ "files": [{ "id": "t1", "filename": remote, "state": "Completed, Succeeded" }] }] }])
+                } else {
+                    json!([])
+                }
+            }
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_downloads = Some(downloads.clone());
+        c.slskd_fast_test = true;
+    })
+    .await;
+    sqlx::query(
+        "INSERT INTO request (key, title, artists_json, album, duration_ms, status, searches, found, asked_at)
+         VALUES ('dz-t-9', 'Four', '[\"Alpha\"]', 'First Album', 2000, 'notfound', 8, 1, 1)",
+    )
+    .execute(&s.st.db)
+    .await
+    .unwrap();
+    let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
+    let api = |p: &str| format!("{}/admin/api/{p}", s.base);
+    let login = json!({ "username": USER, "password": PASS });
+    assert_eq!(http.post(api("login")).header("X-Maestro", "1").json(&login).send().await.unwrap().status(), 200);
+    let get = async |p: &str| -> Value { http.get(api(p)).send().await.unwrap().json().await.unwrap() };
+    let post = async |p: &str, b: Value| http.post(api(p)).header("X-Maestro", "1").json(&b).send().await.unwrap();
+    let l = get("pick").await;
+    let song = l["songs"].as_array().unwrap().iter().find(|x| x["key"] == "dz-t-9").unwrap().clone();
+    assert_eq!((song["group"].as_str(), song["query"].as_str()), (Some("pick"), Some("Alpha Four")));
+    // search in your own words: every audio file, the best first
+    assert_eq!(post("pick/dz-t-9/search", json!({ "q": "al" })).await.status(), 400);
+    let r: Value = post("pick/dz-t-9/search", json!({ "q": "alpha four" })).await.json().await.unwrap();
+    let res = r["results"].as_array().unwrap();
+    assert_eq!(res.len(), 2, "no pictures: {res:?}");
+    assert_eq!((res[0]["sameAlbum"].as_bool(), res[0]["match"].as_bool()), (Some(true), Some(true)));
+    assert_eq!(res[1]["match"], false, "a live version isn't what was asked for, but you may still pick it");
+    // set aside and back
+    post("pick/dz-t-9/skip", json!({ "on": true })).await;
+    let g = get("pick").await;
+    assert_eq!(g["songs"][0]["group"], "skipped");
+    post("pick/dz-t-9/skip", json!({ "on": false })).await;
+    assert_eq!(get("pick").await["songs"][0]["status"], "notfound");
+    // pick it: downloaded, filed, scanned like any download
+    let f = &res[0];
+    let picked = post("pick/dz-t-9", json!({ "user": f["user"], "filename": f["filename"], "size": f["size"] })).await;
+    assert_eq!(picked.status(), 200);
+    assert!(sent.load(SeqCst));
+    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    wait_for(
+        async || sqlx::query_scalar::<_, Option<String>>("SELECT local_id FROM request WHERE key = 'dz-t-9'").fetch_one(&s.st.db).await.unwrap().is_some(),
+        "the picked file to be filed and scanned",
+    )
+    .await;
+    assert!(s.music.join("Songs/Alpha/Alpha - Four.flac").is_file());
+    let (manual, same): (bool, Option<bool>) =
+        sqlx::query_as("SELECT manual, same_album FROM request WHERE key = 'dz-t-9'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!((manual, same), (true, Some(true)));
+    let again = post("pick/dz-t-9", json!({ "user": "peer", "filename": remote, "size": 1 })).await;
+    assert_eq!(again.status(), 409, "it isn't waiting for a file any more");
+}
+
+#[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {
         return;

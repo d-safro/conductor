@@ -22,6 +22,10 @@ const SEARCH_WAIT_MS: i64 = 8000;
 const IN_FLIGHT: i64 = 40;
 const AUDIO: &[&str] = &["flac", "mp3", "m4a", "ogg", "opus", "aac"];
 
+pub fn is_audio(ext: &str) -> bool {
+    AUDIO.contains(&ext)
+}
+
 pub struct Slskd {
     base: String,
     key: String,
@@ -77,7 +81,7 @@ impl Req {
     pub fn artists(&self) -> Vec<String> {
         serde_json::from_str(&self.artists_json).unwrap_or_default()
     }
-    fn tried(&self) -> Vec<String> {
+    pub fn tried(&self) -> Vec<String> {
         serde_json::from_str(&self.tried_json).unwrap_or_default()
     }
 }

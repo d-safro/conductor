@@ -1,4 +1,5 @@
-//! The admin page at /admin (admins only): status, scan, downloads (retry / cancel), Lidarr albums, users.
+//! The admin page at /admin (admins only): status, scan, downloads (retry / cancel), picking a Soulseek file by
+//! hand for songs the automatic search couldn't get, Lidarr albums, users.
 //! Sign-in sets an HttpOnly, SameSite=Strict cookie (kept in memory for 12 hours); every change also needs the
 //! `X-Maestro: 1` header, which other sites can't send.
 
@@ -38,6 +39,10 @@ pub fn routes() -> Router<Shared> {
         .route("/admin/api/requests", get(requests))
         .route("/admin/api/requests/{key}/retry", post(retry))
         .route("/admin/api/requests/{key}", delete(cancel))
+        .route("/admin/api/pick", get(pick_list))
+        .route("/admin/api/pick/{key}/search", post(pick_search))
+        .route("/admin/api/pick/{key}/skip", post(pick_skip))
+        .route("/admin/api/pick/{key}", post(pick_file))
         .route("/admin/api/lidarr", get(lidarr))
         .route("/admin/api/lidarr/{id}/retry", post(lidarr_retry))
         .route("/admin/api/users", get(users).post(add_user))
@@ -201,6 +206,188 @@ async fn retry(State(st): State<Shared>, h: HeaderMap, Path(key): Path<String>) 
 async fn cancel(State(st): State<Shared>, h: HeaderMap, Path(key): Path<String>) -> Response {
     need_admin!(st, h, true);
     let _ = sqlx::query("DELETE FROM request WHERE key = ? AND local_id IS NULL").bind(&key).execute(&st.db).await;
+    Json(json!({ "ok": true })).into_response()
+}
+
+// ───────────── picking a file by hand ─────────────
+
+/// Requests the automatic search couldn't get (or that were set aside), and hand-picked ones on their way.
+const TO_PICK: &[&str] = &["retry", "notfound"];
+
+fn slskd(st: &Shared) -> Option<crate::catalog::acquire::Slskd> {
+    Some(crate::catalog::acquire::Slskd::new(st.cfg.slskd_url.as_deref()?, st.cfg.slskd_api_key.as_deref()?))
+}
+
+async fn pick_list(State(st): State<Shared>, h: HeaderMap) -> Response {
+    need_admin!(st, h, false);
+    type Row = (String, String, String, String, i64, String, bool, i64, bool, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT key, title, artists_json, album, duration_ms, status, found, searches, manual, slsk_user, slsk_file, rel,
+                up_user, up_file, tried_json != '[]'
+         FROM request WHERE local_id IS NULL AND (status IN ('retry', 'notfound', 'skipped') OR (status = 'queued' AND manual = 1))
+            OR status = 'upgrading'
+            OR (manual = 1 AND status = 'done' AND arrived_at > ?)
+         ORDER BY asked_at DESC LIMIT 500",
+    )
+    .bind(now() - 7 * 86_400)
+    .fetch_all(&st.db)
+    .await
+    .unwrap_or_default();
+    // how the downloads are going, from slskd
+    let mut live = std::collections::HashMap::new();
+    if rows.iter().any(|r| r.5 == "queued" || r.5 == "upgrading")
+        && let Some(sl) = slskd(&st)
+        && let Ok(t) = sl.get("/transfers/downloads").await
+    {
+        for u in t.as_array().into_iter().flatten() {
+            for d in u["directories"].as_array().into_iter().flatten() {
+                for f in d["files"].as_array().into_iter().flatten() {
+                    live.insert(
+                        (u["username"].as_str().unwrap_or("").to_string(), f["filename"].as_str().unwrap_or("").to_string()),
+                        (f["state"].as_str().unwrap_or("").to_string(), f["percentComplete"].as_f64().unwrap_or(0.0)),
+                    );
+                }
+            }
+        }
+    }
+    let mut out = vec![];
+    for (key, title, artists, album, ms, status, found, searches, manual, user, file, rel, up_user, up_file, tried) in rows {
+        let names: Vec<String> = serde_json::from_str(&artists).unwrap_or_default();
+        let first = names.first().cloned().unwrap_or_default();
+        let group = match status.as_str() {
+            s if TO_PICK.contains(&s) => "pick",
+            "skipped" => "skipped",
+            "queued" | "upgrading" => "downloading",
+            _ => "done",
+        };
+        let (u, f) = if status == "upgrading" { (up_user, up_file) } else { (user, file) };
+        let (state, percent) = live.get(&(u.clone().unwrap_or_default(), f.clone().unwrap_or_default())).cloned().unwrap_or(("waiting".into(), 0.0));
+        out.push(json!({
+            "key": key, "title": title, "artist": names.join(", "), "album": album, "ms": ms, "status": status,
+            "group": group, "found": found, "searches": searches,
+            "query": format!("{first} {}", crate::catalog::text::clean_title(&title)).trim(),
+            "note": if group == "pick" && manual && tried > 0 { "the last file you picked didn't arrive; pick another" }
+                    else if status == "upgrading" { "swapping in a better copy" } else { "" },
+            "user": u, "file": f.map(|f| f.replace('\\', "/").rsplit('/').next().unwrap_or("").to_string()),
+            "rel": rel, "state": state, "percent": percent.round(),
+        }));
+    }
+    let count = |g: &str| out.iter().filter(|x| x["group"] == g).count();
+    let counts = json!({ "pick": count("pick"), "downloading": count("downloading"), "done": count("done"), "skipped": count("skipped") });
+    Json(json!({ "songs": out, "counts": counts, "slskd": slskd(&st).is_some(), "readOnly": st.cfg.read_only })).into_response()
+}
+
+async fn pick_req(st: &Shared, key: &str) -> Option<crate::catalog::acquire::Req> {
+    sqlx::query_as("SELECT * FROM request WHERE key = ?").bind(key).fetch_optional(&st.db).await.ok().flatten()
+}
+
+#[derive(Deserialize)]
+struct PickSearch {
+    q: String,
+}
+
+async fn pick_search(State(st): State<Shared>, h: HeaderMap, Path(key): Path<String>, Json(b): Json<PickSearch>) -> Response {
+    need_admin!(st, h, true);
+    use crate::catalog::{acquire, text};
+    let Some(r) = pick_req(&st, &key).await else { return err(StatusCode::NOT_FOUND, "unknown song") };
+    let q = b.q.trim();
+    if q.chars().count() < 3 {
+        return err(StatusCode::BAD_REQUEST, "type at least 3 letters");
+    }
+    let Some(sl) = slskd(&st) else { return err(StatusCode::CONFLICT, "slskd isn't set up (slskd_url, slskd_api_key)") };
+    if !sl.logged_in().await {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "slskd isn't logged in to Soulseek right now (is its VPN up?)");
+    }
+    let found = match acquire::search(&st, &sl, q).await {
+        Ok(f) => f,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, &format!("Soulseek search failed: {e}")),
+    };
+    let title = text::norm(&text::clean_title(&r.title));
+    let mut rows = vec![];
+    for resp in &found {
+        for f in resp["files"].as_array().into_iter().flatten() {
+            let name = f["filename"].as_str().unwrap_or("").replace('\\', "/");
+            let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+            let ext = f["extension"].as_str().filter(|e| !e.is_empty()).map(String::from)
+                .unwrap_or_else(|| base.rsplit('.').next().unwrap_or("").to_string()).trim_start_matches('.').to_lowercase();
+            if !acquire::is_audio(&ext) {
+                continue;
+            }
+            let score = acquire::score_file(&r, resp, f, &[]);
+            let title_ok = !title.is_empty() && (text::norm(&base).contains(&title) || text::norm(&text::translit(&base)).contains(&title));
+            rows.push(json!({
+                "user": resp["username"], "filename": f["filename"], "size": f["size"].as_i64().unwrap_or(0),
+                "folder": name.rsplit('/').nth(1).unwrap_or(""), "name": base, "ext": ext,
+                "bitrate": f["bitRate"].as_i64().unwrap_or(0), "length": f["length"].as_f64().unwrap_or(0.0),
+                "free": resp["hasFreeUploadSlot"] == true, "queue": resp["queueLength"].as_i64().unwrap_or(0),
+                "speed": resp["uploadSpeed"].as_i64().unwrap_or(0), "match": score.is_some(), "titleOk": title_ok,
+                "artistOk": acquire::artist_in(&r.artists(), &name), "sameAlbum": acquire::same_album(&r, &name) == Some(true),
+                "score": score.unwrap_or(-1.0),
+            }));
+        }
+    }
+    let rank = |x: &Value| {
+        let q = match x["ext"].as_str() { Some("flac") => 3, Some("mp3") => 1, _ => 0 };
+        (x["match"] == true, x["titleOk"] == true && x["artistOk"] == true, x["sameAlbum"] == true,
+         (x["score"].as_f64().unwrap_or(-1.0) * 100.0) as i64, q, x["bitrate"].as_i64().unwrap_or(0), x["free"] == true)
+    };
+    rows.sort_by_key(|x| std::cmp::Reverse(rank(x)));
+    let total = rows.len();
+    rows.truncate(120);
+    Json(json!({ "results": rows, "total": total })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PickFile {
+    user: String,
+    filename: String,
+    size: i64,
+}
+
+async fn pick_file(State(st): State<Shared>, h: HeaderMap, Path(key): Path<String>, Json(b): Json<PickFile>) -> Response {
+    need_admin!(st, h, true);
+    if st.cfg.read_only {
+        return err(StatusCode::CONFLICT, "read-only: nothing is downloaded");
+    }
+    let Some(r) = pick_req(&st, &key).await else { return err(StatusCode::NOT_FOUND, "unknown song") };
+    if !matches!(r.status.as_str(), "retry" | "notfound" | "skipped") {
+        return err(StatusCode::CONFLICT, "this song isn't waiting for a file");
+    }
+    let Some(sl) = slskd(&st) else { return err(StatusCode::CONFLICT, "slskd isn't set up") };
+    let path = format!("/transfers/downloads/{}", crate::catalog::acquire::urlencode(&b.user));
+    if let Err(e) = sl.call(reqwest::Method::POST, &path, Some(json!([{ "filename": b.filename, "size": b.size }]))).await {
+        return err(StatusCode::BAD_GATEWAY, &format!("slskd refused it ({e}); that person may be offline, try another file"));
+    }
+    let same = crate::catalog::acquire::same_album(&r, &b.filename);
+    let _ = sqlx::query(
+        "UPDATE request SET status = 'queued', slsk_user = ?, slsk_file = ?, since = ?, manual = 1, same_album = ?, skipped_from = NULL
+         WHERE key = ?",
+    )
+    .bind(&b.user)
+    .bind(&b.filename)
+    .bind(now())
+    .bind(same)
+    .bind(&key)
+    .execute(&st.db)
+    .await;
+    st.acquire_wake.notify_one();
+    Json(json!({ "ok": true })).into_response()
+}
+
+#[derive(Deserialize)]
+struct Skip {
+    on: bool,
+}
+
+/// Set a song aside (no more automatic searches, out of the list to pick), or bring it back.
+async fn pick_skip(State(st): State<Shared>, h: HeaderMap, Path(key): Path<String>, Json(b): Json<Skip>) -> Response {
+    need_admin!(st, h, true);
+    let q = if b.on {
+        "UPDATE request SET skipped_from = status, status = 'skipped' WHERE key = ? AND status IN ('retry', 'notfound')"
+    } else {
+        "UPDATE request SET status = COALESCE(skipped_from, 'notfound'), skipped_from = NULL WHERE key = ? AND status = 'skipped'"
+    };
+    let _ = sqlx::query(q).bind(&key).execute(&st.db).await;
     Json(json!({ "ok": true })).into_response()
 }
 

@@ -92,7 +92,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   become playlists here ("Synced from Spotify"), in Spotify's order, Liked Songs hearted; songs you don't have are
   matched on Deezer (ISRC first) and asked for. The login and choices come from spotify.py's folder via
   `import-music-lookup`.
-- **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), Lidarr albums,
+- **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
