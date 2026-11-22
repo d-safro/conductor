@@ -79,6 +79,7 @@ impl Server {
         c.lyrics_online = false;
         c.covers_fetch = false;
         c.concerts = false;
+        c.info_online = false;
     }
 
     async fn start_with(tune: impl FnOnce(&mut Config)) -> Self {
@@ -1868,6 +1869,75 @@ async fn artist_info_and_similar_songs() {
     assert!(titles.contains(&"Two") && titles.contains(&"Three") && !titles.contains(&"One"), "{titles:?}");
     let r = s.ok("getSimilarSongs2", &[("id", &alpha)]).await;
     assert_eq!(r["similarSongs2"]["song"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn artist_bios_and_album_notes() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let (base, hits) = stand_in(|path, query, _| {
+        let b = "http://pics";
+        Some(match path {
+            "/mb/artist" if query.contains("Alpha") => json!({ "artists": [{ "id": "mb-alpha", "name": "Alpha", "score": 100 }] }),
+            "/mb/artist/mb-alpha" => json!({ "relations": [{ "type": "wikidata", "url": { "resource": "https://www.wikidata.org/wiki/Q1" } }] }),
+            "/mb/release-group" if query.contains("First") => {
+                json!({ "release-groups": [{ "id": "rg1", "title": "First Album", "score": 100 }] })
+            }
+            "/mb/release-group/rg1" => json!({ "relations": [{ "type": "wikidata", "url": { "resource": "https://www.wikidata.org/wiki/Q2" } }] }),
+            "/wd/wiki/Special:EntityData/Q1.json" => json!({ "entities": { "Q1": { "sitelinks": { "enwiki": { "title": "Alpha (band)" } } } } }),
+            "/wd/wiki/Special:EntityData/Q2.json" => {
+                json!({ "entities": { "Q2": { "sitelinks": { "enwiki": { "title": "First Album" }, "ruwiki": { "title": "Pervy" } } } } })
+            }
+            "/wp/en/api/rest_v1/page/summary/Alpha_(band)" => json!({
+                "type": "standard", "extract": "Alpha are a test band.",
+                "content_urls": { "desktop": { "page": "https://en.wikipedia.org/wiki/Alpha_(band)" } },
+                "thumbnail": { "source": format!("{b}/alpha.jpg") } }),
+            "/wp/ru/api/rest_v1/page/summary/Pervy" => json!({ "type": "standard", "extract": "Первый альбом.",
+                "content_urls": { "desktop": { "page": "https://ru.wikipedia.org/wiki/Pervy" } } }),
+            "/caa/release-group/rg1" => json!({ "images": [{ "front": true, "image": format!("{b}/full.jpg"),
+                "thumbnails": { "250": format!("{b}/250.jpg"), "500": format!("{b}/500.jpg"), "1200": format!("{b}/1200.jpg") } }] }),
+            _ => return None,
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.info_online = true;
+        c.info_lang = "ru".into();
+        c.musicbrainz_url = format!("{base}/mb");
+        c.wikidata_url = format!("{base}/wd");
+        c.wikipedia_url = format!("{base}/wp/{{lang}}");
+        c.coverart_url = format!("{base}/caa");
+    })
+    .await;
+    let r = s.ok("search3", &[("query", "One")]).await;
+    let one = r["searchResult3"]["song"][0].clone();
+    let alpha = one["artistId"].as_str().unwrap().to_string();
+    let info = s.ok("getArtistInfo2", &[("id", &alpha)]).await["artistInfo2"].clone();
+    let bio = info["biography"].as_str().unwrap();
+    assert!(bio.starts_with("Alpha are a test band. <a") && bio.contains("Read more on Wikipedia"), "{bio}");
+    assert_eq!(info["musicBrainzId"], "mb-alpha");
+    assert_eq!(info["largeImageUrl"], "http://pics/alpha.jpg", "Wikipedia's picture when Deezer has none");
+    // album notes in the chosen language, pictures from the Cover Art Archive; getAlbumInfo takes a song id too
+    let a = s.ok("getAlbumInfo2", &[("id", one["albumId"].as_str().unwrap())]).await["albumInfo"].clone();
+    assert!(a["notes"].as_str().unwrap().starts_with("Первый альбом."), "{a}");
+    assert_eq!(a["musicBrainzId"], "rg1");
+    assert_eq!(a["smallImageUrl"], "http://pics/250.jpg");
+    assert_eq!(a["largeImageUrl"], "http://pics/1200.jpg");
+    let asked = hits.load(std::sync::atomic::Ordering::SeqCst);
+    let again = s.ok("getAlbumInfo", &[("id", one["id"].as_str().unwrap())]).await["albumInfo"].clone();
+    assert_eq!(again, a);
+    s.ok("getArtistInfo", &[("id", &alpha)]).await;
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), asked, "answers are kept");
+    // an artist nobody knows: nothing, and that is kept too
+    let beta = s.ok("search3", &[("query", "Three")]).await["searchResult3"]["song"][0]["artistId"].as_str().unwrap().to_string();
+    let none = s.ok("getArtistInfo2", &[("id", &beta)]).await["artistInfo2"].clone();
+    assert!(none.get("biography").is_none());
+    let asked = hits.load(std::sync::atomic::Ordering::SeqCst);
+    s.ok("getArtistInfo2", &[("id", &beta)]).await;
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), asked);
 }
 
 #[tokio::test]

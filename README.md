@@ -21,8 +21,9 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   `getMusicDirectory`, `getAlbumList(2)` (all list types), `getRandomSongs`, `getSongsByGenre`, `getGenres`,
   `search2/3`, `getStarred(2)`, `star`, `unstar`, `setRating`, `scrobble`, `reportPlayback`, `getNowPlaying`,
   `getTopSongs`, `getSimilarSongs(2)` (AudioMuse's sound-alikes, then songs by the artist and Deezer's related
-  artists that you have, then the genre), `getArtistInfo(2)` (pictures and similar artists from Deezer),
-  `getAlbumInfo(2)` (empty for now),
+  artists that you have, then the genre), `getArtistInfo(2)` (Wikipedia biography through MusicBrainz and
+  Wikidata, pictures and similar artists from Deezer), `getAlbumInfo(2)` (Wikipedia notes, Cover Art Archive
+  pictures; both looked up once when first asked, then kept; `info_online`, `info_lang`),
   playlists (all), play queue, `getUser`, internet radio (all), `getScanStatus`, `startScan`, `stream`
   (direct with HTTP Range, or transcoded to mp3/opus/ogg/aac with `maxBitRate`, `format`, `timeOffset`),
   `download`, `getCoverArt` (folder images, then embedded; resized and cached), `getLyrics`, `getLyricsBySongId`

@@ -51,14 +51,6 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 # audiomuse_token = "…"                      # or MAESTRO_AUDIOMUSE_TOKEN
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
-[[libraries]]
-name = "Music"
-path = "/mnt/media/data/media/music"
-# A file that must be in the folder for it to count as connected. Without one, any content counts.
-# sentinel = ".library-id"
-# Files read at once while scanning: 1-2 for a spinning USB drive, 8 for an SSD.
-scan_threads = 2
-
 # Lyrics translation by a local Ollama (off unless set)
 # ollama_url = "http://127.0.0.1:11434"
 # translate_model = "gemma4:e2b-it-qat"
@@ -67,3 +59,14 @@ scan_threads = 2
 # mixinfo_dir = "/srv/mixinfo"
 # Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
 # concerts = true
+# Artist biographies and album notes from MusicBrainz → Wikidata → Wikipedia (no key), kept once found
+# info_online = true
+# info_lang = "en"                         # Wikipedia's language; English when there's no page in it
+
+[[libraries]]
+name = "Music"
+path = "/mnt/media/data/media/music"
+# A file that must be in the folder for it to count as connected. Without one, any content counts.
+# sentinel = ".library-id"
+# Files read at once while scanning: 1-2 for a spinning USB drive, 8 for an SSD.
+scan_threads = 2

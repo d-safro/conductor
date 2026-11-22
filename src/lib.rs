@@ -16,3 +16,4 @@ pub mod live;
 pub mod mixes;
 pub mod online;
 pub mod spotify;
+pub mod wiki;

@@ -1,17 +1,27 @@
-//! Artist info and similar songs, from what the server knows: Deezer (the artist's picture and related artists,
-//! when the catalog is on) and AudioMuse (songs that sound alike, when it's set up). Without either, similar songs
-//! come from the same artist and genre.
+//! Artist and album info and similar songs, from what the server knows: Deezer (the artist's picture and related
+//! artists, when the catalog is on), Wikipedia through MusicBrainz (biographies, album notes, album pictures from
+//! the Cover Art Archive; see wiki.rs) and AudioMuse (songs that sound alike, when it's set up). Without either,
+//! similar songs come from the same artist and genre.
 //!
-//!   getArtistInfo2?id=&count=&includeNotPresent=   images, MusicBrainz id, similar artists (yours; with
-//!                                                  includeNotPresent, ⬇ ones too for apps that get the catalog)
+//!   getArtistInfo2?id=&count=&includeNotPresent=   biography, images, MusicBrainz id, similar artists (yours;
+//!                                                  with includeNotPresent, ⬇ ones too for apps that get the catalog)
+//!   getAlbumInfo2?id=                              notes, MusicBrainz id, images (getAlbumInfo also takes a song id)
 //!   getSimilarSongs2?id=&count=                    songs like this song / album / artist, from your library
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use serde_json::{Value, json};
 
 use super::{ApiError, Ctx, Reply, items, ok};
-use crate::catalog;
+use crate::{catalog, wiki};
+
+/// How long an app waits for a first lookup; a slower one finishes in the background and is there next time.
+const WAIT: Duration = Duration::from_secs(4);
+
+/// The first of a joined album artist ("A • B" → "A"), for looking it up.
+fn first_artist(name: &str) -> &str {
+    name.split(crate::library::ARTIST_JOINER).next().unwrap_or(name)
+}
 
 fn catalog_for(c: &Ctx) -> bool {
     c.st.cfg.catalog && !c.st.cfg.catalog_skip_clients.iter().any(|s| c.client.to_lowercase().contains(&s.to_lowercase()))
@@ -50,10 +60,13 @@ pub async fn artist_info(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
     let Some(a) = items::artists_where(c, "ar.id = ?", &[id], "").await?.into_iter().next() else {
         return ok(json!({ key: {} }));
     };
-    let (dz, mine, theirs) = related(c, &a.name).await;
+    let ((dz, mine, theirs), w) = tokio::join!(related(c, &a.name), wiki::artist(&c.st, &a.name, a.mbid.as_deref(), WAIT));
     let mut out = json!({});
-    if let Some(m) = a.mbid.as_deref().filter(|m| !m.is_empty()) {
+    if let Some(m) = a.mbid.as_deref().filter(|m| !m.is_empty()).or(w.as_ref().and_then(|w| w["mbid"].as_str())) {
         out["musicBrainzId"] = m.into();
+    }
+    if let Some(b) = w.as_ref().and_then(wiki::as_html) {
+        out["biography"] = b.into();
     }
     if let Some(d) = dz {
         for (k, f) in [("smallImageUrl", "picture_small"), ("mediumImageUrl", "picture_medium"), ("largeImageUrl", "picture_big")]
@@ -61,6 +74,13 @@ pub async fn artist_info(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
             if let Some(u) = d[f].as_str().filter(|u| !u.is_empty() && !u.contains("/artist//")) {
                 out[k] = u.into();
             }
+        }
+    }
+    if out.get("largeImageUrl").is_none()
+        && let Some(img) = w.as_ref().and_then(|w| w["image"].as_str())
+    {
+        for k in ["smallImageUrl", "mediumImageUrl", "largeImageUrl"] {
+            out[k] = img.into();
         }
     }
     let mut similar: Vec<Value> = mine.iter().filter(|x| x.id != a.id).take(count).map(items::artist_json).collect();
@@ -72,6 +92,34 @@ pub async fn artist_info(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
         out["similarArtist"] = similar.into();
     }
     ok(json!({ key: out }))
+}
+
+pub async fn album_info(c: &Ctx) -> Result<Reply, ApiError> {
+    let id = c.p.req("id")?.to_string();
+    let album_id = match items::kind_of(c, &id).await? {
+        Some("album") => id,
+        Some("track") => items::track(c, &id).await?.album_id.clone(),
+        _ => return Err(ApiError::not_found("Album")),
+    };
+    let Some(a) = items::albums_where(c, "al.id = ?", &[&album_id], "").await?.into_iter().next() else {
+        return Err(ApiError::not_found("Album"));
+    };
+    let w = wiki::album(&c.st, first_artist(&a.artist_name), &a.name, a.mbid.as_deref(), WAIT).await;
+    let mut out = json!({});
+    if let Some(n) = w.as_ref().and_then(wiki::as_html) {
+        out["notes"] = n.into();
+    }
+    if let Some(m) = a.mbid.as_deref().filter(|m| !m.is_empty()).or(w.as_ref().and_then(|w| w["mbid"].as_str())) {
+        out["musicBrainzId"] = m.into();
+    }
+    if let Some(w) = &w {
+        for (k, f) in [("smallImageUrl", "small"), ("mediumImageUrl", "medium"), ("largeImageUrl", "large")] {
+            if let Some(u) = w["images"][f].as_str() {
+                out[k] = u.into();
+            }
+        }
+    }
+    ok(json!({ "albumInfo": out }))
 }
 
 pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {

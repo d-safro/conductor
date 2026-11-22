@@ -91,6 +91,14 @@ pub struct Config {
     pub ticketmaster_url: String,
     pub musicbrainz_url: String,
     pub concerts: bool,
+    /// Artist biographies and album notes (MusicBrainz → Wikidata → Wikipedia, pictures from the Cover Art
+    /// Archive): looked up when an app first asks, then kept. `info_lang` is Wikipedia's language code.
+    pub info_online: bool,
+    pub info_lang: String,
+    pub wikidata_url: String,
+    /// "{lang}" is replaced with the language
+    pub wikipedia_url: String,
+    pub coverart_url: String,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -159,6 +167,11 @@ impl Default for Config {
             ticketmaster_url: "https://app.ticketmaster.com/discovery/v2".into(),
             musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
             concerts: true,
+            info_online: true,
+            info_lang: "en".into(),
+            wikidata_url: "https://www.wikidata.org".into(),
+            wikipedia_url: "https://{lang}.wikipedia.org".into(),
+            coverart_url: "https://coverartarchive.org".into(),
             slskd_fast_test: false,
         }
     }
@@ -258,6 +271,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_CONCERTS") {
             c.concerts = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_INFO_ONLINE") {
+            c.info_online = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_INFO_LANG") {
+            c.info_lang = v;
         }
         if let Ok(v) = std::env::var("MAESTRO_READ_ONLY") {
             c.read_only = v == "1" || v == "true";

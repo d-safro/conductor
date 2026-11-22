@@ -202,11 +202,9 @@ async fn tm_shows(st: &AppState, http: &reqwest::Client, key: &str, artist: &str
 }
 
 async fn mb_shows(st: &AppState, http: &reqwest::Client, artist: &str, today: &str) -> Result<Vec<Value>, String> {
-    let base = st.cfg.musicbrainz_url.trim_end_matches('/').to_string();
-    let pause = if base.starts_with("https://musicbrainz.org") { 1100 } else { 0 }; // one request a second
+    let _ = http;
     let query = format!("artist:\"{}\"", artist.replace('"', ""));
-    let j = get_json(http, &format!("{base}/artist"), &[("query", &query), ("limit", "5"), ("fmt", "json")]).await?;
-    tokio::time::sleep(Duration::from_millis(pause)).await;
+    let j = crate::wiki::mb_get(st, "artist", &[("query", &query), ("limit", "5")]).await?.unwrap_or_default();
     let mbid = j["artists"]
         .as_array()
         .into_iter()
@@ -215,9 +213,7 @@ async fn mb_shows(st: &AppState, http: &reqwest::Client, artist: &str, today: &s
         .and_then(|a| a["id"].as_str())
         .map(String::from);
     let Some(mbid) = mbid else { return Ok(vec![]) };
-    let j = get_json(http, &format!("{base}/event"), &[("query", &format!("arid:{mbid}")), ("limit", "100"), ("fmt", "json")])
-        .await?;
-    tokio::time::sleep(Duration::from_millis(pause)).await;
+    let j = crate::wiki::mb_get(st, "event", &[("query", &format!("arid:{mbid}")), ("limit", "100")]).await?.unwrap_or_default();
     Ok(parse_mb_events(&j, artist, today))
 }
 

@@ -299,7 +299,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "getSimilarSongs" => info::similar_songs(c, false).await,
         "getArtistInfo2" => info::artist_info(c, true).await,
         "getArtistInfo" => info::artist_info(c, false).await,
-        "getAlbumInfo2" | "getAlbumInfo" => ok(json!({ "albumInfo": {} })),
+        "getAlbumInfo2" | "getAlbumInfo" => info::album_info(c).await,
         "getScanStatus" => browse::scan_status(c).await,
         "startScan" => browse::start_scan(c).await,
         "stream" => media::stream(c, false).await,
