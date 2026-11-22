@@ -24,3 +24,6 @@ pub mod prelude;
 pub mod spotify;
 pub mod vpn;
 pub mod wiki;
+
+#[cfg(test)]
+mod robustness;

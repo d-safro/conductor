@@ -611,7 +611,7 @@ pub async fn folder(c: &Ctx) -> Result<Reply, ApiError> {
     let mut dirs: HashMap<String, (i64, String)> = HashMap::new();
     let mut songs = vec![];
     for s in rows {
-        let rest = &s.rel_path[pre.len()..];
+        let Some(rest) = s.rel_path.get(pre.len()..) else { continue };
         match rest.split_once('/') {
             Some((name, _)) => {
                 let e = dirs.entry(name.to_string()).or_insert((0, s.album_id.clone()));

@@ -305,7 +305,9 @@ pub fn parse_time(s: &str) -> Option<i64> {
             return Some(t.and_utc().timestamp());
         }
     }
-    chrono::NaiveDate::parse_from_str(&s[..s.len().min(10)], "%Y-%m-%d").ok().map(|d| d.and_hms_opt(12, 0, 0).unwrap().and_utc().timestamp())
+    // the first 10 characters (not bytes: a letter of several bytes there must not split)
+    let head = s.char_indices().nth(10).map(|(i, _)| &s[..i]).unwrap_or(s);
+    chrono::NaiveDate::parse_from_str(head, "%Y-%m-%d").ok().map(|d| d.and_hms_opt(12, 0, 0).unwrap().and_utc().timestamp())
 }
 
 /// The id in "spotify:track:ID" or "https://open.spotify.com/track/ID?si=…".
