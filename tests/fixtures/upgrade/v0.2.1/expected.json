@@ -1,0 +1,54 @@
+{
+ "album_one": "fd17617568bb24eccd128a7e10f38d42",
+ "bookmarks": [
+  [
+   "636133192477aa5a70d67ad8c4b11cbe",
+   2000
+  ]
+ ],
+ "made_by": "v0.2.1",
+ "playlists": {
+  "Hearted": {
+   "songCount": 1,
+   "songs": [
+    "0bc6998dd669e4588cb32dbefdcaf545"
+   ]
+  },
+  "Road trip": {
+   "songCount": 2,
+   "songs": [
+    "9917a635f855dae296bb62021918ac98",
+    "0bc6998dd669e4588cb32dbefdcaf545"
+   ]
+  }
+ },
+ "plays_one": 2,
+ "queue": {
+  "current": "9917a635f855dae296bb62021918ac98",
+  "position": 1234
+ },
+ "queue_songs": [
+  "0bc6998dd669e4588cb32dbefdcaf545",
+  "9917a635f855dae296bb62021918ac98",
+  "636133192477aa5a70d67ad8c4b11cbe"
+ ],
+ "radio": [
+  "Example FM"
+ ],
+ "rating_two": 4,
+ "songs": {
+  "One": "0bc6998dd669e4588cb32dbefdcaf545",
+  "Three": "636133192477aa5a70d67ad8c4b11cbe",
+  "Two": "9917a635f855dae296bb62021918ac98"
+ },
+ "starred_albums": [
+  "fd17617568bb24eccd128a7e10f38d42"
+ ],
+ "starred_songs": [
+  "0bc6998dd669e4588cb32dbefdcaf545"
+ ],
+ "users": [
+  "tester",
+  "second"
+ ]
+}
