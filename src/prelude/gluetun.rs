@@ -1,9 +1,11 @@
-//! Prelude's "set one up for me": slskd inside a VPN (gluetun), as a Docker Compose folder beside config.toml.
+//! Prelude's "set it up for me": the downloader (slskd) as one Docker container, optionally inside a VPN (gluetun),
+//! in a Docker Compose folder beside config.toml (`downloader/`; `downloads-vpn/` from earlier versions is kept).
 //!
-//!   compose.yml         gluetun + slskd (`network_mode: service:gluetun`: slskd only ever talks through the VPN)
-//!   vpn.env             the VPN's keys (mode 600)
-//!   gluetun/auth/config.toml   who may ask gluetun's control server what (Conductor, with its own key; mode 600)
+//!   compose.yml         slskd alone, or gluetun + slskd (`network_mode: service:gluetun`: then slskd only ever
+//!                       talks through the VPN)
 //!   slskd/slskd.yml     slskd's settings: Soulseek login, API key for Conductor, remote configuration (mode 600)
+//!   vpn.env             with a VPN: its keys (mode 600)
+//!   gluetun/auth/config.toml   with a VPN: who may ask gluetun's control server what (Conductor; mode 600)
 //!
 //! The VPN: a WireGuard .conf from any provider (gluetun's "custom" provider), or a provider gluetun knows and its
 //! WireGuard private key. With port forwarding (providers that offer it), Conductor keeps slskd's listen port on the
@@ -67,12 +69,15 @@ pub enum Vpn {
 #[derive(Debug, Clone)]
 pub struct Setup {
     pub dir: PathBuf,
-    pub vpn: Vpn,
+    /// None: slskd on its own, on this computer's connection
+    pub vpn: Option<Vpn>,
     pub soulseek_user: String,
     pub soulseek_password: String,
     /// where finished downloads go, on this computer
     pub downloads: PathBuf,
     pub web_port: u16,
+    /// Soulseek's listen port (others connect to it; forwarded from the router without a VPN)
+    pub listen_port: u16,
     pub control_port: u16,
     pub port_forwarding: bool,
     pub slskd_key: String,
@@ -94,6 +99,31 @@ fn private(path: &Path, text: &str) -> Result<()> {
 
 pub fn compose_yaml(s: &Setup) -> String {
     let (uid, gid) = ids();
+    if s.vpn.is_none() {
+        return format!(
+            "# Made by `conductor setup` (Prelude): Soulseek downloads for Conductor (slskd), on this computer's connection.
+# Its settings and keys are in slskd/slskd.yml (readable only by you). Start: docker compose up -d
+name: conductor-downloads
+services:
+  slskd:
+    image: slskd/slskd:latest
+    container_name: conductor-slskd
+    user: \"{uid}:{gid}\"
+    environment:
+      SLSKD_REMOTE_CONFIGURATION: \"true\"
+    ports:
+      - \"127.0.0.1:{web}:5030\"   # slskd's web page, and Conductor's way in
+      - \"{listen}:{listen}\"      # Soulseek: other people connect here
+    volumes:
+      - ./slskd:/app
+      - {downloads}
+    restart: unless-stopped
+",
+            web = s.web_port,
+            listen = s.listen_port,
+            downloads = q(&format!("{}:/app/downloads", s.downloads.display())),
+        );
+    }
     format!(
         "# Made by `conductor setup` (Prelude): Soulseek downloads (slskd) only ever go through a VPN (gluetun).
 # The secrets are in vpn.env and slskd/slskd.yml (readable only by you). Start: docker compose up -d
@@ -169,7 +199,7 @@ directories:
 soulseek:
   username: {user}
   password: {pass}
-  listen_port: 50300
+  listen_port: {listen}
 web:
   authentication:
     username: slskd
@@ -181,6 +211,7 @@ web:
         cidr: 0.0.0.0/0,::/0
 ",
         web = s.web_port,
+        listen = s.listen_port,
         user = q(&s.soulseek_user),
         pass = q(&s.soulseek_password),
         web_pass = q(&s.slskd_password),
@@ -206,8 +237,10 @@ pub fn write(s: &Setup) -> Result<()> {
     std::fs::create_dir_all(&s.dir)?;
     std::fs::create_dir_all(&s.downloads).with_context(|| format!("making {}", s.downloads.display()))?;
     std::fs::write(s.dir.join("compose.yml"), compose_yaml(s))?;
-    private(&s.dir.join("vpn.env"), &vpn_env(&s.vpn))?;
-    private(&s.dir.join("gluetun/auth/config.toml"), &control_auth(&s.control_key))?;
+    if let Some(vpn) = &s.vpn {
+        private(&s.dir.join("vpn.env"), &vpn_env(vpn))?;
+        private(&s.dir.join("gluetun/auth/config.toml"), &control_auth(&s.control_key))?;
+    }
     private(&s.dir.join("slskd/slskd.yml"), &slskd_yaml(s))?;
     Ok(())
 }

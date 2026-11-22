@@ -5,9 +5,10 @@
 //!   music      the music folders: there, readable, songs counted, an optional sentinel file
 //!   server     the data folder, the address and port
 //!   admin      the first admin (the password typed hidden)
-//!   downloads  Stagehand: slskd's address, API key and downloads folder, tested
-//!   vpn        downloads through a VPN: slskd already behind one / set one up (gluetun) / a proxy / none; the kill
-//!              switch
+//!   downloads  Stagehand (optional): set the downloader up as one Docker container (slskd), or use your own slskd
+//!              (its address, API key and downloads folder, tested), or none
+//!   vpn        downloads through a VPN: the container inside one (gluetun) / your slskd already behind one / a
+//!              proxy / none; the kill switch
 //!   services   Lidarr, ListenBrainz, Last.fm, AudioMuse, Pitch, Metronome, Ensemble's public address, AI (off)
 //!   import     Navidrome or music-lookup moving over; Transpose for an export (a preview, then a yes)
 //!   service    run it as a service (systemd, the Windows service, or Docker), then a first scan
@@ -36,7 +37,7 @@ use ui::Ui;
 pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", "services", "import", "service"];
 
 const VALUE_FLAGS: &[&str] = &[
-    "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "vpn", "vpn-check-url", "vpn-check-key",
+    "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "vpn", "vpn-check-url", "vpn-check-key",
     "wg-conf", "vpn-provider", "vpn-key", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
     "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
     "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service",
@@ -172,8 +173,16 @@ pub struct Wizard<'a> {
     pub ui: &'a mut dyn Ui,
     pub f: Flags,
     pub d: Draft,
-    /// downloads set up for the VPN step to make (slskd doesn't exist yet)
-    make_slskd: bool,
+    /// the downloader container to make: asked for in the downloads step, written in the VPN step (inside a VPN)
+    /// or at the end (on its own)
+    make: Option<Downloader>,
+}
+
+/// The answers for the downloader container.
+struct Downloader {
+    soulseek_user: String,
+    soulseek_password: String,
+    downloads: String,
 }
 
 pub const HELP: &str = "conductor setup [PART] [--yes] [settings]   (also: conductor prelude)
@@ -183,10 +192,12 @@ Parts: music, server, admin, downloads, vpn, services, import, service (default:
 
   --music PATH (again for more)  --sentinel NAME  --data DIR  --listen ADDR:PORT
   --admin NAME                   (password: CONDUCTOR_PASSWORD)
-  --slskd-url URL --slskd-key KEY --slskd-downloads DIR   or --no-downloads
+  --downloads docker --slsk-user NAME (password: CONDUCTOR_SLSK_PASSWORD) [--downloads-dir DIR] [--start]
+        (the downloader set up for you, one container)   or --slskd-url URL --slskd-key KEY --slskd-downloads DIR
+        (your own slskd)   or --no-downloads
   --vpn existing --vpn-check-url URL [--vpn-check-key KEY]
   --vpn wireguard --wg-conf PATH | --vpn provider --vpn-provider NAME (key: CONDUCTOR_VPN_KEY)
-        [--port-forwarding] --slsk-user NAME (password: CONDUCTOR_SLSK_PASSWORD) [--downloads-dir DIR] [--start]
+        [--port-forwarding]   (the downloader container inside that VPN; Linux)
   --vpn proxy --proxy URL [--proxy-metadata]
   --vpn none
   --require-vpn | --no-require-vpn   (pause downloads while the VPN is down)
@@ -223,7 +234,7 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
     };
     let fresh = !path.is_file();
     let d = Draft::load(&path)?;
-    let mut w = Wizard { ui, f, d, make_slskd: false };
+    let mut w = Wizard { ui, f, d, make: None };
     w.ui.say("Prelude: setting up Conductor.");
     if !fresh {
         w.ui.say(&format!("Your settings: {} (the current values are the defaults; Enter keeps them).", w.d.path.display()));
@@ -259,6 +270,16 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
             _ => {}
         }
         w.d.save()?;
+        // the downloader on its own: the VPN step didn't put it inside one (or didn't run)
+        if *s == "vpn" || (*s == "downloads" && !only.contains(&"vpn")) {
+            if let Some(a) = w.make.take() {
+                w.make_downloader(None, a).await?;
+                w.d.set("vpn", "none");
+                w.d.set("downloads_require_vpn", false);
+                w.d.set("vpn_port_sync", false);
+                w.d.save()?;
+            }
+        }
     }
     w.summary();
     Ok(w.d.path.clone())
@@ -398,20 +419,20 @@ impl Wizard<'_> {
 
     // ── 4. downloads (Stagehand) ──
     async fn downloads(&mut self) -> Result<()> {
-        self.ui.say("\n4. Stagehand: songs you don't have, downloaded from Soulseek (through slskd)");
+        self.ui.say("\n4. Stagehand: songs you don't have, downloaded from Soulseek (optional: everything else works without it)");
         let have = self.d.str("slskd_url").is_some();
         let def = if self.f.has("no-downloads") {
             2
-        } else if self.f.get("vpn") == Some("wireguard") || self.f.get("vpn") == Some("provider") {
-            1
-        } else if have || self.f.get("slskd-url").is_some() {
+        } else if self.f.get("downloads") == Some("docker") || self.f.get("vpn") == Some("wireguard") || self.f.get("vpn") == Some("provider") {
             0
+        } else if have || self.f.get("slskd-url").is_some() {
+            1
         } else {
             2
         };
         let c = self.ui.choose(
             "Download songs you don't have?",
-            &["Yes, with my slskd", "Yes; set up slskd for me in the VPN step (Linux with Docker)", "No"],
+            &["Yes: set the downloader up for me (one Docker container)", "Yes, with my own slskd", "No"],
             def,
         );
         if c == 2 {
@@ -420,8 +441,23 @@ impl Wizard<'_> {
             }
             return Ok(());
         }
-        if c == 1 {
-            self.make_slskd = true;
+        if c == 0 {
+            if !gluetun::has_docker() && !self.ui.auto() {
+                self.ui.say("  ✗ Docker (with compose) isn't on this computer. Install it (docs.docker.com/get-docker), then run");
+                self.ui.say("    conductor setup downloads   Downloads stay off until then.");
+                return Ok(());
+            }
+            self.ui.say("  slskd, a Soulseek client, runs in its own container; Conductor asks it for songs and files what arrives.");
+            let user = self.ask_or("slsk-user", "Your Soulseek user name (a new account is made if the name is free)", None, "");
+            let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", None);
+            if user.is_empty() || pass.is_empty() {
+                self.ui.say("  ✗ a Soulseek user name and password are needed; downloads stay off");
+                return Ok(());
+            }
+            let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
+            let dl = self.ask_or("downloads-dir", "Where downloads go before they're filed", self.d.str("slskd_downloads"), &data.join("downloads").to_string_lossy());
+            self.make = Some(Downloader { soulseek_user: user, soulseek_password: pass, downloads: dl });
+            self.ui.say("  (the next step can put it inside a VPN)");
             return Ok(());
         }
         let url = self.ask_or("slskd-url", "slskd's address", self.d.str("slskd_url"), "http://127.0.0.1:5030");
@@ -460,19 +496,36 @@ impl Wizard<'_> {
     async fn vpn(&mut self) -> Result<()> {
         self.ui.say("\n5. Send downloads through a VPN?");
         self.ui.say("   On Soulseek, others see the address you download from. A VPN hides it.");
+        if self.make.is_some() {
+            let def = match self.f.get("vpn") {
+                Some("wireguard" | "provider" | "gluetun") => 0,
+                _ => 1,
+            };
+            let c = self.ui.choose("The downloader:", &["Inside a VPN (WireGuard; Linux with Docker)", "No VPN (this computer's own connection)"], def);
+            if c == 1 {
+                return Ok(()); // made on its own after this step
+            }
+            self.vpn_gluetun().await?;
+            if self.make.is_some() {
+                return Ok(()); // the VPN couldn't be set up: on its own, then
+            }
+            let def = if self.f.has("no-require-vpn") { false } else { self.f.has("require-vpn") || self.d.bool("downloads_require_vpn").unwrap_or(true) };
+            let kill = self.ui.yes("Pause downloads whenever the VPN is down (never use the open connection)?", def);
+            self.d.set("downloads_require_vpn", kill);
+            return Ok(());
+        }
         let cur = self.d.str("vpn").unwrap_or_else(|| "none".into());
         let def = match self.f.get("vpn").unwrap_or(&cur) {
             "existing" => 0,
             "wireguard" | "provider" | "gluetun" => 1,
             "proxy" => 2,
-            _ if self.make_slskd => 1,
             _ => 3,
         };
         let c = self.ui.choose(
             "How?",
             &[
                 "My slskd already runs behind a VPN (check it)",
-                "Set one up for me: slskd inside a VPN, with Docker (Linux)",
+                "Set it up for me: the downloader inside a VPN, with Docker (Linux)",
                 "Use a proxy (a VPN app's SOCKS5/HTTP proxy; good on Windows)",
                 "No VPN",
             ],
@@ -569,19 +622,39 @@ impl Wizard<'_> {
         };
         let pf_default = self.f.has("port-forwarding") || matches!(&vpn, gluetun::Vpn::Provider { name, .. } if gluetun::PORT_FORWARDING.contains(&name.as_str()));
         let pf = self.ui.yes("Use the VPN's port forwarding (Proton VPN, PIA: more downloads work)?", pf_default);
-        let user = self.ask_or("slsk-user", "Your Soulseek user name (a new one is made if it's free)", None, "");
-        let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", None);
-        let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
-        let dl = self.ask_or("downloads-dir", "Where downloads go", None, &data.join("downloads").to_string_lossy());
+        let a = match self.make.take() {
+            Some(a) => a,
+            None => {
+                let user = self.ask_or("slsk-user", "Your Soulseek user name (a new one is made if it's free)", None, "");
+                let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", None);
+                let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
+                let dl = self.ask_or("downloads-dir", "Where downloads go", None, &data.join("downloads").to_string_lossy());
+                Downloader { soulseek_user: user, soulseek_password: pass, downloads: dl }
+            }
+        };
+        self.make_downloader(Some((vpn, pf)), a).await
+    }
+
+    /// The downloader folder: written, checked, its address and key saved, and started if you say so.
+    async fn make_downloader(&mut self, vpn: Option<(gluetun::Vpn, bool)>, a: Downloader) -> Result<()> {
+        let base = self.d.path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let old = base.join("downloads-vpn"); // earlier versions' name for it
+        let dir = if old.join("compose.yml").is_file() { old } else { base.join("downloader") };
         let web_port = free_port(5030);
         let control_port = free_port(8000);
+        let with_vpn = vpn.is_some();
+        let (vpn, pf) = match vpn {
+            Some((v, pf)) => (Some(v), pf),
+            None => (None, false),
+        };
         let setup = gluetun::Setup {
-            dir: self.d.path.parent().unwrap_or(Path::new(".")).join("downloads-vpn"),
+            dir,
             vpn,
-            soulseek_user: user,
-            soulseek_password: pass,
-            downloads: PathBuf::from(&dl),
+            soulseek_user: a.soulseek_user,
+            soulseek_password: a.soulseek_password,
+            downloads: PathBuf::from(&a.downloads),
             web_port,
+            listen_port: if with_vpn { 50300 } else { free_port(50300) },
             control_port,
             port_forwarding: pf,
             slskd_key: new_key(),
@@ -589,28 +662,56 @@ impl Wizard<'_> {
             slskd_password: new_key()[..20].to_string(),
         };
         gluetun::write(&setup)?;
-        self.ui.say(&format!("  ✓ written: {} (compose.yml; the keys in vpn.env and slskd/slskd.yml, readable only by you)", setup.dir.display()));
+        if with_vpn {
+            self.ui.say(&format!("  ✓ written: {} (compose.yml; the keys in vpn.env and slskd/slskd.yml, readable only by you)", setup.dir.display()));
+        } else {
+            self.ui.say(&format!("  ✓ written: {} (compose.yml; the keys in slskd/slskd.yml, readable only by you)", setup.dir.display()));
+            self.ui.say(&format!("    For more downloads, forward port {} on your router to this computer.", setup.listen_port));
+        }
         if gluetun::has_docker() {
             match gluetun::validate(&setup.dir) {
                 Ok(()) => self.ui.say("  ✓ docker compose accepts it"),
                 Err(e) => self.ui.say(&format!("  ✗ {e:#}")),
             }
         }
-        self.d.set("vpn", "gluetun");
         self.d.set("slskd_url", format!("http://127.0.0.1:{web_port}"));
         self.d.set("slskd_api_key", setup.slskd_key.clone());
-        self.d.set("slskd_downloads", dl);
-        self.d.set("vpn_check_url", format!("http://127.0.0.1:{control_port}/v1/publicip/ip"));
-        self.d.set("vpn_check_key", setup.control_key.clone());
-        self.d.set("vpn_port_sync", pf);
+        self.d.set("slskd_downloads", a.downloads.clone());
+        if with_vpn {
+            self.d.set("vpn", "gluetun");
+            self.d.set("vpn_check_url", format!("http://127.0.0.1:{control_port}/v1/publicip/ip"));
+            self.d.set("vpn_check_key", setup.control_key.clone());
+            self.d.set("vpn_port_sync", pf);
+        }
         if self.ui.yes("Start it now (docker compose up -d)?", self.f.has("start")) {
             gluetun::start(&setup.dir)?;
-            self.ui.say("  waiting for the tunnel…");
-            if gluetun::wait_healthy(120) {
-                self.ui.say(if gluetun::dns_works(&setup.dir) { "  ✓ the tunnel is up and names resolve through it" } else { "  ✗ the tunnel is up but names don't resolve" });
-                self.report_check().await;
+            if with_vpn {
+                self.ui.say("  waiting for the tunnel…");
+                if gluetun::wait_healthy(120) {
+                    self.ui.say(if gluetun::dns_works(&setup.dir) { "  ✓ the tunnel is up and names resolve through it" } else { "  ✗ the tunnel is up but names don't resolve" });
+                    self.report_check().await;
+                } else {
+                    self.ui.say("  ✗ the tunnel didn't come up in 2 minutes: docker logs conductor-gluetun says why");
+                }
             } else {
-                self.ui.say("  ✗ the tunnel didn't come up in 2 minutes: docker logs conductor-gluetun says why");
+                self.ui.say("  waiting for slskd…");
+                let url = format!("http://127.0.0.1:{web_port}");
+                let mut last = String::new();
+                let mut up = false;
+                for _ in 0..30 {
+                    match slskd_check(&url, &setup.slskd_key).await {
+                        Ok(note) => {
+                            self.ui.say(&format!("  ✓ slskd answers: {note}"));
+                            up = true;
+                            break;
+                        }
+                        Err(e) => last = format!("{e:#}"),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                if !up {
+                    self.ui.say(&format!("  ✗ slskd didn't answer in a minute ({last}): docker logs conductor-slskd says why"));
+                }
             }
         } else {
             self.ui.say(&format!("  Start it later: cd {} && docker compose up -d", setup.dir.display()));

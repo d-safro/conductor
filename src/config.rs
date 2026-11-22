@@ -33,7 +33,8 @@ pub struct Config {
     pub podcast_clean_days: i64,
     /// Let podcast feeds, episodes and pictures come from this computer or your own network (off: internet only).
     pub podcast_local: bool,
-    /// Songs you don't have (⬇) in searches, albums and artists (from Deezer).
+    /// Songs you don't have (⬇) in searches, albums and artists (from Deezer). When it isn't set, it's on only if
+    /// something can get those songs (slskd or Lidarr): without downloads, nothing shows that can't be played.
     pub catalog: bool,
     /// Apps that never get ⬇ items (part of the client name, any case).
     pub catalog_skip_clients: Vec<String>,
@@ -369,6 +370,7 @@ impl Config {
             move_old_data_dir();
             Some(default_config_path()).filter(|p| p.is_file())
         });
+        let mut catalog_set = false;
         let mut c: Config = match &path {
             Some(p) => {
                 let mut t: toml::Table = toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
@@ -383,6 +385,7 @@ impl Config {
                         }
                     }
                 }
+                catalog_set = t.contains_key("catalog");
                 let mut c: Config = toml::Value::Table(t).try_into().with_context(|| format!("parsing {}", p.display()))?;
                 c.config_path = Some(p.clone());
                 c
@@ -426,6 +429,7 @@ impl Config {
             c.podcast_local = v == "1" || v == "true";
         }
         if let Ok(v) = var("CATALOG") {
+            catalog_set = true;
             c.catalog = v != "0" && v != "false";
         }
         if let Ok(v) = var("SLSKD_URL") {
@@ -527,6 +531,9 @@ impl Config {
                 "settings named {OLD}_* still work but are now CONDUCTOR_*: rename {}",
                 old.iter().map(|n| format!("{OLD}_{n}")).collect::<Vec<_>>().join(", ")
             );
+        }
+        if !catalog_set && c.slskd_url.is_none() && c.lidarr_url.is_none() {
+            c.catalog = false;
         }
         Ok(c)
     }

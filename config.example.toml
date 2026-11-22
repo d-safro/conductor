@@ -23,8 +23,9 @@ podcast_clean_days = 7
 # feeds on this computer or your own network (off: podcasts come only from the internet)
 # podcast_local = false
 
+# Downloads are optional: everything else works without them. `conductor setup downloads` sets one container up.
 # Songs you don't have (⬇, from Deezer) and downloading them through slskd. Filing needs write access to the music folder.
-catalog = true
+# catalog = true   # default: on when slskd or Lidarr is set, off otherwise
 catalog_skip_clients = ["symfonium"]
 # slskd_url = "http://127.0.0.1:5030"
 # slskd_api_key = "…"                       # or CONDUCTOR_SLSKD_API_KEY

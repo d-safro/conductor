@@ -105,7 +105,7 @@ async fn every_step_in_a_terminal() {
             p.music.to_str().unwrap(), "", "", // music folder, no sentinel, no more folders
             data.to_str().unwrap(), "127.0.0.1:45931", // data folder, address
             "me", "secret12", "secret12",      // the admin
-            "1", &base, "the-slskd-key", p.root.join("dl").to_str().unwrap(), // my slskd
+            "2", &base, "the-slskd-key", p.root.join("dl").to_str().unwrap(), // my own slskd
             "1", &format!("{base}/check"), "", "y", // already behind a VPN; the kill switch
             "n", "n", "n", "n", "n", "n", "n", "n", // no other services, no AI
             "", "", "",                        // nothing to import
@@ -166,7 +166,7 @@ async fn each_vpn_choice_again_later() {
     .await;
     assert!(out.contains("✓ written"), "{out}");
     assert!(!out.contains("TestOnlyPrivateKey") && !out.contains("soulseek-pw"), "{out}");
-    let dir = p.root.join("data/downloads-vpn");
+    let dir = p.root.join("data/downloader");
     assert!(read(&dir.join("vpn.env")).contains("WIREGUARD_PRIVATE_KEY=TestOnlyPrivateKeyNotReal"));
     assert!(private(&dir.join("vpn.env")) && private(&dir.join("slskd/slskd.yml")) && private(&dir.join("gluetun/auth/config.toml")));
     let cfg = read(&p.config);
@@ -205,7 +205,7 @@ async fn yes_mode_from_flags() {
     assert_eq!((c.vpn.as_str(), c.downloads_require_vpn, c.libraries.len()), (made, true, 1));
     if !cfg!(windows) {
         assert!(c.slskd_url.as_deref().unwrap().starts_with("http://127.0.0.1:"));
-        assert!(read(&p.root.join("data/downloads-vpn/compose.yml")).contains("network_mode: service:gluetun"));
+        assert!(read(&p.root.join("data/downloader/compose.yml")).contains("network_mode: service:gluetun"));
     }
     // and a proxy, the same way
     let px = proxy().await;
@@ -217,4 +217,45 @@ async fn yes_mode_from_flags() {
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
     assert_eq!((c.vpn.as_str(), c.proxy.as_deref()), ("proxy", Some(px.as_str())));
     assert!(String::from_utf8(out).unwrap().contains("✓ the VPN works"));
+}
+
+#[tokio::test]
+async fn downloader_container_on_its_own() {
+    let base = services().await;
+    let p = place(&base);
+    let dl = p.root.join("dl");
+    let data = p.root.join("data");
+    let mut out = Vec::new();
+    let args = [
+        "--yes", "--music", p.music.to_str().unwrap(), "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45933", "--downloads", "docker",
+        "--slsk-user", "someone", "--slsk-pass", "pw-alone", "--downloads-dir", dl.to_str().unwrap(),
+    ];
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(p.config.clone()), &args, &mut ui).await.unwrap();
+    }
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("✓ written") && !out.contains("pw-alone"), "{out}");
+    let dir = data.join("downloader");
+    let compose = read(&dir.join("compose.yml"));
+    assert!(compose.contains("conductor-slskd") && !compose.contains("gluetun"), "{compose}");
+    assert!(!dir.join("vpn.env").exists());
+    assert!(private(&dir.join("slskd/slskd.yml")));
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.vpn.as_str(), c.downloads_require_vpn), ("none", false));
+    assert!(c.slskd_url.as_deref().unwrap().starts_with("http://127.0.0.1:"));
+    assert!(read(&dir.join("slskd/slskd.yml")).contains(c.slskd_api_key.as_deref().unwrap()), "slskd knows the key");
+    assert!(c.catalog, "with a downloader, songs you don't have show");
+    if prelude::gluetun::has_docker() && !cfg!(windows) {
+        prelude::gluetun::validate(&dir).expect("docker compose accepts the file");
+    }
+
+    // and without downloads, nothing that can't be played shows
+    let mut out = Vec::new();
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(p.config.clone()), &["--yes", "downloads", "--no-downloads"], &mut ui).await.unwrap();
+    }
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert!(c.slskd_url.is_none() && !c.catalog);
 }
