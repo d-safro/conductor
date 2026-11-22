@@ -47,6 +47,8 @@ What changed in each release, newest first. The full notes for each are on the
   database on a server already in use; it now asks before replacing, and with `--yes` leaves things as they are.
 - Choosing Tailscale Funnel in Prelude's domain step left Caddy or the Cloudflare Tunnel set up before in place,
   still opening Conductor on its old name; they're now offered to be taken out, as switching between those two does.
+- A downloaded song filed over an hour before was given up on ("not found", the hearts and playlists it was for
+  never applied) while a long scan of the library was running, though its file was there.
 
 ## 0.2.1 (2026-11-22)
 - Moving from Navidrome keeps your password.

@@ -577,7 +577,9 @@ async fn adopt(st: &AppState) -> Result<()> {
             give_up(st, &key, "its file is gone").await?;
         }
     }
-    if waiting.is_empty() {
+    // a scan running now (a full one can take hours) would make this one return at once, seeing nothing: the songs
+    // would look unseen and be given up on while their files are there. Next round, then
+    if waiting.is_empty() || st.scan.scanning.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
     library::scan(&st.db, &st.libs, &st.scan, false).await?;
