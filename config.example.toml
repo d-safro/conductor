@@ -58,3 +58,12 @@ path = "/mnt/media/data/media/music"
 # sentinel = ".library-id"
 # Files read at once while scanning: 1-2 for a spinning USB drive, 8 for an SSD.
 scan_threads = 2
+
+# Lyrics translation by a local Ollama (off unless set)
+# ollama_url = "http://127.0.0.1:11434"
+# translate_model = "gemma4:e2b-it-qat"
+# "What's playing?" against your own library (the song-id service), and Automix (the mix analyzer's folder)
+# songid_url = "http://127.0.0.1:4540"
+# mixinfo_dir = "/srv/mixinfo"
+# Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
+# concerts = true

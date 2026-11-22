@@ -8,7 +8,8 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 ## What works now
 
 - **Library**: scans music folders (FLAC, MP3, Opus, Ogg, M4A/AAC, WAV, AIFF, APE, WavPack, …), reads tags
-  (title, artists, album artist, track/disc, year, genre, MusicBrainz ids), and gives each song, album and artist an
+  (title, artists, album artist, track/disc, year, genres — every genre tag, split at `;` `/` `,` as Navidrome
+  does — MusicBrainz ids), and gives each song, album and artist an
   id that stays the same across scans. One album per album artist + album name. Unchanged files are skipped, so a
   rescan takes milliseconds.
 - **Drive guard**: a music folder that's gone, empty, or missing its sentinel file counts as *not connected*.
@@ -19,7 +20,9 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   `getOpenSubsonicExtensions`, `getMusicFolders`, `getArtists`, `getIndexes`, `getArtist`, `getAlbum`, `getSong`,
   `getMusicDirectory`, `getAlbumList(2)` (all list types), `getRandomSongs`, `getSongsByGenre`, `getGenres`,
   `search2/3`, `getStarred(2)`, `star`, `unstar`, `setRating`, `scrobble`, `reportPlayback`, `getNowPlaying`,
-  `getTopSongs`, `getSimilarSongs(2)` (local only for now), `getArtistInfo(2)`/`getAlbumInfo(2)` (empty for now),
+  `getTopSongs`, `getSimilarSongs(2)` (AudioMuse's sound-alikes, then songs by the artist and Deezer's related
+  artists that you have, then the genre), `getArtistInfo(2)` (pictures and similar artists from Deezer),
+  `getAlbumInfo(2)` (empty for now),
   playlists (all), play queue, `getUser`, internet radio (all), `getScanStatus`, `startScan`, `stream`
   (direct with HTTP Range, or transcoded to mp3/opus/ogg/aac with `maxBitRate`, `format`, `timeOffset`),
   `download`, `getCoverArt` (folder images, then embedded; resized and cached), `getLyrics`, `getLyricsBySongId`
@@ -36,7 +39,23 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
 - **Encore's own calls** (advertised as `encore.*` OpenSubsonic extensions, same answers as music-lookup gave):
   devices and remote control (`deviceHello/State/List/Command/Poll/Bye`, long-polls), sync between devices
   (`syncGet/syncSet`, newest wins, kept in the database), signing in from your phone (`pairStart/Poll/Approve`),
-  listening stats (`getListeningStats`: week / month / year / all, local time) and real folders (`getFolder`).
+  listening stats (`getListeningStats`: week / month / year / all, local time), the year / month in review
+  (`getListeningReview`: top fives, genres, first song, longest streak, peak hour, discoveries) and real folders
+  (`getFolder`).
+- **Collaborative playlists**: `playlistShareStart/End`, `playlistShares`; friends open the link (on the Jam
+  listener, `/jam/pl/<token>`), search your library and add songs to the real playlist; they can take out only
+  their own. Links last 30 days.
+- **Your mixes** (`getMixes`, `setMix`, `refreshMix`; per user, as real playlists): Discover Weekly (Mondays: 30
+  songs you don't have, fetched on trial for a week), Release Radar (Fridays: new releases from followed and top
+  artists), Daily Mix 1–6 (your library around your top artists, ~30% new to you), Daylist (what you play at this
+  time of day). Discover and Radar need the catalog (Deezer + slskd).
+- **Concerts near you** (`getConcerts`, `refreshConcerts`): weekly, upcoming shows of the artists you play and follow
+  near the town set in Encore; Ticketmaster with the key set there, else MusicBrainz events (`concerts`).
+- **Lyrics translation** (`translateLyrics`, optional): translated or romanized line by line by a local **Ollama**
+  (`ollama_url`, `translate_model`); kept once done.
+- **Song ID** (`identifySong`, optional): a short recording is matched against your own library by the song-id
+  service (`songid_url`). **Automix** (`getMixInfo`, optional): intro / outro / tempo from the mix analyzer's
+  `info.jsonl` (`mixinfo_dir`); songs not measured yet are put first in its `wanted.txt`.
 - **Jam**: `jamStart/State/Poll/End` for the app; the guest page on its own listener (`jam_listen`, default
   127.0.0.1:4535: nothing else is served there), with rate limits and covers only from the queue or guests' searches.
   Set `jam_public_url` to the address guests open (e.g. through Tailscale Funnel).
@@ -76,7 +95,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
-Coming next: artist and album info, upgrades to the same-album copy. See `docs/api/` for the extension list.
+Coming next: album info, upgrades to the same-album copy. See `docs/api/` for the extension list.
 
 ## Run it
 
