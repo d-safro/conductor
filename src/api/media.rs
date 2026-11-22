@@ -2,7 +2,6 @@
 
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
 };
 
 use axum::{
@@ -11,7 +10,6 @@ use axum::{
 };
 use lofty::prelude::*;
 use serde_json::{Value, json};
-use tokio_util::io::ReaderStream;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
@@ -34,12 +32,7 @@ fn file_of(c: &Ctx, t: &items::TrackRow) -> Result<PathBuf, ApiError> {
     }
 }
 
-struct Transcode {
-    codec: &'static str,
-    container: &'static str,
-    content_type: &'static str,
-    suffix: &'static str,
-}
+use crate::transcode::{Converted, Target as Transcode};
 
 fn target(format: &str) -> Option<Transcode> {
     Some(match format {
@@ -122,41 +115,44 @@ pub fn attachment(name: &str) -> String {
 }
 
 async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, offset: i64) -> Result<Reply, ApiError> {
-    let mut cmd = tokio::process::Command::new(c.st.cfg.ffmpeg());
-    cmd.args(["-v", "error", "-nostdin"]);
-    if offset > 0 {
-        cmd.args(["-ss", &offset.to_string()]);
-    }
-    cmd.arg("-i").arg(path);
-    cmd.args(["-map", "0:a:0", "-vn", "-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container, "pipe:1"]);
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-    let mut child = cmd.spawn().map_err(|e| ApiError::from(anyhow::anyhow!("ffmpeg can't start ({e}); is it installed?")))?;
-    let mut stdout = child.stdout.take().ok_or_else(|| ApiError::new(0, "ffmpeg gave no output"))?;
-    // the first bytes before answering: when ffmpeg can't read the file (damaged, not audio, an offset past the
-    // end) the app gets an error, not an empty song that "plays" as silence and counts as played
-    let mut first = vec![0u8; 64 * 1024];
-    let n = {
-        use tokio::io::AsyncReadExt;
-        stdout.read(&mut first).await.unwrap_or(0)
+    let conv = crate::transcode::convert(&c.st.cfg, &c.st.transcode_slots, path, x, kbps, offset).await.map_err(|e| {
+        let m = e.to_string();
+        let http = if m.contains("busy") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::INTERNAL_SERVER_ERROR };
+        ApiError { http, ..ApiError::new(0, m) }
+    })?;
+    let mark = (header::HeaderName::from_static("x-transcoded"), format!("{}@{kbps}k", x.suffix));
+    let body = match conv {
+        Converted::Cached(file, before) => {
+            // from the cache: a plain file, so ranges (seeking) work
+            let mut req = Request::builder().uri("/");
+            for h in [header::RANGE, header::IF_RANGE] {
+                if let Some(v) = c.headers.get(&h) {
+                    req = req.header(h, v);
+                }
+            }
+            let req = req.body(Body::empty()).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+            let resp = match ServeFile::new(&file).oneshot(req).await {
+                Ok(r) => r,
+                Err(never) => match never {},
+            };
+            let (mut parts, body) = resp.into_parts();
+            parts.headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(x.content_type));
+            if let Ok(v) = mark.1.parse() {
+                parts.headers.insert(mark.0.clone(), v);
+            }
+            parts.headers.insert(header::HeaderName::from_static("x-transcode-cache"), header::HeaderValue::from_static(if before { "hit" } else { "miss" }));
+            return Ok(Reply::Raw(axum::response::Response::from_parts(parts, Body::new(body))));
+        }
+        Converted::Growing(f, state) => Body::from_stream(crate::transcode::follow(f, state)),
+        Converted::Piped(out, first) => {
+            let rest = tokio_util::io::ReaderStream::with_capacity(out, 64 * 1024);
+            Body::from_stream(futures_util::StreamExt::chain(
+                futures_util::stream::once(async move { Ok(axum::body::Bytes::from(first)) }),
+                rest,
+            ))
+        }
     };
-    if n == 0 {
-        let _ = child.wait().await;
-        return Err(ApiError { http: StatusCode::INTERNAL_SERVER_ERROR, ..ApiError::new(0, "This song can't be transcoded (ffmpeg couldn't read it)") });
-    }
-    first.truncate(n);
-    tokio::spawn(async move {
-        let _ = child.wait().await; // ends when the app stops listening (ffmpeg gets a broken pipe)
-    });
-    let rest = ReaderStream::with_capacity(stdout, 64 * 1024);
-    let body = futures_util::StreamExt::chain(futures_util::stream::once(async move { Ok(axum::body::Bytes::from(first)) }), rest);
-    Ok(raw(
-        StatusCode::OK,
-        &[
-            (header::CONTENT_TYPE, x.content_type.to_string()),
-            (header::HeaderName::from_static("x-transcoded"), format!("{}@{kbps}k", x.suffix)),
-        ],
-        Body::from_stream(body),
-    ))
+    Ok(raw(StatusCode::OK, &[(header::CONTENT_TYPE, x.content_type.to_string()), mark, (header::HeaderName::from_static("x-transcode-cache"), "miss".into())], body))
 }
 
 // ── cover art ──

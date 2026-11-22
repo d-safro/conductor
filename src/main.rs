@@ -237,6 +237,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     tokio::spawn(conductor::vpn::worker(state.clone()));
     tokio::spawn(conductor::listenbrainz::worker(state.clone()));
     tokio::spawn(conductor::scrobble::worker(state.clone()));
+    conductor::transcode::clean_parts(&state.cfg);
     tokio::spawn(conductor::spotify::worker(state.clone()));
     tokio::spawn(conductor::concerts::worker(state.clone()));
     tokio::spawn(conductor::mixes::worker(state.clone()));

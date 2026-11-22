@@ -289,6 +289,7 @@ dependencies = [
  "futures-util",
  "hex",
  "image",
+ "libc",
  "libsqlite3-sys",
  "lofty",
  "md5",

@@ -24,6 +24,10 @@ pub struct Config {
     pub scan_interval_min: u64,
     /// ffmpeg for transcoding; found on PATH when not set.
     pub ffmpeg: Option<PathBuf>,
+    /// how many conversions may work at the same time (0: half the cores, at least 2)
+    pub transcode_slots: usize,
+    /// the most the conversions kept in the cache may take, in MB
+    pub transcode_cache_mb: u64,
     /// Address of the Jam guest page (the only thing to put on the internet). Empty string: no Jam listener.
     pub jam_listen: String,
     /// The guest page's public address (e.g. https://music.example.com:8443). Without it, Jam can't start.
@@ -169,6 +173,8 @@ impl Default for Config {
             libraries: vec![],
             scan_interval_min: 15,
             ffmpeg: None,
+            transcode_slots: 0,
+            transcode_cache_mb: 1000,
             jam_listen: "127.0.0.1:4535".into(),
             jam_public_url: None,
             podcast_dir: None,
@@ -638,6 +644,14 @@ impl Config {
             c.catalog = false;
         }
         Ok(c)
+    }
+
+    /// How many conversions may work at once: the setting, or half the cores (at least 2).
+    pub fn transcode_slots(&self) -> usize {
+        if self.transcode_slots > 0 {
+            return self.transcode_slots;
+        }
+        (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2) / 2).max(2)
     }
 
     pub fn ffmpeg(&self) -> PathBuf {

@@ -72,12 +72,15 @@ pub struct AppState {
     pub lastfm_pending: crate::scrobble::Pending,
     /// which artists go with which (built from the library and plays; see `crate::similar`)
     pub similar: crate::similar::Cache,
+    /// conversions working right now (see media::transcoded)
+    pub transcode_slots: crate::transcode::Slots,
 }
 
 impl AppState {
     pub fn new(db: Db, secrets: Secrets, cfg: Config, libs: Vec<(i64, LibraryConfig)>) -> Self {
         let catalog = crate::catalog::Catalog::new(&cfg.deezer_url, crate::net::downloads_proxy(&cfg).as_deref());
         let cfg_vpn = cfg.vpn.clone();
+        let transcode_slots = crate::transcode::Slots::new(cfg.transcode_slots());
         Self {
             catalog,
             acquire_wake: Default::default(),
@@ -96,6 +99,7 @@ impl AppState {
             login_fails: Default::default(),
             lastfm_pending: Default::default(),
             similar: Default::default(),
+            transcode_slots,
         }
     }
 }

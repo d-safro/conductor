@@ -4,6 +4,17 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased (0.6.0)
+
+### New
+- **Conversions are kept** (`<data>/cache/transcode`, `transcode_cache_mb`, 1000 MB): a song converted for an app
+  (another format, a lower bitrate) is written to the cache while the app is already sent it, so ffmpeg is done in a
+  second or two however slowly the app listens; the same song again comes from the cache, with seeking.
+- **ffmpeg can't swamp the server**: `transcode_slots` (half the cores) run at once as a rule; when they're busy a
+  song waits half a second, then starts anyway, up to four times as many; ffmpeg runs at a lower priority than
+  everything else. Measured: 64 apps converting at once used every core and 64 ffmpegs (~3 GB) before; now at most
+  the limit, the other services and the API stay quick, and nobody waits seconds while it's light.
+
 ## 0.5.1 (2026-11-22)
 
 ### Fixed

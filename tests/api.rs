@@ -5006,3 +5006,56 @@ async fn every_call_has_a_recorded_shape() {
     let missing: Vec<&String> = calls.iter().filter(|c| !files.contains(&c.as_str()) && !dir.join(format!("{c}.json")).is_file()).collect();
     assert!(missing.is_empty(), "calls without a recorded shape (make them in a test, then CONDUCTOR_BLESS=1): {missing:?}");
 }
+
+#[tokio::test]
+async fn conversions_are_cached_and_take_turns() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // one ffmpeg at a time: four conversions asked for together all come, in turn
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.transcode_slots = 1;
+    })
+    .await;
+    let ids: Vec<String> = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["suffix"] == "flac") // (the MP3 is small enough to be sent as it is)
+        .map(|x| x["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    let get = |id: String, kbps: &'static str| {
+        let u = s.url("stream", &[("id", &id), ("format", "mp3"), ("maxBitRate", kbps)]);
+        let http = s.http.clone();
+        async move {
+            let r = http.get(u).send().await.unwrap();
+            let cache = r.headers().get("x-transcode-cache").map(|v| v.to_str().unwrap().to_string());
+            (r.status().as_u16(), r.headers()["content-type"].to_str().unwrap().to_string(), cache, r.bytes().await.unwrap().len())
+        }
+    };
+    let all = futures_util::future::join_all([get(ids[0].clone(), "96"), get(ids[1].clone(), "96"), get(ids[0].clone(), "128"), get(ids[1].clone(), "128")]).await;
+    for (status, ct, cache, len) in &all {
+        assert_eq!((*status, ct.as_str(), cache.as_deref()), (200, "audio/mpeg", Some("miss")), "converted now");
+        assert!(*len > 10_000, "{len} bytes");
+    }
+    // the same again: from the cache, the same length, and seeking works on it
+    let (status, _, cache, len) = get(ids[0].clone(), "96").await;
+    assert_eq!((status, cache.as_deref(), len), (200, Some("hit"), all[0].3));
+    let r = s.http.get(s.url("stream", &[("id", &ids[0]), ("format", "mp3"), ("maxBitRate", "96")])).header("Range", "bytes=100-199").send().await.unwrap();
+    assert_eq!((r.status().as_u16(), r.bytes().await.unwrap().len()), (206, 100));
+    let dir = s.st.cfg.cache_dir().join("transcode");
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(files, 4, "one file each, no parts left");
+
+    // the song's file changes: not the old conversion
+    let one = s.music.join("Alpha/First Album/01 One.flac");
+    tone(&one, "One", "Alpha", "First Album", 1, 5);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let one_id = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let before = all[ids.iter().position(|i| *i == one_id).unwrap()].3;
+    let (_, _, cache, len) = get(one_id, "96").await;
+    assert_eq!(cache.as_deref(), Some("miss"), "the file changed: converted again");
+    assert!(len > before, "the longer song: {len} > {before}");
+}

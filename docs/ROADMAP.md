@@ -17,8 +17,9 @@ start: your data, settings, the API and Conductor's own extensions keep working 
 5. **A last security pass on what faces the internet**, now that Prelude puts Conductor on a domain: headers, rate
    limits, `/setup`, Jam and share pages behind Caddy and tunnels. (The dependency vulnerability check is in CI now;
    its first run found the bundled SQLite's CVE, fixed by moving to sqlx 0.9.)
-6. **A load test.** Many streams and conversions at once, a full rescan while playing, and a cap on how many ffmpeg
-   conversions run at the same time.
+6. ~~**A load test.**~~ Done: up to 64 apps streaming and converting at once, with a full rescan; it found ffmpeg
+   unbounded (every core, ~50 MB each), fixed by the conversion cache and slots. Still to do on a small machine (a
+   Raspberry Pi), with the numbers in the notes.
 
 ## Should be in 1.0
 7. **Settings in Podium**, so nothing needs the terminal after setup (the Last.fm key and secret, ListenBrainz,

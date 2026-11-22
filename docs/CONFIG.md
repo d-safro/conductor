@@ -19,6 +19,8 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | `read_only` | false | Never write to the music folders: no downloads filed, no trial songs moved or deleted, no covers saved. For running beside another server (a trial run) on the same music. |
 | `scan_interval_min` | 15 | Minutes between full scans (0: only at start and on request). |
 | `ffmpeg` | (not set) | ffmpeg for transcoding; found on PATH when not set. |
+| `transcode_slots` | 0 | How many ffmpegs convert at once as a rule (each uses about a core and 50 MB while it works). When they're all busy, a song waits half a second for one, then starts anyway, up to four times as many (at least 8); past that it waits its turn (up to 30 s). ffmpeg runs at a lower priority than everything else. 0: half the cores, at least 2. |
+| `transcode_cache_mb` | 1000 | Converted songs are kept in `<data>/cache/transcode` (played again, and seeking, from there); the least recently used go when it's bigger than this. |
 | `backup_keep` | 7 | Daily backups kept (0: none) and where (default: <data_dir>/backups). See src/backup.rs. |
 | `backup_dir` | (not set) | Daily backups kept (0: none) and where (default: <data_dir>/backups). See src/backup.rs. |
 
