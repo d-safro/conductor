@@ -131,7 +131,7 @@ The detailed list. The [README](../README.md) has the short version.
   checked with ListenBrainz) and **Last.fm** (approved on Last.fm's own page; the server needs `lastfm_api_key` and
   `lastfm_secret`), in Encore's settings. Plays and "playing now" go to every service they linked; plays a service
   couldn't take are kept and sent later, in order. Tokens and session keys are stored encrypted, as passwords are; a
-  link Last.fm stops accepting is shown as needing renewal. The settings' `listenbrainz_token` is the owner's.
+  link Last.fm or ListenBrainz stops accepting is shown as needing renewal. The settings' `listenbrainz_token` is the owner's.
 - **ListenBrainz discovery**: its playlists made
   for you (`listenbrainz_user`; Weekly Exploration, Weekly Jams, Daily Jams — `discovery`) become playlists: songs
   you have go straight in, the rest are downloaded into `Discovery/` and join as they arrive; when the next list

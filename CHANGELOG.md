@@ -28,6 +28,8 @@ What changed in each release, newest first. The full notes for each are on the
 ### Fixed
 - MP3s whose Cyrillic tags were written as Windows-1251 but marked Latin-1 showed garbled names ("Àêâàðèóì" for
   «Аквариум»); they're read as Cyrillic now, songs already scanned too (read again once). Western accents stay.
+- Plays an app hands in together (made offline) are sent to ListenBrainz and Last.fm in order, one after another.
+- A ListenBrainz token that ListenBrainz stops accepting is shown as needing a new link, as Last.fm's are.
 - Podcasts: changes are for admins, and feeds can't reach your own network (`podcast_local` allows it).
 - A smart playlist could read someone else's private playlist.
 - Phone sign-in codes and wrong passwords are limited per address.

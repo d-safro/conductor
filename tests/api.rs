@@ -4626,3 +4626,78 @@ async fn cyrillic_tags_written_as_latin1_are_read_as_cyrillic_also_in_songs_scan
     let title: String = sqlx::query_scalar("SELECT title FROM track WHERE artist_name = 'Аквариум'").fetch_one(&s.st.db).await.unwrap();
     assert_eq!(title, "Город");
 }
+
+#[tokio::test]
+async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_token_needs_a_new_link() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    };
+    if !have_ffmpeg() {
+        return;
+    }
+    #[derive(Default)]
+    struct Fake {
+        listens: Mutex<Vec<(String, String)>>, // (authorization, track)
+        revoked: AtomicBool,
+    }
+    let fake = Arc::new(Fake::default());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let f2 = fake.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let fake = f2.clone();
+        async move {
+            let path = req.uri().path().to_string();
+            let auth = req.headers().get("authorization").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+            let body: Value = serde_json::from_slice(&axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap()).unwrap_or_default();
+            match path.as_str() {
+                "/1/validate-token" => axum::Json(json!({ "valid": true, "user_name": "sam_lb" })).into_response(),
+                "/1/submit-listens" if fake.revoked.load(SeqCst) && auth == "Token samtok" => {
+                    (axum::http::StatusCode::UNAUTHORIZED, "{}").into_response()
+                }
+                "/1/submit-listens" => {
+                    let title = body["payload"][0]["track_metadata"]["track_name"].as_str().unwrap_or("").to_string();
+                    // the first one is slow to be taken: sent all at once, the others would overtake it
+                    if title == "One" {
+                        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    }
+                    fake.listens.lock().unwrap().push((auth, title));
+                    axum::Json(json!({ "status": "ok" })).into_response()
+                }
+                _ => (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            }
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.listenbrainz_url = base;
+        c.listenbrainz_token = Some("lbtok".into());
+    })
+    .await;
+    let mut ids = Vec::new();
+    for t in ["One", "Two", "Three"] {
+        ids.push(s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string());
+    }
+    // three plays made offline, handed in with one call
+    s.ok("scrobble", &[("id", &ids[0]), ("id", &ids[1]), ("id", &ids[2]), ("time", "1700000000000"), ("time", "1700000200000"), ("time", "1700000400000")])
+        .await;
+    wait_for(async || fake.listens.lock().unwrap().len() >= 3, "the plays").await;
+    let titles: Vec<String> = fake.listens.lock().unwrap().iter().map(|(_, t)| t.clone()).collect();
+    assert_eq!(titles, ["One", "Two", "Three"]);
+
+    // sam's own token, which ListenBrainz later stops taking: sam is told to link it again
+    s.ok("createUser", &[("username", "sam"), ("password", "sam pass")]).await;
+    let sam = |m: &str, q: &str| format!("{}/rest/{m}.view?u=sam&p=sam%20pass&v=1.16.1&c=test&f=json{q}", s.base);
+    let get = async |u: String| -> Value { s.http.get(u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() };
+    assert_eq!(get(sam("setListenBrainz", "&token=samtok")).await["scrobbling"]["listenbrainz"]["broken"], false);
+    fake.revoked.store(true, SeqCst);
+    get(sam("scrobble", &format!("&id={}", ids[1]))).await;
+    wait_for(async || get(sam("getScrobbling", "")).await["scrobbling"]["listenbrainz"]["broken"] == true, "the broken link").await;
+    // linking again mends it
+    fake.revoked.store(false, SeqCst);
+    assert_eq!(get(sam("setListenBrainz", "&token=samtok")).await["scrobbling"]["listenbrainz"]["broken"], false);
+}

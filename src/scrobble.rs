@@ -123,7 +123,22 @@ enum Sent {
     Never(String),
 }
 
-async fn lb_submit(st: &AppState, token: &str, body: &Value) -> Sent {
+/// A play (or "playing now") for ListenBrainz. `user_id` is whose plays they are: a token of their own that
+/// ListenBrainz no longer takes is marked as needing a new link, as a Last.fm one is (the settings' token isn't).
+async fn lb_submit(st: &AppState, user_id: Option<&str>, token: &str, body: &Value) -> Sent {
+    let sent = lb_post(st, token, body).await;
+    if let (Sent::Never(m), Some(uid)) = (&sent, user_id)
+        && m == LB_REFUSED_TOKEN
+        && account(st, uid, LISTENBRAINZ).await.is_some_and(|a| a.secret == token)
+    {
+        mark_broken(st, uid, LISTENBRAINZ).await;
+    }
+    sent
+}
+
+const LB_REFUSED_TOKEN: &str = "the token isn't accepted";
+
+async fn lb_post(st: &AppState, token: &str, body: &Value) -> Sent {
     let r = http()
         .post(format!("{}/1/submit-listens", st.cfg.listenbrainz_url.trim_end_matches('/')))
         .header("Authorization", format!("Token {token}"))
@@ -133,7 +148,7 @@ async fn lb_submit(st: &AppState, token: &str, body: &Value) -> Sent {
     match r {
         Err(e) => Sent::Later(e.to_string()),
         Ok(r) if r.status().is_success() => Sent::Ok,
-        Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED => Sent::Never("the token isn't accepted".into()),
+        Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED => Sent::Never(LB_REFUSED_TOKEN.into()),
         Ok(r) if r.status() == reqwest::StatusCode::BAD_REQUEST => Sent::Never(format!("ListenBrainz refused it ({})", r.status())),
         Ok(r) => Sent::Later(format!("ListenBrainz answered {}", r.status())),
     }
@@ -331,11 +346,11 @@ pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, pla
     if let Some(token) = lb {
         let body = lb_body(&t, at, playing_now);
         if playing_now {
-            let _ = lb_submit(st, &token, &body).await;
+            let _ = lb_submit(st, Some(user_id), &token, &body).await;
         } else if waiting(st, user_id, LISTENBRAINZ).await {
             keep(st, Some(user_id), LISTENBRAINZ, &body).await;
         } else {
-            match lb_submit(st, &token, &body).await {
+            match lb_submit(st, Some(user_id), &token, &body).await {
                 Sent::Ok => {}
                 Sent::Later(e) => {
                     warn!("ListenBrainz: {e}; the play is kept and sent later");
@@ -388,7 +403,7 @@ pub async fn resend(st: &AppState) {
                 None => Sent::Never("no user".into()),
             },
             _ => match lb_token(st, uid.as_deref()).await {
-                Some(token) => lb_submit(st, &token, &v).await,
+                Some(token) => lb_submit(st, uid.as_deref(), &token, &v).await,
                 None => Sent::Never("not linked any more".into()),
             },
         };
