@@ -39,6 +39,16 @@ fn tone_genre(path: &Path, title: &str, artist: &str, album: &str, track: u32, s
     assert!(ok, "ffmpeg failed for {}", path.display());
 }
 
+fn tone_tags(path: &Path, track: u32, tags: &[(&str, &str)]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("sine=frequency={}:duration=2", 220 * track)]);
+    for (k, v) in tags {
+        cmd.args(["-metadata", &format!("{k}={v}")]);
+    }
+    assert!(cmd.arg(path).status().unwrap().success(), "ffmpeg failed for {}", path.display());
+}
+
 fn cover(path: &Path) {
     let ok = Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=600x600", "-frames:v", "1"])
@@ -1890,6 +1900,47 @@ async fn genres_split_like_navidrome() {
     assert_eq!(r["albumList2"]["album"][0]["name"], "Mixed");
     let r = s.ok("getRandomSongs", &[("genre", "Folk")]).await;
     assert_eq!(r["randomSongs"]["song"][0]["title"], "Two");
+}
+
+#[tokio::test]
+async fn albums_grouped_like_navidrome() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let m = &s.music;
+    let t = |title: &'static str| ("title", title);
+    // a second album artist tag ("ALBUM ARTIST", as some taggers write it) makes another album, as in Navidrome
+    tone_tags(&m.join("Delta/Box/01.flac"), 1, &[t("D1"), ("artist", "Delta"), ("album_artist", "Delta"), ("album", "Box")]);
+    tone_tags(
+        &m.join("Delta/Box/02.flac"),
+        2,
+        &[t("D2"), ("artist", "Delta"), ("album_artist", "Delta"), ("ALBUM ARTIST", "Delta Band"), ("album", "Box")],
+    );
+    // typographic and plain apostrophes are one album; a trailing space is another (Navidrome keeps it)
+    tone_tags(&m.join("Echo/a.flac"), 3, &[t("E1"), ("artist", "Echo"), ("album_artist", "Echo"), ("album", "Rock’s Way")]);
+    tone_tags(&m.join("Echo/b.flac"), 4, &[t("E2"), ("artist", "Echo"), ("album_artist", "Echo"), ("album", "Rock's Way")]);
+    tone_tags(&m.join("Echo/c.flac"), 5, &[t("E3"), ("artist", "Echo"), ("album_artist", "Echo"), ("album", "Rock's Way ")]);
+    // no album artist: the (first) artist, trimmed
+    tone_tags(&m.join("Echo/d.flac"), 6, &[t("E4"), ("artist", "Echo "), ("album", "Rock's Way")]);
+    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let album_of = async |title: &str| {
+        let r = s.ok("search3", &[("query", title), ("songCount", "5")]).await;
+        let song = r["searchResult3"]["song"].as_array().unwrap().iter().find(|x| x["title"] == title).unwrap().clone();
+        song["albumId"].as_str().unwrap().to_string()
+    };
+    let (d1, d2) = (album_of("D1").await, album_of("D2").await);
+    assert_ne!(d1, d2);
+    let r = s.ok("getAlbum", &[("id", &d2)]).await;
+    assert_eq!(r["album"]["artist"], "Delta • Delta Band");
+    let delta = s.ok("getAlbum", &[("id", &d1)]).await["album"]["artistId"].clone();
+    assert_eq!(r["album"]["artistId"], delta, "linked to the first album artist");
+    let r = s.ok("getArtists", &[]).await;
+    assert!(!r.to_string().contains("Delta Band"), "no joined artists in the index");
+    let (e1, e2, e3, e4) = (album_of("E1").await, album_of("E2").await, album_of("E3").await, album_of("E4").await);
+    assert_eq!(e1, e2);
+    assert_ne!(e1, e3);
+    assert_eq!(e1, e4);
 }
 
 #[tokio::test]

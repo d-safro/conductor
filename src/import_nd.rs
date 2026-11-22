@@ -353,8 +353,18 @@ pub async fn run(
             .await?;
         rep.song_ids += 1;
     }
-    for r in
-        sqlx::query("SELECT id, name, album_artist FROM album WHERE missing = 0 ORDER BY song_count DESC").fetch_all(&nd).await?
+    // Albums by what their songs say (Navidrome groups songs by each song's joined album artist + album tag; the
+    // album row's own artist can differ, e.g. "Various Artists" for a compilation whose songs name an artist).
+    for r in sqlx::query(
+        "SELECT a.id,
+            COALESCE((SELECT mf.album_artist FROM media_file mf WHERE mf.album_id = a.id
+                      GROUP BY mf.album_artist, mf.album ORDER BY COUNT(*) DESC LIMIT 1), a.album_artist) AS album_artist,
+            COALESCE((SELECT mf.album FROM media_file mf WHERE mf.album_id = a.id
+                      GROUP BY mf.album_artist, mf.album ORDER BY COUNT(*) DESC LIMIT 1), a.name) AS name
+         FROM album a WHERE a.missing = 0 ORDER BY a.song_count DESC",
+    )
+    .fetch_all(&nd)
+    .await?
     {
         let key = album_key(&r.get::<String, _>("album_artist"), &r.get::<String, _>("name"));
         let done = sqlx::query("INSERT OR IGNORE INTO id_override (kind, key, id) VALUES ('album', ?, ?)")

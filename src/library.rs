@@ -106,6 +106,11 @@ pub struct Meta {
     pub artist: String,
     pub album: String,
     pub album_artist: String,
+    /// What albums are grouped by, as Navidrome groups them (PID albumartistid,album): every album artist tag
+    /// joined with " • " as written (else "Various Artists" for a compilation, else the first artist), and the
+    /// album tag as written (not trimmed).
+    pub album_group: String,
+    pub album_raw: String,
     pub compilation: bool,
     pub disc: Option<i64>,
     pub number: Option<i64>,
@@ -166,6 +171,27 @@ pub fn read_meta(path: &Path) -> Meta {
         m.artist = get(ItemKey::TrackArtist).unwrap_or_default();
         m.album = get(ItemKey::AlbumTitle).unwrap_or_default();
         m.album_artist = get(ItemKey::AlbumArtist).unwrap_or_default();
+        m.album_raw = tag.get_string(&ItemKey::AlbumTitle).unwrap_or_default().to_string();
+        // Navidrome reads ALBUMARTIST and its aliases ("ALBUM ARTIST", "ALBUM_ARTIST"), all values, in that order
+        let mut aa: Vec<String> = tag.get_strings(&ItemKey::AlbumArtist).map(String::from).collect();
+        let unknown = |names: &[&str]| -> Vec<String> {
+            tag.items()
+                .filter(|i| matches!(i.key(), ItemKey::Unknown(k) if names.iter().any(|n| k.eq_ignore_ascii_case(n))))
+                .filter_map(|i| i.value().text().map(String::from))
+                .collect()
+        };
+        aa.extend(unknown(&["ALBUM ARTIST", "ALBUM_ARTIST"]));
+        if aa.iter().all(|v| v.trim().is_empty()) {
+            aa = unknown(&["ALBUMARTISTS"]);
+        }
+        aa.retain(|v| !v.trim().is_empty());
+        aa.dedup();
+        if m.album_artist.is_empty()
+            && let Some(first) = aa.first()
+        {
+            m.album_artist = first.trim().to_string();
+        }
+        m.album_group = aa.join(ARTIST_JOINER);
         m.compilation = get(ItemKey::FlagCompilation).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
         m.number = get(ItemKey::TrackNumber).and_then(|s| first_num(&s));
         m.disc = get(ItemKey::DiscNumber).and_then(|s| first_num(&s));
@@ -199,7 +225,33 @@ pub fn read_meta(path: &Path) -> Meta {
     if m.album.is_empty() {
         m.album = "[Unknown Album]".into();
     }
+    if m.album_raw.trim().is_empty() {
+        m.album_raw = m.album.clone();
+    }
+    if m.album_group.trim().is_empty() {
+        m.album_group = if m.compilation {
+            "Various Artists".into()
+        } else {
+            m.artist.clone()
+        };
+    }
     m
+}
+
+/// How Navidrome joins several artists into one name.
+pub const ARTIST_JOINER: &str = " • ";
+
+/// Navidrome's str.Clear: typographic quotes and dashes as plain ones, so "Ritchie Blackmore’s Rainbow" and
+/// "Ritchie Blackmore's Rainbow" are one album.
+pub fn plain_marks(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '–' | '‐' => '-',
+            '“' | '”' => '"',
+            '‘' | '’' => '\'',
+            c => c,
+        })
+        .collect()
 }
 
 pub fn sort_key(s: &str) -> String {
@@ -218,9 +270,11 @@ pub fn artist_key(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// One album per album artist + album name, whichever release each song came from (like ND_PID_ALBUM=albumartistid,album).
+/// One album per album artist + album name, whichever release each song came from, the way Navidrome groups them
+/// with PIDAlbum=albumartistid,album: lower case, typographic quotes made plain, spaces kept. `album_artist` is the
+/// joined album artist name (`Meta::album_group`) and `album` the album tag as written (`Meta::album_raw`).
 pub fn album_key(album_artist: &str, album: &str) -> String {
-    format!("{}\u{1f}{}", album_artist.to_lowercase(), album.to_lowercase())
+    format!("{}\u{1f}{}", plain_marks(&album_artist.to_lowercase()), plain_marks(&album.to_lowercase()))
 }
 
 pub fn track_key(library_id: i64, rel: &str) -> String {
@@ -387,7 +441,7 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
             .bind(&id).bind(lib_id).bind(&f.rel).bind(f.size).bind(f.mtime).bind(&suffix).bind(content_type(&suffix))
             .bind(m.bitrate).bind(m.sample_rate).bind(m.bit_depth).bind(m.channels).bind(m.duration_ms)
             .bind(&m.title).bind(sort_key(&m.title)).bind(ids.artist(&m.artist)).bind(&m.artist)
-            .bind(ids.album(&m.album_artist, &m.album)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
+            .bind(ids.album(&m.album_group, &m.album_raw)).bind(&m.album).bind(m.disc).bind(m.number).bind(m.year)
             .bind(&m.genre).bind(&m.mbid).bind(m.has_picture).bind(m.has_lyrics).bind(f.mtime.clamp(0, now))
             .bind(&m.isrc).bind(m.rg_track_gain).bind(m.rg_track_peak).bind(m.rg_album_gain).bind(m.rg_album_peak)
             .execute(&mut *tx)
@@ -404,14 +458,14 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
                 .execute(&mut *tx)
                 .await?;
             }
-            let aid = ids.album(&m.album_artist, &m.album);
+            let aid = ids.album(&m.album_group, &m.album_raw);
             sqlx::query(
                 "INSERT INTO album (id, name, sort_name, artist_id, artist_name, year, genre, mbid, compilation, created_at)
                  VALUES (?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(id) DO UPDATE SET created_at = MIN(album.created_at, excluded.created_at), year = COALESCE(excluded.year, album.year), genre = COALESCE(excluded.genre, album.genre),
                     mbid = COALESCE(excluded.mbid, album.mbid), compilation = MAX(album.compilation, excluded.compilation)",
             )
-            .bind(&aid).bind(&m.album).bind(sort_key(&m.album)).bind(ids.artist(&m.album_artist)).bind(&m.album_artist)
+            .bind(&aid).bind(&m.album).bind(sort_key(&m.album)).bind(ids.artist(&m.album_artist)).bind(m.album_group.trim())
             .bind(m.year).bind(&m.genre).bind(&m.album_mbid).bind(m.compilation).bind(f.mtime.clamp(0, now))
             .execute(&mut *tx)
             .await?;
@@ -530,6 +584,13 @@ pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
 #[cfg(test)]
 mod genre_tests {
     use super::*;
+
+    #[test]
+    fn album_keys_like_navidrome() {
+        assert_eq!(album_key("Rainbow", "Ritchie Blackmore’s Rainbow"), album_key("RAINBOW", "Ritchie Blackmore's Rainbow"));
+        assert_ne!(album_key("Pink Floyd", "The Dark Side Of The Moon  "), album_key("Pink Floyd", "The Dark Side of the Moon"));
+        assert_eq!(plain_marks("a – b “c” ‘d’"), "a - b \"c\" 'd'");
+    }
 
     #[test]
     fn genres_split() {
