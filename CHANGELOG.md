@@ -30,6 +30,8 @@ What changed in each release, newest first. The full notes for each are on the
   «Аквариум»); they're read as Cyrillic now, songs already scanned too (read again once). Western accents stay.
 - Plays an app hands in together (made offline) are sent to ListenBrainz and Last.fm in order, one after another.
 - A ListenBrainz token that ListenBrainz stops accepting is shown as needing a new link, as Last.fm's are.
+- Plays waiting to be sent again: one user's long wait (500 or more, their service turning them away for now) no
+  longer keeps everyone else's waiting plays from being sent.
 - Podcasts: changes are for admins, and feeds can't reach your own network (`podcast_local` allows it).
 - A smart playlist could read someone else's private playlist.
 - Phone sign-in codes and wrong passwords are limited per address.

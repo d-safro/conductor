@@ -383,37 +383,45 @@ pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, pla
 /// (and their later plays with it); plays for an account that's gone are dropped.
 pub async fn resend(st: &AppState) {
     type Row = (i64, String, Option<String>, String);
-    let rows: Vec<Row> = sqlx::query_as("SELECT id, payload, user_id, service FROM lb_queue ORDER BY id LIMIT 500")
-        .fetch_all(&st.db)
-        .await
-        .unwrap_or_default();
     let mut stuck: Vec<(Option<String>, String)> = Vec::new();
-    for (id, p, uid, service) in rows {
-        let who = (uid.clone(), service.clone());
-        if stuck.contains(&who) {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&p) else {
-            let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
-            continue;
-        };
-        let sent = match service.as_str() {
-            LASTFM => match &uid {
-                Some(u) => lastfm_send(st, u, &v).await,
-                None => Sent::Never("no user".into()),
-            },
-            _ => match lb_token(st, uid.as_deref()).await {
-                Some(token) => lb_submit(st, uid.as_deref(), &token, &v).await,
-                None => Sent::Never("not linked any more".into()),
-            },
-        };
-        match sent {
-            Sent::Ok | Sent::Never(_) => {
-                let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+    // in pages, all the way through: one user's long wait (their token is being turned away for now) mustn't keep
+    // everyone else's plays behind it
+    let mut after = 0i64;
+    loop {
+        let rows: Vec<Row> = sqlx::query_as("SELECT id, payload, user_id, service FROM lb_queue WHERE id > ? ORDER BY id LIMIT 500")
+            .bind(after)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+        let Some(last) = rows.last() else { break };
+        after = last.0;
+        for (id, p, uid, service) in rows {
+            let who = (uid.clone(), service.clone());
+            if stuck.contains(&who) {
+                continue;
             }
-            Sent::Later(_) => {
-                let _ = sqlx::query("UPDATE lb_queue SET tries = tries + 1 WHERE id = ?").bind(id).execute(&st.db).await;
-                stuck.push(who);
+            let Ok(v) = serde_json::from_str::<Value>(&p) else {
+                let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+                continue;
+            };
+            let sent = match service.as_str() {
+                LASTFM => match &uid {
+                    Some(u) => lastfm_send(st, u, &v).await,
+                    None => Sent::Never("no user".into()),
+                },
+                _ => match lb_token(st, uid.as_deref()).await {
+                    Some(token) => lb_submit(st, uid.as_deref(), &token, &v).await,
+                    None => Sent::Never("not linked any more".into()),
+                },
+            };
+            match sent {
+                Sent::Ok | Sent::Never(_) => {
+                    let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
+                }
+                Sent::Later(_) => {
+                    let _ = sqlx::query("UPDATE lb_queue SET tries = tries + 1 WHERE id = ?").bind(id).execute(&st.db).await;
+                    stuck.push(who);
+                }
             }
         }
     }

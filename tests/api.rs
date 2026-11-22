@@ -4642,6 +4642,7 @@ async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_toke
     struct Fake {
         listens: Mutex<Vec<(String, String)>>, // (authorization, track)
         revoked: AtomicBool,
+        busy: AtomicBool,
     }
     let fake = Arc::new(Fake::default());
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -4657,6 +4658,9 @@ async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_toke
                 "/1/validate-token" => axum::Json(json!({ "valid": true, "user_name": "sam_lb" })).into_response(),
                 "/1/submit-listens" if fake.revoked.load(SeqCst) && auth == "Token samtok" => {
                     (axum::http::StatusCode::UNAUTHORIZED, "{}").into_response()
+                }
+                "/1/submit-listens" if fake.busy.load(SeqCst) && auth == "Token samtok" => {
+                    (axum::http::StatusCode::TOO_MANY_REQUESTS, "{}").into_response()
                 }
                 "/1/submit-listens" => {
                     let title = body["payload"][0]["track_metadata"]["track_name"].as_str().unwrap_or("").to_string();
@@ -4700,4 +4704,24 @@ async fn plays_handed_in_together_reach_listenbrainz_in_order_and_a_refused_toke
     // linking again mends it
     fake.revoked.store(false, SeqCst);
     assert_eq!(get(sam("setListenBrainz", "&token=samtok")).await["scrobbling"]["listenbrainz"]["broken"], false);
+
+    // sam's token turned away for now (too many), with a long wait of plays: the owner's waiting play still goes
+    fake.busy.store(true, SeqCst);
+    let sam_id: String = sqlx::query_scalar("SELECT id FROM user WHERE name = 'sam'").fetch_one(&s.st.db).await.unwrap();
+    let body = json!({ "listen_type": "single", "payload": [{ "listened_at": 1, "track_metadata": { "artist_name": "A", "track_name": "Sam's" } }] });
+    for _ in 0..600 {
+        sqlx::query("INSERT INTO lb_queue (payload, added_at, user_id, service) VALUES (?, 0, ?, 'listenbrainz')")
+            .bind(body.to_string())
+            .bind(&sam_id)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    // (queued by an older version: no user, the settings' token)
+    let mine = json!({ "listen_type": "single", "payload": [{ "listened_at": 2, "track_metadata": { "artist_name": "A", "track_name": "Owner's" } }] });
+    sqlx::query("INSERT INTO lb_queue (payload, added_at) VALUES (?, 0)").bind(mine.to_string()).execute(&s.st.db).await.unwrap();
+    conductor::scrobble::resend(&s.st).await;
+    assert!(fake.listens.lock().unwrap().iter().any(|(a, t)| a == "Token lbtok" && t == "Owner's"));
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lb_queue").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(left, 600, "sam's wait for later, in order");
 }
