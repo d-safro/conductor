@@ -1519,3 +1519,67 @@ async fn listening_review_and_shared_playlists() {
     assert_eq!(s.http.get(&jbase).send().await.unwrap().status(), 410);
     assert_eq!(post("add", serde_json::json!({"id": two, "guest": "g-bob"})).await.status(), 410);
 }
+
+/// A stand-in on a local port: `answer(path, body)` → JSON (404 when None). Counts the calls.
+async fn stand_in(
+    answer: impl Fn(&str, &str, &[u8]) -> Option<Value> + Clone + Send + Sync + 'static,
+) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use axum::{extract::Request, response::IntoResponse};
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let h2 = hits.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let (answer, hits) = (answer.clone(), h2.clone());
+        async move {
+            hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let path = req.uri().path().to_string();
+            let query = req.uri().query().unwrap_or("").to_string();
+            let body = axum::body::to_bytes(req.into_body(), 50 << 20).await.unwrap();
+            match answer(&path, &query, &body) {
+                Some(v) => axum::Json(v).into_response(),
+                None => (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            }
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    (base, hits)
+}
+
+#[tokio::test]
+async fn lyrics_translation() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (base, hits) = stand_in(|path, _, body| {
+        assert_eq!(path, "/api/chat");
+        let req: Value = serde_json::from_slice(body).unwrap();
+        let text = req["messages"][0]["content"].as_str().unwrap();
+        let lines: Vec<String> = serde_json::from_str(text.rsplit("Lines: ").next().unwrap()).unwrap();
+        assert!(!lines.iter().any(|l| l.trim().is_empty()), "blank lines aren't sent");
+        let out: Vec<String> = lines.iter().map(|l| l.to_uppercase()).collect();
+        let source = if text.contains("Latin alphabet (romanization") { "en" } else { "es" };
+        Some(serde_json::json!({ "message": { "content": serde_json::json!({ "source": source, "lines": out }).to_string() } }))
+    })
+    .await;
+    let off = Server::start().await;
+    let r = off.ok("translateLyrics", &[("id", "x"), ("lang", "en"), ("line", "hola")]).await;
+    assert_eq!(r["lyricsTranslation"]["error"], "ai-off");
+
+    let s = Server::start_with(move |c| {
+        c.catalog = false;
+        c.ollama_url = Some(base);
+    })
+    .await;
+    let q = [("id", "song1"), ("lang", "en"), ("line", "hola"), ("line", ""), ("line", "adiós")];
+    let r = s.ok("translateLyrics", &q).await;
+    let t = &r["lyricsTranslation"];
+    assert_eq!(t["source"], "es");
+    assert_eq!(t["same"], false);
+    assert_eq!(t["lines"], serde_json::json!(["HOLA", "", "ADIÓS"]));
+    s.ok("translateLyrics", &q).await; // kept: not asked again
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // romanizing English: nothing to do
+    let r = s.ok("translateLyrics", &[("id", "song1"), ("lang", "en"), ("mode", "romanize"), ("line", "hello")]).await;
+    assert_eq!(r["lyricsTranslation"]["same"], true);
+}

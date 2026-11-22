@@ -80,6 +80,18 @@ pub struct Config {
     pub spotify_interval_hours: u64,
     pub spotify_api_url: String,
     pub spotify_accounts_url: String,
+    /// Ollama (optional, local AI): lyrics translation and romanization. Off when not set.
+    pub ollama_url: Option<String>,
+    pub translate_model: String,
+    /// The song-id service (optional): "What's playing?" against your own library. POST /identify, GET /status.
+    pub songid_url: Option<String>,
+    /// Automix: the mix analyzer's folder (info.jsonl in, wanted.txt out) and the music folder as it sees it.
+    pub mixinfo_dir: Option<PathBuf>,
+    pub mixinfo_music_root: String,
+    /// Concerts near you: Ticketmaster's Discovery API (with the key set in Encore), else MusicBrainz events.
+    pub ticketmaster_url: String,
+    pub musicbrainz_url: String,
+    pub concerts: bool,
     #[serde(skip)]
     pub slskd_fast_test: bool,
 }
@@ -141,6 +153,14 @@ impl Default for Config {
             spotify_api_url: "https://api.spotify.com/v1".into(),
             spotify_accounts_url: "https://accounts.spotify.com".into(),
             discovery: vec!["weekly-exploration".into(), "weekly-jams".into(), "daily-jams".into()],
+            ollama_url: None,
+            translate_model: "gemma4:e2b-it-qat".into(),
+            songid_url: None,
+            mixinfo_dir: None,
+            mixinfo_music_root: "/music".into(),
+            ticketmaster_url: "https://app.ticketmaster.com/discovery/v2".into(),
+            musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
+            concerts: true,
             slskd_fast_test: false,
         }
     }
@@ -225,6 +245,24 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_TOKEN") {
             c.audiomuse_token = Some(v);
+        }
+        if let Ok(v) = std::env::var("MAESTRO_OLLAMA_URL") {
+            c.ollama_url = Some(v).filter(|v| !v.is_empty());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_TRANSLATE_MODEL") {
+            c.translate_model = v;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_SONGID_URL") {
+            c.songid_url = Some(v).filter(|v| !v.is_empty());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_MIXINFO_DIR") {
+            c.mixinfo_dir = Some(PathBuf::from(v)).filter(|v| !v.as_os_str().is_empty());
+        }
+        if let Ok(v) = std::env::var("MAESTRO_MIXINFO_MUSIC_ROOT") {
+            c.mixinfo_music_root = v;
+        }
+        if let Ok(v) = std::env::var("MAESTRO_CONCERTS") {
+            c.concerts = v != "0" && v != "false";
         }
         if let Ok(v) = std::env::var("MAESTRO_READ_ONLY") {
             c.read_only = v == "1" || v == "true";

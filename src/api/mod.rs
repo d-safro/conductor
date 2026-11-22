@@ -9,6 +9,7 @@ mod native;
 pub mod podcasts;
 pub mod smart;
 mod sonic;
+mod translate;
 mod userdata;
 
 use std::{collections::HashMap, sync::Arc};
@@ -264,6 +265,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.sonic", "versions": [1] },
             { "name": "encore.review", "versions": [1] },
             { "name": "encore.collabPlaylists", "versions": [1] },
+            { "name": "encore.lyricsTranslation", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -324,6 +326,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "playlistShareStart" => crate::collab::share_start(c).await,
         "playlistShareEnd" => crate::collab::share_end(c).await,
         "playlistShares" => crate::collab::shares(c).await,
+        "translateLyrics" => translate::translate_lyrics(c).await,
         "getFolder" => encore::folder(c).await,
         "jamStart" => encore::jam_start(c).await,
         "jamState" => encore::jam_state(c).await,
