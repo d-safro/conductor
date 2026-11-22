@@ -3327,3 +3327,92 @@ async fn wrong_passwords_are_limited() {
     }
     assert_eq!(admin(PASS).await, 429);
 }
+
+#[tokio::test]
+async fn shares_work_without_an_account() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // the public side lives on the Jam listener
+    let jl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let jam = format!("http://{}", jl.local_addr().unwrap());
+    let app = conductor::jam::router(s.st.clone());
+    tokio::spawn(async move { axum::serve(jl, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+
+    let album = s.ok("search3", &[("query", "First Album")]).await["searchResult3"]["album"][0]["id"].as_str().unwrap().to_string();
+    let r = s.ok("createShare", &[("id", &album), ("description", "For you"), ("expires", "0")]).await;
+    let sh = &r["shares"]["share"][0];
+    assert_eq!(sh["description"], "For you");
+    assert_eq!(sh["entry"].as_array().unwrap().len(), 2, "{sh}");
+    let url = sh["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with("https://jam.example.test/jam/s/"), "{url}");
+    let token = url.rsplit('/').next().unwrap().to_string();
+    assert_eq!(s.ok("getShares", &[]).await["shares"]["share"].as_array().unwrap().len(), 1);
+
+    // anyone with the link: the page, the list, a song and its cover
+    let page = s.http.get(format!("{jam}/jam/s/{token}")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    let st: Value = s.http.get(format!("{jam}/jam/s/{token}/state")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((st["owner"].as_str(), st["description"].as_str()), (Some(USER), Some("For you")));
+    assert_eq!(st["song"][1]["title"], "Two");
+    assert!(st["song"][0].get("id").is_none(), "visitors never see ids");
+    let song = s.http.get(format!("{jam}/jam/s/{token}/stream/0")).header("range", "bytes=0-99").send().await.unwrap();
+    assert_eq!(song.status(), 206);
+    assert_eq!(song.bytes().await.unwrap().len(), 100);
+    assert_eq!(s.http.get(format!("{jam}/jam/s/{token}/cover/0")).send().await.unwrap().status(), 200);
+    assert_eq!(s.http.get(format!("{jam}/jam/s/{token}/stream/2")).send().await.unwrap().status(), 404, "only the shared songs");
+    assert_eq!(s.ok("getShares", &[]).await["shares"]["share"][0]["visitCount"], 1);
+
+    // expired, then deleted: gone
+    s.ok("updateShare", &[("id", &token), ("expires", "1000")]).await;
+    assert_eq!(s.http.get(format!("{jam}/jam/s/{token}/state")).send().await.unwrap().status(), 410);
+    assert_eq!(s.http.get(format!("{jam}/jam/s/{token}/stream/0")).send().await.unwrap().status(), 404);
+    s.ok("deleteShare", &[("id", &token)]).await;
+    assert!(s.ok("getShares", &[]).await["shares"]["share"].as_array().unwrap().is_empty());
+    assert_eq!(s.call("createShare", &[("id", "nope")]).await["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn users_over_the_api() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    s.ok("createUser", &[("username", "sam"), ("password", "enc:73616d2070617373"), ("email", "x@example.com")]).await; // "sam pass"
+    assert_eq!(s.call("createUser", &[("username", "sam"), ("password", "another1")]).await["error"]["code"], 0);
+    assert_eq!(s.call("createUser", &[("username", "short"), ("password", "abc")]).await["error"]["code"], 10);
+    let users = s.ok("getUsers", &[]).await;
+    assert_eq!(users["users"]["user"].as_array().unwrap().len(), 2);
+    let sam = s.ok("getUser", &[("username", "sam")]).await;
+    assert_eq!((sam["user"]["adminRole"].as_bool(), sam["user"]["streamRole"].as_bool()), (Some(false), Some(true)));
+    assert_eq!(s.call("getUser", &[("username", "nobody")]).await["error"]["code"], 70);
+
+    // sam signs in, can't manage others, can change their own password
+    let as_sam = |m: &str, pass: &str, q: &str| format!("{}/rest/{m}.view?u=sam&p={}&v=1.16.1&c=test&f=json{q}", s.base, pass.replace(' ', "%20"));
+    let get = |u: String| {
+        let rq = s.http.get(u);
+        async move { rq.send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() }
+    };
+    assert_eq!(get(as_sam("ping", "sam pass", "")).await["status"], "ok");
+    assert_eq!(get(as_sam("getUsers", "sam pass", "")).await["error"]["code"], 50);
+    assert_eq!(get(as_sam("deleteUser", "sam pass", &format!("&username={USER}"))).await["error"]["code"], 50);
+    assert_eq!(get(as_sam("changePassword", "sam pass", "&username=sam&password=new%20sam%20pass")).await["status"], "ok");
+    assert_eq!(get(as_sam("ping", "new sam pass", "")).await["status"], "ok");
+
+    // the only admin stays one, and can't delete themself
+    assert_eq!(s.call("updateUser", &[("username", USER), ("adminRole", "false")]).await["error"]["code"], 50);
+    assert_eq!(s.call("deleteUser", &[("username", USER)]).await["error"]["code"], 50);
+    s.ok("updateUser", &[("username", "sam"), ("adminRole", "true")]).await;
+    assert_eq!(s.ok("getUser", &[("username", "sam")]).await["user"]["adminRole"], true);
+
+    // a picture for each
+    let pic = s.http.get(s.url("getAvatar", &[("username", "sam")])).send().await.unwrap();
+    assert_eq!(pic.headers()["content-type"], "image/png");
+    assert!(image::load_from_memory(&pic.bytes().await.unwrap()).is_ok());
+
+    s.ok("deleteUser", &[("username", "sam")]).await;
+    assert_eq!(get(as_sam("ping", "new sam pass", "")).await["error"]["code"], 40);
+}

@@ -382,21 +382,6 @@ pub async fn save_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
     empty()
 }
 
-pub async fn get_user(c: &Ctx) -> Result<Reply, ApiError> {
-    let name = c.p.get("username").unwrap_or(&c.user.name);
-    if !name.eq_ignore_ascii_case(&c.user.name) && !c.user.is_admin {
-        return Err(ApiError::new(50, "Not allowed"));
-    }
-    let admin = if name.eq_ignore_ascii_case(&c.user.name) { c.user.is_admin } else { false };
-    let folders: Vec<i64> = c.st.libs.iter().map(|(id, _)| *id).collect();
-    ok(json!({ "user": {
-        "username": name, "email": "", "scrobblingEnabled": true, "adminRole": admin, "settingsRole": true,
-        "downloadRole": true, "uploadRole": false, "playlistRole": true, "coverArtRole": true, "commentRole": false,
-        "podcastRole": true, "streamRole": true, "jukeboxRole": false, "shareRole": false, "videoConversionRole": false,
-        "folder": folders,
-    } }))
-}
-
 // ── internet radio ──
 
 pub async fn radio_list(c: &Ctx) -> Result<Reply, ApiError> {

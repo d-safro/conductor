@@ -11,10 +11,12 @@ mod items;
 pub(crate) mod media;
 mod native;
 pub mod podcasts;
+pub mod shares;
 pub mod smart;
 pub mod sonic;
 mod translate;
 mod userdata;
+mod users;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -395,7 +397,17 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "deletePlaylist" => userdata::delete_playlist(c).await,
         "getPlayQueue" => userdata::get_play_queue(c).await,
         "savePlayQueue" => userdata::save_play_queue(c).await,
-        "getUser" => userdata::get_user(c).await,
+        "getUser" => users::get_user(c).await,
+        "getUsers" => users::get_users(c).await,
+        "createUser" => users::create_user(c).await,
+        "updateUser" => users::update_user(c).await,
+        "deleteUser" => users::delete_user(c).await,
+        "changePassword" => users::change_password(c).await,
+        "getAvatar" => users::get_avatar(c).await,
+        "getShares" => shares::get_shares(c).await,
+        "createShare" => shares::create(c).await,
+        "updateShare" => shares::update(c).await,
+        "deleteShare" => shares::delete(c).await,
         "getSonicSimilarTracks" => sonic::similar(c).await,
         "findSonicPath" => sonic::path(c).await,
         "deviceHello" => encore::device_hello(c).await,

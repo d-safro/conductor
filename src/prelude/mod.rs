@@ -271,14 +271,14 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
         }
         w.d.save()?;
         // the downloader on its own: the VPN step didn't put it inside one (or didn't run)
-        if *s == "vpn" || (*s == "downloads" && !only.contains(&"vpn")) {
-            if let Some(a) = w.make.take() {
-                w.make_downloader(None, a).await?;
-                w.d.set("vpn", "none");
-                w.d.set("downloads_require_vpn", false);
-                w.d.set("vpn_port_sync", false);
-                w.d.save()?;
-            }
+        if (*s == "vpn" || (*s == "downloads" && !only.contains(&"vpn")))
+            && let Some(a) = w.make.take()
+        {
+            w.make_downloader(None, a).await?;
+            w.d.set("vpn", "none");
+            w.d.set("downloads_require_vpn", false);
+            w.d.set("vpn_port_sync", false);
+            w.d.save()?;
         }
     }
     w.summary();
