@@ -217,7 +217,7 @@ async fn entries(st: &Shared, token: &str, pid: &str) -> Vec<Value> {
             .await
             .unwrap_or_default();
     for (id, by, g) in adds {
-        who.entry(id).or_insert((by, g));
+        who.insert(id, (by, g)); // the latest add of a song is the copy that's there
     }
     rows.into_iter()
         .enumerate()
@@ -395,6 +395,9 @@ async fn action(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong");
         }
         let _ = sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&st.db).await;
+        // it wasn't in the playlist: whoever added it through the link before (the owner took it out since) no
+        // longer owns it
+        let _ = sqlx::query("DELETE FROM playlist_share_add WHERE token = ? AND track_id = ?").bind(&token).bind(&sid).execute(&st.db).await;
         let _ = sqlx::query("INSERT INTO playlist_share_add (token, track_id, by_name, guest, added_at) VALUES (?, ?, ?, ?, ?)")
             .bind(&token)
             .bind(&sid)
@@ -412,7 +415,7 @@ async fn action(
         return err(StatusCode::CONFLICT, "The playlist changed: try again");
     }
     let theirs: Option<String> =
-        sqlx::query_scalar("SELECT guest FROM playlist_share_add WHERE token = ? AND track_id = ? ORDER BY rowid LIMIT 1")
+        sqlx::query_scalar("SELECT guest FROM playlist_share_add WHERE token = ? AND track_id = ? ORDER BY rowid DESC LIMIT 1")
             .bind(&token)
             .bind(&sid)
             .fetch_optional(&st.db)

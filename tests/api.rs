@@ -1563,6 +1563,13 @@ async fn listening_review_and_shared_playlists() {
     assert_eq!(songs[1]["by"], "Ann");
     let r = s.ok("playlistShares", &[]).await;
     assert_eq!(r["playlistShares"]["share"][0]["added"].as_array().unwrap().len(), 1);
+    // the owner takes Ann's song out in the app, then Bob adds it again: it's Bob's now, not Ann's
+    s.ok("updatePlaylist", &[("playlistId", &pid), ("songIndexToRemove", "1")]).await;
+    assert_eq!(post("add", serde_json::json!({"id": three, "by": "Bob", "guest": "g-bob"})).await.status(), 200);
+    let st: Value = s.http.get(format!("{jbase}/state")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["song"][1]["by"], "Bob");
+    assert_eq!(post("remove", serde_json::json!({"id": three, "index": 1, "guest": "g-ann"})).await.status(), 403);
+    assert_eq!(post("remove", serde_json::json!({"id": three, "index": 1, "guest": "g-bob"})).await.status(), 200);
     assert_eq!(s.ok("playlistShareEnd", &[("id", &pid)]).await["playlistShare"]["ended"], true);
     assert_eq!(s.http.get(&jbase).send().await.unwrap().status(), 410);
     assert_eq!(post("add", serde_json::json!({"id": two, "guest": "g-bob"})).await.status(), 410);
