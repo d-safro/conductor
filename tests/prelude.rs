@@ -8,6 +8,7 @@ use std::{
 
 use conductor::prelude::{
     self,
+    drives::Drive,
     ui::{Auto, Term},
 };
 use serde_json::{Value, json};
@@ -72,11 +73,16 @@ fn place(base: &str) -> Place {
 }
 
 async fn scripted(config: &Path, args: &[&str], lines: &[&str]) -> String {
+    // no drives to look at: this computer's own aren't part of the tests
+    scripted_with(config, args, lines, vec![]).await
+}
+
+async fn scripted_with(config: &Path, args: &[&str], lines: &[&str], drives: Vec<Drive>) -> String {
     let input = lines.join("\n") + "\n";
     let mut out = Vec::new();
     {
         let mut ui = Term { input: Cursor::new(input.into_bytes()), out: &mut out, hide: false };
-        prelude::run(Some(config.to_path_buf()), args, &mut ui).await.unwrap();
+        prelude::run_with(Some(config.to_path_buf()), args, &mut ui, Some(drives)).await.unwrap();
     }
     String::from_utf8(out).unwrap()
 }
@@ -355,10 +361,14 @@ async fn sets_up_the_whole_music_lab() {
 }
 
 async fn yes(config: &Path, args: &[&str]) -> String {
+    yes_with(config, args, vec![]).await
+}
+
+async fn yes_with(config: &Path, args: &[&str], drives: Vec<Drive>) -> String {
     let mut out = Vec::new();
     {
         let mut ui = Auto { out: &mut out };
-        prelude::run(Some(config.to_path_buf()), args, &mut ui).await.unwrap();
+        prelude::run_with(Some(config.to_path_buf()), args, &mut ui, Some(drives)).await.unwrap();
     }
     String::from_utf8(out).unwrap()
 }
@@ -554,4 +564,83 @@ async fn on_a_domain_with_caddy_then_a_tunnel() {
     // and out again
     yes(&p.config, &["--yes", "domain", "--no-domain"]).await;
     assert!(!dir.join("tunnel.yml").exists() && !read(&dir.join("compose.yml")).contains("tunnel"));
+}
+
+/// A fake drive: a folder of the test's own.
+fn drive(mount: &Path, label: &str, free_gb: u64, usb: bool) -> Drive {
+    std::fs::create_dir_all(mount).unwrap();
+    Drive {
+        mount: std::fs::canonicalize(mount).unwrap(),
+        label: Some(label.into()),
+        size: (free_gb * 3) << 30,
+        free: free_gb << 30,
+        removable: usb,
+        kind: usb.then(|| "USB".into()),
+        system: false,
+    }
+}
+
+#[tokio::test]
+async fn music_auto_finds_the_music_on_the_drives() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    let big = drive(&p.root.join("drives/big"), "Data", 900, false);
+    let usb = drive(&p.root.join("drives/usb"), "Seagate", 100, true);
+    let music = usb.mount.join("Music");
+    std::fs::create_dir_all(music.join("Alpha")).unwrap();
+    for n in 0..3 {
+        std::fs::write(music.join(format!("Alpha/{n}.flac")), b"x").unwrap();
+    }
+    let out = yes_with(&p.config, &["--yes", "music", "--music", "auto", "--data", data.to_str().unwrap()], vec![big, usb]).await;
+    assert!(out.contains("Seagate, USB") && out.contains("drive guard"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.libraries.len(), 1);
+    assert_eq!(c.libraries[0].path, music, "the folder with the songs");
+    assert_eq!(c.libraries[0].sentinel.as_deref(), Some(".library-id"), "on a USB drive, the drive guard");
+    assert!(music.join(".library-id").is_file());
+    // and --music PATH stays as it was: that folder, no drive guard asked for
+    yes_with(&p.config, &["--yes", "music", "--music", p.music.to_str().unwrap()], vec![]).await;
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.libraries[0].path.as_path(), c.libraries[0].sentinel.as_deref()), (p.music.as_path(), None));
+}
+
+#[tokio::test]
+async fn music_auto_makes_a_folder_on_the_biggest_drive() {
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    let small = drive(&p.root.join("drives/small"), "Small", 40, false);
+    let big = drive(&p.root.join("drives/big"), "Data", 900, false);
+    let at = big.mount.clone();
+    let args = [
+        "--yes", "--music", "auto", "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45938", "--downloads", "docker", "--slsk-user", "someone", "--slsk-pass", "pw-drive",
+    ];
+    let out = yes_with(&p.config, &args, vec![small, big]).await;
+    assert!(out.contains(&format!("✓ made {}", at.join("Music").display())), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(c.libraries[0].path, at.join("Music"));
+    assert_eq!(c.libraries[0].sentinel, None, "not a drive that's unplugged");
+    // the downloads beside it, on the same drive (not in the data folder)
+    assert_eq!(c.slskd_downloads.as_deref(), Some(at.join("Downloads").as_path()));
+}
+
+#[tokio::test]
+async fn choosing_where_the_music_goes_in_a_terminal() {
+    let base = services().await;
+    let p = place(&base);
+    let a = drive(&p.root.join("drives/a"), "Small", 40, false);
+    let usb = drive(&p.root.join("drives/usb"), "Stick", 60, true);
+    std::fs::create_dir_all(a.mount.join("Musik")).unwrap();
+    std::fs::write(a.mount.join("Musik/1.mp3"), b"x").unwrap();
+    let at = usb.mount.clone();
+    // the found folder is offered first; choose "make a new one" (2), on the USB drive (the most free: 1), the
+    // folder as offered, then the drive guard as offered, and made; no more folders
+    let out = scripted_with(&p.config, &["music"], &["2", "1", "", "", "", ""], vec![a, usb]).await;
+    assert!(out.contains("is ready for your songs") && !out.contains("Use it anyway"), "{out}");
+    assert!(out.contains("Musik (Small) · 1 song · 43 GB free"), "{out}");
+    assert!(out.contains("Stick, USB") && out.contains("drive guard"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.libraries[0].path.as_path(), c.libraries[0].sentinel.as_deref()), (at.join("Music").as_path(), Some(".library-id")));
+    assert!(at.join("Music/.library-id").is_file());
 }

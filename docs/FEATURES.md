@@ -84,6 +84,11 @@ The detailed list. The [README](../README.md) has the short version.
 - **Downloads are optional**: without slskd or Lidarr, songs you don't have aren't shown (`catalog` is off unless set),
   and everything else works. Prelude sets the downloader up as one Docker container (slskd; Linux or Windows with
   Docker), on this computer's connection or inside a VPN (gluetun), or uses your own slskd.
+- **Prelude finds your music**: with no music folder yet (or `--music auto`), the drives are listed (lsblk or
+  /proc/mounts on Linux, the logical drives on Windows; label, size, free space, USB or not) with the music folders
+  found near the top of each and their songs counted (a quick look: 5 seconds and 100,000 songs a drive at most).
+  It offers the one with the most songs, else a new folder on the drive with the most free space (the downloads
+  beside it), and on a USB drive the drive guard's file.
 - **Prelude's services folder** (`services/` beside config.toml, one compose project, `docker compose up -d --build`):
   each service can be set up for you there, be one you already run, or be off, and its address and keys go into
   Conductor's settings by themselves. The downloader (`downloads.yml`); Lidarr (its key shared with Conductor, your

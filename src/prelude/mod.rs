@@ -2,7 +2,8 @@
 //! there are no settings yet. Each step checks what it can, and running it again shows the current values as the
 //! defaults and can change one part (`conductor setup vpn`):
 //!
-//!   music      the music folders: there, readable, songs counted, an optional sentinel file
+//!   music      the music folders: there, readable, songs counted, an optional sentinel file. With none yet (or
+//!              --music auto), the drives here are looked at first: music already on them, or a new folder on one
 //!   server     the data folder, the address and port
 //!   admin      the first admin (the password typed hidden)
 //!   downloads  Stagehand (optional): set the downloader up as one Docker container (slskd), or use your own slskd
@@ -19,6 +20,7 @@
 //! the VPN's keys) go to secrets.toml (mode 600) or the VPN folder's own files, never to config.toml, the screen or
 //! the log.
 
+pub mod drives;
 pub mod gluetun;
 pub mod service;
 pub mod stack;
@@ -182,6 +184,10 @@ pub struct Wizard<'a> {
     make: Option<Downloader>,
     /// ports given out in this run (so two services set up now don't get the same one)
     ports: HashSet<u16>,
+    /// the drives here (looked at once, when needed; tests give their own)
+    drives: Option<Vec<drives::Drive>>,
+    /// a new music folder was made on a drive: the downloads go beside it, not in the data folder
+    downloads_near: Option<String>,
 }
 
 /// The answers for the downloader container.
@@ -196,7 +202,7 @@ pub const HELP: &str = "conductor setup [PART] [--yes] [settings]   (also: condu
 Parts: music, server, admin, downloads, vpn, services, domain, import, service (default: all).
 --yes asks nothing: the settings below, then the current ones, are the answers.
 
-  --music PATH (again for more)  --sentinel NAME  --data DIR  --listen ADDR:PORT
+  --music PATH (again for more; auto: the one the drives suggest)  --sentinel NAME  --data DIR  --listen ADDR:PORT
   --admin NAME                   (password: CONDUCTOR_PASSWORD)
   --downloads docker --slsk-user NAME (password: CONDUCTOR_SLSK_PASSWORD) [--downloads-dir DIR] [--start]
         (the downloader set up for you, one container)   or --slskd-url URL --slskd-key KEY --slskd-downloads DIR
@@ -239,6 +245,11 @@ pub async fn cli(config_path: Option<PathBuf>, args: &[&str]) -> Result<PathBuf>
 
 /// Run Prelude. `config_path`: the one given with --config, else the default one. Returns the settings file.
 pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -> Result<PathBuf> {
+    run_with(config_path, args, ui, None).await
+}
+
+/// The same, with these drives instead of the ones found here (tests).
+pub async fn run_with(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui, drives: Option<Vec<drives::Drive>>) -> Result<PathBuf> {
     let f = Flags::parse(args)?;
     let explicit = config_path.is_some();
     let path = match config_path {
@@ -247,7 +258,7 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
     };
     let fresh = !path.is_file();
     let d = Draft::load(&path)?;
-    let mut w = Wizard { ui, f, d, make: None, ports: HashSet::new() };
+    let mut w = Wizard { ui, f, d, make: None, ports: HashSet::new(), drives, downloads_near: None };
     w.ui.say("Prelude: setting up Conductor.");
     if !fresh {
         w.ui.say(&format!("Your settings: {} (the current values are the defaults; Enter keeps them).", w.d.path.display()));
@@ -337,14 +348,25 @@ impl Wizard<'_> {
             .filter_map(|l| Some((l.get("path")?.as_str()?.to_string(), l.get("sentinel").and_then(|s| s.as_str()).map(String::from))))
             .collect();
         let mut wanted: Vec<String> = self.f.all("music").iter().map(|s| s.to_string()).collect();
+        // --music auto: the folder the drives suggest
+        let auto_pick = wanted.first().is_some_and(|w| w == "auto");
         if wanted.is_empty() {
             wanted = current.iter().map(|c| c.0.clone()).collect();
         }
+        // no music folder yet: look at the drives first (asking nothing, only with --music auto)
+        let mut look = auto_pick || (wanted.is_empty() && !self.ui.auto());
         let mut libs = vec![];
         let mut i = 0;
         loop {
             let def = wanted.get(i).cloned().unwrap_or_default();
-            let path = self.ui.ask(if i == 0 { "Music folder" } else { "Another music folder (Enter: no more)" }, &def);
+            let q = if i == 0 { "Music folder" } else { "Another music folder (Enter: no more)" };
+            // made just now: empty, and that's fine
+            let (path, new) = match look.then(|| self.pick_music()) {
+                Some(Some(p)) => p,
+                Some(None) if auto_pick => (String::new(), false),
+                _ => (self.ui.ask(q, &def), false),
+            };
+            look = false;
             if path.is_empty() {
                 if i == 0 && !self.ui.auto() {
                     self.ui.say("A music folder is needed.");
@@ -355,6 +377,7 @@ impl Wizard<'_> {
             let p = PathBuf::from(&path);
             match check_music(&p) {
                 Ok(n) => self.ui.say(&format!("  ✓ {} songs in {}", n, p.display())),
+                Err(_) if new => self.ui.say(&format!("  ✓ {} is ready for your songs", p.display())),
                 Err(e) => {
                     self.ui.say(&format!("  ✗ {e}"));
                     if !self.ui.yes("Use it anyway (e.g. a drive that isn't connected now)?", self.ui.auto()) {
@@ -363,12 +386,18 @@ impl Wizard<'_> {
                 }
             }
             let cur_sentinel = current.iter().find(|c| c.0 == path).and_then(|c| c.1.clone());
-            let sentinel = self.ask_or("sentinel", "A file that must be in it for the drive to count as connected (Enter: none)", cur_sentinel, "");
+            // on a drive that can be unplugged, the drive guard's file is the default
+            let unplug = self.drive_of(&p).filter(|d| d.removable).map(|d| d.describe());
+            if let Some(what) = &unplug {
+                self.ui.say(&format!("  It's on a drive that can be unplugged ({what}). A file in it (the drive guard) tells Conductor the drive is really there,"));
+                self.ui.say("  so while it's unplugged your songs stay in the library instead of looking deleted.");
+            }
+            let sentinel = self.ask_or("sentinel", "A file that must be in it for the drive to count as connected (Enter: none)", cur_sentinel, if unplug.is_some() { ".library-id" } else { "" });
             let mut t = Table::new();
             t.insert("name".into(), (if i == 0 { "Music".to_string() } else { format!("Music {}", i + 1) }).into());
             t.insert("path".into(), path.clone().into());
             if !sentinel.is_empty() {
-                if !p.join(&sentinel).exists() && self.ui.yes(&format!("{sentinel} isn't there yet; make it now?"), false) {
+                if !p.join(&sentinel).exists() && self.ui.yes(&format!("{sentinel} isn't there yet; make it now?"), unplug.is_some()) {
                     let _ = std::fs::write(p.join(&sentinel), b"conductor\n");
                 }
                 t.insert("sentinel".into(), sentinel.into());
@@ -383,6 +412,87 @@ impl Wizard<'_> {
             self.d.set("libraries", toml::Value::Array(libs));
         }
         Ok(())
+    }
+
+    /// The drives here, looked at once.
+    fn drives(&mut self) -> &[drives::Drive] {
+        self.drives.get_or_insert_with(drives::detect)
+    }
+
+    fn drive_of(&mut self, p: &Path) -> Option<drives::Drive> {
+        let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        drives::drive_of(self.drives(), &p).cloned()
+    }
+
+    /// Where the library lives, from what's on the drives: a folder (and whether it was made just now), or None
+    /// to type one.
+    fn pick_music(&mut self) -> Option<(String, bool)> {
+        let drives = self.drives().to_vec();
+        if drives.is_empty() {
+            return None;
+        }
+        self.ui.say("  Looking for music on this computer's drives…");
+        let found = drives::find_music(&drives);
+        let pick = drives::default_choice(&drives, &found);
+        let about = |d: &drives::Drive| match d.describe() {
+            s if s.is_empty() => String::new(),
+            s => format!(" ({s})"),
+        };
+        let mut opts: Vec<String> = found
+            .iter()
+            .map(|f| {
+                let d = &drives[f.drive];
+                {
+                let n = format!("{}{}", drives::thousands(f.songs), if f.more { "+" } else { "" });
+                let songs = if f.songs == 1 && !f.more { "1 song".to_string() } else { format!("{n} songs") };
+                format!("{}{} · {songs} · {} free", f.path.display(), about(d), drives::size(d.free))
+            }
+            })
+            .collect();
+        opts.push("Make a new music folder on a drive".into());
+        opts.push("Type a path".into());
+        let def = match pick {
+            drives::Pick::Found(i) => i,
+            drives::Pick::NewOn(_) => found.len(),
+            drives::Pick::Type => found.len() + 1,
+        };
+        let refs: Vec<&str> = opts.iter().map(String::as_str).collect();
+        let c = self.ui.choose("Where is your music (or where should it go)?", &refs, def);
+        if c < found.len() {
+            return Some((found[c].path.to_string_lossy().to_string(), false));
+        }
+        if c > found.len() {
+            return None;
+        }
+        // a new folder: the drives with the most free space first
+        let mut order: Vec<usize> = (0..drives.len()).filter(|i| drives[*i].kind.as_deref() != Some("network")).collect();
+        order.sort_by_key(|i| std::cmp::Reverse(drives[*i].free));
+        if order.is_empty() {
+            return None;
+        }
+        let labels: Vec<String> = order.iter().map(|i| &drives[*i]).map(|d| format!("{}{} · {} free of {}", d.mount.display(), about(d), drives::size(d.free), drives::size(d.size))).collect();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let ddef = match pick {
+            drives::Pick::NewOn(d) => order.iter().position(|x| *x == d).unwrap_or(0),
+            _ => 0,
+        };
+        let d = drives[order[self.ui.choose("On which drive?", &refs, ddef)]].clone();
+        let path = self.ui.ask("The new folder", &drives::new_folder(&d).to_string_lossy());
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            self.ui.say(&format!("  ✗ can't make {path}: {e}"));
+            return None;
+        }
+        self.ui.say(&format!("  ✓ made {path}"));
+        // the downloads on the same drive, beside it (on the system drive they stay in the data folder)
+        if !d.system {
+            self.downloads_near = Path::new(&path).parent().map(|p| p.join("Downloads").to_string_lossy().to_string());
+        }
+        Some((path, true))
+    }
+
+    /// Where downloads go before they're filed, unless set already.
+    fn downloads_default(&self) -> String {
+        self.downloads_near.clone().unwrap_or_else(|| self.data_dir().join("downloads").to_string_lossy().to_string())
     }
 
     // ── 2. server ──
@@ -496,8 +606,7 @@ impl Wizard<'_> {
                 self.ui.say("  ✗ a Soulseek user name and password are needed; downloads stay off");
                 return Ok(());
             }
-            let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
-            let dl = self.ask_or("downloads-dir", "Where downloads go before they're filed", self.d.str("slskd_downloads"), &data.join("downloads").to_string_lossy());
+            let dl = self.ask_or("downloads-dir", "Where downloads go before they're filed", self.d.str("slskd_downloads"), &self.downloads_default());
             self.make = Some(Downloader { soulseek_user: user, soulseek_password: pass, downloads: dl });
             self.ui.say("  (the next step can put it inside a VPN)");
             return Ok(());
@@ -722,8 +831,7 @@ impl Wizard<'_> {
                 // Enter keeps what slskd has now
                 let user = self.ask_or("slsk-user", "Your Soulseek user name (a new one is made if it's free)", cur.soulseek_user, "");
                 let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", cur.soulseek_password);
-                let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
-                let dl = self.ask_or("downloads-dir", "Where downloads go", self.d.str("slskd_downloads"), &data.join("downloads").to_string_lossy());
+                let dl = self.ask_or("downloads-dir", "Where downloads go", self.d.str("slskd_downloads"), &self.downloads_default());
                 if user.is_empty() || pass.is_empty() {
                     self.ui.say("  ✗ a Soulseek user name and password are needed; nothing changed");
                     return Ok(());
