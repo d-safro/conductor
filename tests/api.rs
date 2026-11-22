@@ -3446,6 +3446,7 @@ async fn backup_and_restore() {
     let songs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track").fetch_one(&pool).await.unwrap();
     assert_eq!((pls, songs), (1, 3));
     pool.close().await;
+    drop(pool);
 
     // over a database that's there: only with --force, and what was there is kept aside
     assert!(conductor::backup::restore(&cfg, &out, false).unwrap_err().to_string().contains("already a database"));

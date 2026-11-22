@@ -166,9 +166,18 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
             .map(|n| cfg.data_dir.join(n))
             .collect();
         moving.extend(settings.iter().map(|(_, p)| p.clone()));
+        let mut moved: Vec<(PathBuf, PathBuf)> = vec![];
         for p in moving.into_iter().filter(|p| p.exists()) {
-            let name = p.file_name().map(|n| n.to_owned()).unwrap_or_default();
-            std::fs::rename(&p, aside.join(name)).with_context(|| format!("moving {} aside", p.display()))?;
+            let to = aside.join(p.file_name().map(|n| n.to_owned()).unwrap_or_default());
+            if let Err(e) = rename_patiently(&p, &to) {
+                // put back what was moved: all or nothing
+                for (from, to) in moved.iter().rev() {
+                    let _ = rename_patiently(to, from);
+                }
+                let _ = std::fs::remove_dir(&aside);
+                return Err(anyhow::Error::new(e).context(format!("moving {} aside (is Conductor still running?)", p.display())));
+            }
+            moved.push((p, to));
         }
         out.moved_aside = Some(aside);
     }
@@ -185,6 +194,22 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
         out.files.push(name);
     }
     Ok(out)
+}
+
+/// A rename, tried for a few seconds: on Windows a file another program just let go of (or a virus scanner is
+/// reading) can't be moved for a moment.
+fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if tries < 25 && e.kind() != std::io::ErrorKind::NotFound => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Is version `a` newer than `b` (x.y.z)?
