@@ -437,7 +437,7 @@ function load(play, at = 0) {
 }
 function next(auto) {
   if (!Q.length) return;
-  if (auto && repeat === 2) { au.currentTime = 0; au.play(); return }
+  if (auto && repeat === 2) { played = 0; lastT = 0; scrobbled = false; au.currentTime = 0; au.play(); return } // each time round is a play
   if (I + 1 < Q.length) I++;
   else if (repeat === 1) I = 0;
   else { if (!auto) return; au.pause(); au.currentTime = 0; return }
