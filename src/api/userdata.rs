@@ -332,12 +332,25 @@ pub async fn delete_playlist(c: &Ctx) -> Result<Reply, ApiError> {
 // ── play queue ──
 
 pub async fn get_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
-    let row: Option<(String, Option<String>, i64, String, i64)> =
-        sqlx::query_as("SELECT track_ids, current, position_ms, changed_by, changed_at FROM play_queue WHERE user_id = ?")
-            .bind(&c.user.id)
-            .fetch_optional(&c.st.db)
-            .await?;
-    let Some((ids, current, pos, by, at)) = row else {
+    play_queue(c, false).await
+}
+
+/// OpenSubsonic's index-based queue: the current song by its place (a song can be in the queue twice).
+pub async fn get_play_queue_by_index(c: &Ctx) -> Result<Reply, ApiError> {
+    play_queue(c, true).await
+}
+
+/// track ids (JSON), current id, current place, position (ms), changed by, changed at
+type QueueRow = (String, Option<String>, Option<i64>, i64, String, i64);
+
+async fn play_queue(c: &Ctx, by_index: bool) -> Result<Reply, ApiError> {
+    let row: Option<QueueRow> = sqlx::query_as(
+        "SELECT track_ids, current, current_index, position_ms, changed_by, changed_at FROM play_queue WHERE user_id = ?",
+    )
+    .bind(&c.user.id)
+    .fetch_optional(&c.st.db)
+    .await?;
+    let Some((ids, current, index, pos, by, at)) = row else {
         return empty();
     };
     let ids: Vec<String> = serde_json::from_str(&ids).unwrap_or_default();
@@ -354,6 +367,13 @@ pub async fn get_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
         entries.extend(e);
     }
     let mut v = json!({ "username": c.user.name, "changed": iso(at), "changedBy": by, "position": pos, "entry": entries });
+    if by_index {
+        let i = index.or_else(|| current.as_ref().and_then(|cur| ids.iter().position(|x| x == cur).map(|p| p as i64)));
+        if let Some(i) = i {
+            v["currentIndex"] = i.into();
+        }
+        return ok(json!({ "playQueueByIndex": v }));
+    }
     if let Some(cur) = current {
         v["current"] = cur.into();
     }
@@ -362,18 +382,39 @@ pub async fn get_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
 
 pub async fn save_play_queue(c: &Ctx) -> Result<Reply, ApiError> {
     let ids: Vec<&str> = c.p.all("id");
+    let current = c.p.get("current");
+    let index = current.and_then(|cur| ids.iter().position(|x| *x == cur)).map(|i| i as i64);
+    store_play_queue(c, &ids, current, index).await
+}
+
+pub async fn save_play_queue_by_index(c: &Ctx) -> Result<Reply, ApiError> {
+    let ids: Vec<&str> = c.p.all("id");
+    let index = c.p.int("currentIndex");
+    if let Some(i) = index
+        && (i < 0 || i as usize >= ids.len())
+    {
+        return Err(ApiError::new(10, "currentIndex isn't a place in the queue"));
+    }
+    let current = index.map(|i| ids[i as usize]);
+    store_play_queue(c, &ids, current, index).await
+}
+
+async fn store_play_queue(c: &Ctx, ids: &[&str], current: Option<&str>, index: Option<i64>) -> Result<Reply, ApiError> {
     if ids.is_empty() {
         sqlx::query("DELETE FROM play_queue WHERE user_id = ?").bind(&c.user.id).execute(&c.st.db).await?;
         return empty();
     }
     sqlx::query(
-        "INSERT INTO play_queue (user_id, track_ids, current, position_ms, changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO play_queue (user_id, track_ids, current, current_index, position_ms, changed_by, changed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET track_ids = excluded.track_ids, current = excluded.current,
-           position_ms = excluded.position_ms, changed_by = excluded.changed_by, changed_at = excluded.changed_at",
+           current_index = excluded.current_index, position_ms = excluded.position_ms, changed_by = excluded.changed_by,
+           changed_at = excluded.changed_at",
     )
     .bind(&c.user.id)
     .bind(serde_json::to_string(&ids).unwrap())
-    .bind(c.p.get("current"))
+    .bind(current)
+    .bind(index)
     .bind(c.p.int("position").unwrap_or(0))
     .bind(&c.client)
     .bind(now())

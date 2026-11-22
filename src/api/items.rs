@@ -150,15 +150,16 @@ pub fn song_json(t: &TrackRow) -> Value {
             rg.insert(k.into(), x.into());
         }
     }
-    if !rg.is_empty() {
-        put(&mut v, "replayGain", Value::Object(rg));
-    }
-    if let Some(i) = &t.isrc {
-        put(&mut v, "isrc", vec![i.clone()]);
-    }
-    if let Some(b) = t.bit_depth {
-        put(&mut v, "bitDepth", b);
-    }
+    // OpenSubsonic's fields, always there (empty or 0 when not known), as Navidrome sends them: some apps expect them
+    put(&mut v, "replayGain", Value::Object(rg));
+    put(&mut v, "isrc", t.isrc.iter().cloned().collect::<Vec<_>>());
+    put(&mut v, "bitDepth", t.bit_depth.unwrap_or(0));
+    put(&mut v, "bpm", 0);
+    put(&mut v, "comment", "");
+    put(&mut v, "moods", Vec::<Value>::new());
+    put(&mut v, "contributors", Vec::<Value>::new());
+    put(&mut v, "displayComposer", "");
+    put(&mut v, "explicitStatus", "");
     if let Some(p) = t.last_played {
         put(&mut v, "played", iso(p));
     }
@@ -190,9 +191,20 @@ pub fn album_json(a: &AlbumRow) -> Value {
         "artists": [{ "id": a.artist_id, "name": a.artist_name }],
         "displayArtist": a.artist_name,
         "genres": a.genre.iter().flat_map(|g| crate::library::split_genres(g)).map(|g| json!({ "name": g })).collect::<Vec<_>>(),
+        "mediaType": "album",
+        "releaseTypes": [],
+        "recordLabels": [],
+        "moods": [],
+        "discTitles": [],
+        "explicitStatus": "",
+        "version": "",
+        "releaseDate": {},
+        "originalReleaseDate": {},
     });
     if let Some(y) = a.year {
         put(&mut v, "year", y);
+        put(&mut v, "releaseDate", json!({ "year": y }));
+        put(&mut v, "originalReleaseDate", json!({ "year": y }));
     }
     if let Some(g) = a.genre.as_deref().and_then(|g| crate::library::split_genres(g).into_iter().next()) {
         put(&mut v, "genre", g);
@@ -214,6 +226,7 @@ pub fn artist_json(a: &ArtistRow) -> Value {
         "userRating": a.rating.unwrap_or(0),
         "musicBrainzId": a.mbid.clone().unwrap_or_default(),
         "sortName": a.sort_name,
+        "roles": if a.album_count > 0 { json!(["albumartist", "artist"]) } else { json!(["artist"]) },
     });
     if let Some(c) = &a.cover_album {
         put(&mut v, "coverArt", c.clone());

@@ -3497,3 +3497,31 @@ async fn whole_library_paging_gets_each_song_once() {
     let g = s.ok("getGenres", &[]).await;
     assert_eq!(g["genres"]["genre"][0]["songCount"], 3);
 }
+
+#[tokio::test]
+async fn play_queue_by_index_keeps_the_right_copy() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    let ids: Vec<String> = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["id"].as_str().unwrap().to_string())
+        .collect();
+    let (a, b) = (ids[0].as_str(), ids[1].as_str());
+    // the same song twice: the second copy is the one playing
+    s.ok("savePlayQueueByIndex", &[("id", a), ("id", b), ("id", a), ("currentIndex", "2"), ("position", "1500")]).await;
+    let q = s.ok("getPlayQueueByIndex", &[]).await;
+    assert_eq!((q["playQueueByIndex"]["currentIndex"].as_i64(), q["playQueueByIndex"]["position"].as_i64()), (Some(2), Some(1500)));
+    assert_eq!(q["playQueueByIndex"]["entry"].as_array().unwrap().len(), 3);
+    assert_eq!(s.ok("getPlayQueue", &[]).await["playQueue"]["current"], a, "the id-based view still works");
+    assert_eq!(s.call("savePlayQueueByIndex", &[("id", a), ("currentIndex", "5")]).await["error"]["code"], 10);
+    // saved the old way, the place is the first copy
+    s.ok("savePlayQueue", &[("id", b), ("id", a), ("current", a)]).await;
+    assert_eq!(s.ok("getPlayQueueByIndex", &[]).await["playQueueByIndex"]["currentIndex"], 1);
+    let ext = s.ok("getOpenSubsonicExtensions", &[]).await;
+    assert!(ext["openSubsonicExtensions"].as_array().unwrap().iter().any(|e| e["name"] == "indexBasedQueue"));
+}

@@ -34,11 +34,11 @@ pub async fn artists(c: &Ctx, old_style: bool) -> Result<Reply, ApiError> {
         groups.entry(index_letter(&a.sort_name)).or_default().push(artist_json(a));
     }
     let index: Vec<Value> = groups.into_iter().map(|(name, artist)| json!({ "name": name, "artist": artist })).collect();
+    let last = c.st.scan.last_scan.load(Ordering::Relaxed) * 1000;
     if old_style {
-        let last = c.st.scan.last_scan.load(Ordering::Relaxed) * 1000;
         ok(json!({ "indexes": { "lastModified": last, "ignoredArticles": "The An A", "index": index } }))
     } else {
-        ok(json!({ "artists": { "ignoredArticles": "The An A", "index": index } }))
+        ok(json!({ "artists": { "lastModified": last, "ignoredArticles": "The An A", "index": index } }))
     }
 }
 
@@ -74,13 +74,26 @@ pub async fn directory(c: &Ctx) -> Result<Reply, ApiError> {
         Some("artist") => {
             let a = items::artists_where(c, "ar.id = ?", &[id], "").await?.remove(0);
             let albums = items::albums_where(c, "al.artist_id = ?", &[id], "ORDER BY al.year, al.sort_name").await?;
-            ok(json!({ "directory": { "id": a.id, "name": a.name, "child": albums.iter().map(album_json).collect::<Vec<_>>() } }))
+            let mut d = json!({ "id": a.id, "name": a.name, "albumCount": a.album_count, "userRating": a.rating.unwrap_or(0),
+                "child": albums.iter().map(album_json).collect::<Vec<_>>() });
+            if let Some(s) = a.starred_at {
+                d["starred"] = iso(s).into();
+            }
+            ok(json!({ "directory": d }))
         }
         Some("album") => {
             let a = items::albums_where(c, "al.id = ?", &[id], "").await?.remove(0);
             let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number").await?;
-            ok(json!({ "directory": { "id": a.id, "name": a.name, "parent": a.artist_id,
-                "child": songs.iter().map(song_json).collect::<Vec<_>>() } }))
+            let mut d = json!({ "id": a.id, "name": a.name, "parent": a.artist_id, "songCount": a.song_count,
+                "playCount": a.play_count.unwrap_or(0), "userRating": a.rating.unwrap_or(0),
+                "child": songs.iter().map(song_json).collect::<Vec<_>>() });
+            if let Some(p) = a.last_played {
+                d["played"] = iso(p).into();
+            }
+            if let Some(s) = a.starred_at {
+                d["starred"] = iso(s).into();
+            }
+            ok(json!({ "directory": d }))
         }
         _ => Err(ApiError::not_found("Directory")),
     }
@@ -265,7 +278,10 @@ pub async fn top_songs(c: &Ctx) -> Result<Reply, ApiError> {
 pub async fn scan_status(c: &Ctx) -> Result<Reply, ApiError> {
     let s = &c.st.scan;
     let last = s.last_scan.load(Ordering::Relaxed);
-    let mut v = json!({ "scanning": s.scanning.load(Ordering::Relaxed), "count": s.count.load(Ordering::Relaxed) });
+    let folders: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM album WHERE song_count > 0").fetch_one(&c.st.db).await.unwrap_or(0);
+    let mut v = json!({ "scanning": s.scanning.load(Ordering::Relaxed), "count": s.count.load(Ordering::Relaxed),
+        "folderCount": folders, "scanType": if s.last_full.load(Ordering::Relaxed) { "full" } else { "quick" },
+        "elapsedTime": s.last_elapsed_ms.load(Ordering::Relaxed) / 1000 });
     if last > 0 {
         v["lastScan"] = iso(last).into();
     }

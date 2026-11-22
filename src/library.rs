@@ -51,6 +51,9 @@ pub struct ScanStatus {
     pub scanning: AtomicBool,
     pub count: AtomicI64,
     pub last_scan: AtomicI64,
+    /// how long the last scan took, and whether it re-read every file
+    pub last_elapsed_ms: AtomicI64,
+    pub last_full: AtomicBool,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
@@ -369,7 +372,10 @@ pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatu
     if let Err(e) = normalize_genres(db).await {
         warn!("couldn't tidy genres: {e:#}");
     }
+    let started = std::time::Instant::now();
     let r = scan_inner(db, libs, status, full).await;
+    status.last_elapsed_ms.store(started.elapsed().as_millis() as i64, Ordering::SeqCst);
+    status.last_full.store(full, Ordering::SeqCst);
     status.scanning.store(false, Ordering::SeqCst);
     status.last_scan.store(db::now(), Ordering::SeqCst);
     if let Ok(rep) = &r {

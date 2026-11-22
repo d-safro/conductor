@@ -6,3 +6,5 @@ CREATE INDEX annotation_starred ON annotation(user_id, item_kind, starred_at) WH
 CREATE INDEX album_sort ON album(sort_name, id);
 -- getGenres: songs and albums per genre, read in order from here.
 CREATE INDEX track_genre_album ON track(genre, album_id) WHERE missing_since IS NULL;
+-- The play queue's current song by its place too (OpenSubsonic's index-based queue: a song can be in it twice).
+ALTER TABLE play_queue ADD COLUMN current_index INTEGER;
