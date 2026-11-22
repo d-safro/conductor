@@ -2438,6 +2438,10 @@ async fn better_copy_swapped_in_same_id() {
     // two songs Conductor downloaded earlier as MP3 from the right album
     tone(&s.music.join("Songs/Alpha/Alpha - Four.mp3"), "Four", "Alpha", "First Album", 4, 2);
     tone(&s.music.join("Songs/Alpha/Alpha - Five.mp3"), "Five", "Alpha", "First Album", 5, 2);
+    // and a song of yours where Four's better copy would go
+    let heaven = s.music.join("Songs/Alpha/Alpha - Four.flac");
+    tone(&heaven, "Heaven", "Alpha", "Fear of Music", 7, 2);
+    let heaven_was = std::fs::read(&heaven).unwrap();
     conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
     let id_of = async |t: &str| s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
     let (four, five) = (id_of("Four").await, id_of("Five").await);
@@ -2468,14 +2472,15 @@ async fn better_copy_swapped_in_same_id() {
         "both songs to be looked at",
     )
     .await;
-    // Four: the FLAC is in, the MP3 gone, the same song id (and heart)
-    assert!(s.music.join("Songs/Alpha/Alpha - Four.flac").is_file());
+    // Four: the FLAC is in (beside your song with its name, untouched), the MP3 gone, the same song id (and heart)
+    assert!(s.music.join("Songs/Alpha/Alpha - Four (2).flac").is_file());
+    assert_eq!(std::fs::read(&heaven).unwrap(), heaven_was, "your song is still there, unchanged");
     assert!(!s.music.join("Songs/Alpha/Alpha - Four.mp3").exists());
     let song = s.ok("getSong", &[("id", &four)]).await["song"].clone();
-    assert_eq!((song["suffix"].as_str(), song["path"].as_str().map(|p| p.ends_with("Four.flac"))), (Some("flac"), Some(true)), "{song}");
+    assert_eq!((song["suffix"].as_str(), song["path"].as_str().map(|p| p.ends_with("Four (2).flac"))), (Some("flac"), Some(true)), "{song}");
     assert!(song["starred"].is_string());
     let rel: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-4'").fetch_one(&s.st.db).await.unwrap();
-    assert_eq!(rel, "Songs/Alpha/Alpha - Four.flac");
+    assert_eq!(rel, "Songs/Alpha/Alpha - Four (2).flac");
     // Five: the download didn't check out, so the MP3 stays and nothing is left behind
     assert!(s.music.join("Songs/Alpha/Alpha - Five.mp3").is_file());
     assert!(!s.music.join("Songs/Alpha/Alpha - Five.flac").exists());
@@ -2995,6 +3000,98 @@ async fn kill_switch_pauses_downloads_while_the_vpn_is_down() {
     // down again: paused again
     up.store(false, SeqCst);
     wait_for(async || conductor::vpn::paused(&s.st), "the pause").await;
+}
+
+#[tokio::test]
+async fn kill_switch_stops_a_round_when_the_vpn_drops() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let state: Arc<std::sync::OnceLock<Arc<AppState>>> = Arc::default();
+    let (searches, queued) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (st2, s2, q2) = (state.clone(), searches.clone(), queued.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/searches" if !body.is_empty() => {
+                s2.fetch_add(1, SeqCst);
+                // the tunnel drops while the first search runs
+                st2.get().unwrap().vpn.write().unwrap().up = Some(false);
+                json!({})
+            }
+            p if p.ends_with("/responses") => json!([{ "username": "peer", "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000,
+                "files": [{ "filename": r"Music\Alpha\Album\01 Five.flac", "size": 1, "bitRate": 0, "extension": "flac" }] }]),
+            p if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+            p if p.starts_with("/api/v0/transfers/downloads/") && !body.is_empty() => {
+                q2.fetch_add(1, SeqCst);
+                json!({})
+            }
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+        c.downloads_require_vpn = true;
+    })
+    .await;
+    state.set(s.st.clone()).ok();
+    s.st.vpn.write().unwrap().up = Some(true);
+    for key in ["dz-t-5", "dz-t-6"] {
+        sqlx::query("INSERT INTO request (key, title, artists_json, album, status, asked_at) VALUES (?, 'Five', '[\"Alpha\"]', 'Album', 'retry', 1)")
+            .bind(key)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    wait_for(async || searches.load(SeqCst) > 0, "the first search").await;
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!((searches.load(SeqCst), queued.load(SeqCst)), (1, 0), "nothing more is searched or fetched once the VPN is down");
+}
+
+#[tokio::test]
+async fn a_filed_song_whose_file_is_gone_stops_the_scans() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    let (base, _) = stand_in(|path, _q, _| {
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/transfers/downloads" => json!([]),
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_fast_test = true;
+    })
+    .await;
+    // filed, then the file went before it was scanned in
+    sqlx::query("INSERT INTO request (key, title, artists_json, status, rel, arrived_at, asked_at) VALUES ('dz-t-5', 'Five', '[\"Alpha\"]', 'done', 'Songs/Alpha/Alpha - Five.flac', 1, 1)")
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    wait_for(
+        async || sqlx::query_scalar::<_, String>("SELECT status FROM request WHERE key = 'dz-t-5'").fetch_one(&s.st.db).await.unwrap() == "notfound",
+        "the song to be given up on",
+    )
+    .await;
+    let generation = || s.st.catalog.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let before = generation();
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!(generation(), before, "no more scans for it");
 }
 
 #[tokio::test]
