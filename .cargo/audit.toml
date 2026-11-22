@@ -1,7 +1,0 @@
-# cargo audit (CI's "audit" job). Each advisory ignored here says why.
-[advisories]
-ignore = [
-    # rsa's timing side channel ("Marvin"): rsa is only in Cargo.lock through sqlx's MySQL driver, which Conductor
-    # doesn't build (sqlx's "sqlite" feature only): `cargo tree -i rsa` prints nothing. No fixed rsa release yet.
-    "RUSTSEC-2023-0071",
-]
