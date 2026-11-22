@@ -99,7 +99,7 @@ pub fn router(state: Shared) -> Router {
         .merge(native::routes())
         .merge(crate::admin::routes())
         .merge(crate::brand::routes())
-        .route("/", get(|| async { "Conductor. Point a Subsonic app at this address." }))
+        .merge(crate::player::routes())
         .with_state(state)
 }
 

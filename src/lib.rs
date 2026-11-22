@@ -17,5 +17,6 @@ pub mod listenbrainz;
 pub mod live;
 pub mod mixes;
 pub mod online;
+pub mod player;
 pub mod spotify;
 pub mod wiki;
