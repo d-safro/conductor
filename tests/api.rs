@@ -818,6 +818,38 @@ async fn songs_you_dont_have() {
     assert_eq!(pl["playlist"]["entry"][0]["title"].as_str().unwrap().chars().next(), Some('⏳'));
 }
 
+#[tokio::test]
+async fn a_download_never_replaces_a_file_you_have() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    // another song already where the download would be filed
+    let there = s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac");
+    tone(&there, "Heaven", "Talking Heads", "Fear of Music", 7, 2);
+    let before = std::fs::read(&there).unwrap();
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    s.ok("star", &[("id", "dz-t-900")]).await;
+    let mut local = None;
+    for _ in 0..100 {
+        let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+        if r["lookupSongs"]["song"][0]["status"] == "ready" {
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().map(String::from);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let local = local.expect("the song never arrived");
+    assert_eq!(std::fs::read(&there).unwrap(), before, "the song you had is still there, unchanged");
+    assert!(s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer (2).flac").is_file());
+    assert_eq!(s.ok("getSong", &[("id", &local)]).await["song"]["title"], "Psycho Killer");
+    let heaven = s.ok("search3", &[("query", "Heaven")]).await;
+    assert_eq!(heaven["searchResult3"]["song"][0]["title"], "Heaven");
+    // nothing half-copied left beside them
+    let names: Vec<String> = std::fs::read_dir(s.music.join("Songs/Talking Heads")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
+
 async fn trial_server(tune: impl FnOnce(&mut Config)) -> (Arc<Server>, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let downloads = tmp.path().join("complete");

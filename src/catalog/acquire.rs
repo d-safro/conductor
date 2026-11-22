@@ -464,17 +464,44 @@ async fn file_it(st: &AppState, r: &Req, src: &Path) -> Result<String> {
     let artist = safe(r.artists().first().map(String::as_str).unwrap_or("Unknown"));
     let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase())).unwrap_or_default();
     let folder = safe(&r.folder);
-    let rel = format!("{folder}/{artist}/{artist} - {}{ext}", safe(&r.title));
+    let stem = format!("{folder}/{artist}/{artist} - {}", safe(&r.title));
+    // a file may be there already (another version of the song, the same title from another album, your own
+    // file): never replace it
+    let mut rel = format!("{stem}{ext}");
+    let mut n = 2;
+    while tokio::fs::try_exists(root.join(&rel)).await.unwrap_or(true) {
+        if n > 99 {
+            bail!("{} and 98 others like it are there already", rel);
+        }
+        rel = format!("{stem} ({n}){ext}");
+        n += 1;
+    }
     let dst = root.join(&rel);
     if let Some(d) = dst.parent() {
         tokio::fs::create_dir_all(d).await.with_context(|| format!("creating {}", d.display()))?;
     }
-    if tokio::fs::rename(src, &dst).await.is_err() {
-        // another drive: copy, then remove the download
-        tokio::fs::copy(src, &dst).await.with_context(|| format!("copying to {}", dst.display()))?;
-        let _ = tokio::fs::remove_file(src).await;
-    }
+    move_into(src, &dst).await?;
     Ok(rel)
+}
+
+/// Move a file to `dst` (which isn't there). From another drive it's copied under a hidden name beside `dst` and
+/// renamed when complete, so a half-copied file (a full disk, a crash) is never in the library.
+pub(crate) async fn move_into(src: &Path, dst: &Path) -> Result<()> {
+    if tokio::fs::rename(src, dst).await.is_ok() {
+        return Ok(());
+    }
+    let tmp = dst.with_file_name(format!(".conductor-part-{}", &crate::db::random_id()[..12]));
+    let copied = async {
+        tokio::fs::copy(src, &tmp).await.with_context(|| format!("copying to {}", dst.display()))?;
+        tokio::fs::rename(&tmp, dst).await.with_context(|| format!("moving into {}", dst.display()))
+    }
+    .await;
+    if copied.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return copied;
+    }
+    let _ = tokio::fs::remove_file(src).await;
+    Ok(())
 }
 
 /// Heart it / add it to playlists for whoever asked, now that it's in the library.
