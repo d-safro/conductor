@@ -1411,3 +1411,111 @@ async fn spotify_sync() {
         .collect();
     assert_eq!(order, ["Psycho Killer", "One"]);
 }
+
+#[tokio::test]
+async fn listening_review_and_shared_playlists() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Arc::new(Server::start().await);
+    let find = |r: &Value, title: &str| {
+        r["searchResult3"]["song"].as_array().unwrap().iter().find(|x| x["title"] == title).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let r = s.ok("search3", &[("query", "")]).await;
+    let (one, two, three) = (find(&r, "One"), find(&r, "Two"), find(&r, "Three"));
+    let uid: String = sqlx::query_scalar("SELECT id FROM user WHERE name = ?").bind(USER).fetch_one(&s.st.db).await.unwrap();
+
+    // the year in review: One played 12 times over the last three days (first heard this year: a discovery),
+    // Three heard last year and once now (not a discovery)
+    let now = maestro::db::now();
+    let year_start = {
+        use chrono::{Datelike, TimeZone};
+        let y = chrono::Local::now().year();
+        chrono::Local.with_ymd_and_hms(y, 1, 1, 0, 0, 0).earliest().unwrap().timestamp()
+    };
+    let mut plays = vec![(three.clone(), year_start - 86400 * 30), (three.clone(), now - 60)];
+    for i in 0..12 {
+        plays.push((one.clone(), (now - (i % 3) * 86400 - i * 600).max(year_start + i)));
+    }
+    for (id, t) in &plays {
+        sqlx::query("INSERT INTO play (user_id, track_id, played_at) VALUES (?, ?, ?)")
+            .bind(&uid)
+            .bind(id)
+            .bind(t)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+    }
+    let r = s.ok("getListeningReview", &[("period", "year")]).await;
+    let rv = &r["listeningReview"];
+    assert_eq!(rv["plays"], 13, "{rv}");
+    assert_eq!(rv["song"][0]["id"], one);
+    assert_eq!(rv["discoveryCount"], 1);
+    assert_eq!(rv["discoveries"][0]["id"], one);
+    assert_eq!(rv["discoveries"][0]["plays"], 12);
+    assert!(rv["streak"]["days"].as_i64().unwrap() >= 1);
+    assert!(rv["peakHour"].is_number());
+    assert!(rv["firstSong"]["id"].is_string());
+    assert!(rv["genre"].is_array());
+    // an earlier year with nothing in it
+    let r = s.ok("getListeningReview", &[("period", "year"), ("offset", "3")]).await;
+    assert_eq!(r["listeningReview"]["plays"], 0);
+    assert!(r["listeningReview"]["firstSong"].is_null());
+
+    // a shared playlist: friends add songs through the link and can take out only their own
+    let pl = s.ok("createPlaylist", &[("name", "Party"), ("songId", &one)]).await;
+    let pid = pl["playlist"]["id"].as_str().unwrap().to_string();
+    let r = s.ok("playlistShareStart", &[("id", &pid)]).await;
+    let share = &r["playlistShare"];
+    let tok = share["token"].as_str().unwrap().to_string();
+    assert_eq!(share["url"], format!("https://jam.example.test/jam/pl/{tok}"));
+    assert_eq!(s.ok("playlistShareStart", &[("id", &pid)]).await["playlistShare"]["token"], tok.as_str()); // same link again
+    assert!(s.ok("playlistShareStart", &[("id", "nope")]).await["playlistShare"]["error"].is_string());
+
+    let jl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let jbase = format!("{}/jam/pl/{tok}", format_args!("http://{}", jl.local_addr().unwrap()));
+    let app = maestro::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move { axum::serve(jl, app).await.unwrap() });
+    let page = s.http.get(&jbase).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.headers()["content-security-policy"].to_str().unwrap().contains("default-src 'none'"));
+    let st: Value = s.http.get(format!("{jbase}/state")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(st["name"], "Party");
+    assert_eq!(st["owner"], USER);
+    assert_eq!(st["song"].as_array().unwrap().len(), 1);
+    let found: Value = s.http.get(format!("{jbase}/search?q=two")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(found["songs"][0]["id"], two.as_str());
+    let cover = found["songs"][0]["cover"].as_str().unwrap().to_string();
+    assert_eq!(s.http.get(format!("{jbase}/cover/{cover}?s=100")).send().await.unwrap().status(), 200);
+    assert_eq!(s.http.get(format!("{jbase}/cover/notshown")).send().await.unwrap().status(), 404);
+    let post = |what: &'static str, body: Value| {
+        let (h, u) = (s.http.clone(), format!("{jbase}/{what}"));
+        async move { h.post(u).json(&body).send().await.unwrap() }
+    };
+    assert_eq!(post("add", serde_json::json!({"id": two, "by": "Bob", "guest": "g-bob"})).await.status(), 200);
+    let again: Value = post("add", serde_json::json!({"id": two, "by": "Bob", "guest": "g-bob"})).await.json().await.unwrap();
+    assert_eq!(again["already"], true);
+    assert_eq!(post("add", serde_json::json!({"id": "dz-t-1", "guest": "g-bob"})).await.status(), 400);
+    assert_eq!(post("add", serde_json::json!({"id": three, "by": "Ann", "guest": "g-ann"})).await.status(), 200);
+    let pl = s.ok("getPlaylist", &[("id", &pid)]).await;
+    let ids: Vec<&str> = pl["playlist"]["entry"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [one.as_str(), two.as_str(), three.as_str()]);
+    // Ann can't take out Bob's song, nor the owner's; Bob can take out his
+    assert_eq!(post("remove", serde_json::json!({"id": two, "index": 1, "guest": "g-ann"})).await.status(), 403);
+    assert_eq!(post("remove", serde_json::json!({"id": one, "index": 0, "guest": "g-bob"})).await.status(), 403);
+    assert_eq!(post("remove", serde_json::json!({"id": two, "index": 2, "guest": "g-bob"})).await.status(), 409);
+    assert_eq!(post("remove", serde_json::json!({"id": two, "index": 1, "guest": "g-bob"})).await.status(), 200);
+    let st: Value = s.http.get(format!("{jbase}/state")).send().await.unwrap().json().await.unwrap();
+    let songs = st["song"].as_array().unwrap();
+    assert_eq!(songs.len(), 2);
+    assert_eq!(songs[1]["by"], "Ann");
+    let r = s.ok("playlistShares", &[]).await;
+    assert_eq!(r["playlistShares"]["share"][0]["added"].as_array().unwrap().len(), 1);
+    assert_eq!(s.ok("playlistShareEnd", &[("id", &pid)]).await["playlistShare"]["ended"], true);
+    assert_eq!(s.http.get(&jbase).send().await.unwrap().status(), 410);
+    assert_eq!(post("add", serde_json::json!({"id": two, "guest": "g-bob"})).await.status(), 410);
+}

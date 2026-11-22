@@ -390,6 +390,10 @@ pub async fn listening_stats(c: &Ctx) -> Result<Reply, ApiError> {
         _ => "month",
     };
     let offset = c.p.int("offset").unwrap_or(0).max(0);
+    ok(json!({ "listeningStats": compute_stats(c, period, offset).await? }))
+}
+
+async fn compute_stats(c: &Ctx, period: &str, offset: i64) -> Result<Value, ApiError> {
     let uid = &c.user.id;
     let mut counted: Vec<(StatSong, i64)> = vec![];
     let mut times: Vec<(i64, StatSong)> = vec![];
@@ -476,7 +480,107 @@ pub async fn listening_stats(c: &Ctx) -> Result<Reply, ApiError> {
     let since: Option<i64> =
         sqlx::query_scalar("SELECT MIN(played_at) FROM play WHERE user_id = ?").bind(uid).fetch_one(&c.st.db).await?;
     out["since"] = (since.unwrap_or(0) * 1000).into();
-    ok(json!({ "listeningStats": out }))
+    Ok(out)
+}
+
+/// The year (or month) in review ("Your 2026"): the stats' totals and top 5s, plus top genres, the first song,
+/// the longest run of days with music, the peak hour and discoveries (first heard in the period, 10+ plays in it).
+pub async fn listening_review(c: &Ctx) -> Result<Reply, ApiError> {
+    let period = if c.p.get("period") == Some("month") { "month" } else { "year" };
+    let offset = c.p.int("offset").unwrap_or(0).max(0);
+    let mut out = compute_stats(c, period, offset).await?;
+    for k in ["song", "artist", "album"] {
+        if let Some(a) = out[k].as_array_mut() {
+            a.truncate(5);
+        }
+    }
+    let (start, end) = period_range(period, offset);
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT played_at, track_id FROM play WHERE user_id = ? AND played_at >= ? AND played_at < ? ORDER BY played_at",
+    )
+    .bind(&c.user.id)
+    .bind(start)
+    .bind(end)
+    .fetch_all(&c.st.db)
+    .await?;
+    let songs = songs_by_id(c, rows.iter().map(|(_, id)| id.as_str()).collect::<HashSet<_>>().into_iter().collect()).await?;
+    let genres_of: HashMap<String, Option<String>> = {
+        let mut m = HashMap::new();
+        let ids: Vec<&String> = songs.keys().collect();
+        for chunk in ids.chunks(400) {
+            let sql = format!("SELECT id, genre FROM track WHERE id IN ({})", vec!["?"; chunk.len()].join(","));
+            let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+            for id in chunk {
+                q = q.bind(*id);
+            }
+            m.extend(q.fetch_all(&c.st.db).await?);
+        }
+        m
+    };
+    let rows: Vec<(i64, &StatSong)> = rows.iter().filter_map(|(t, id)| songs.get(id).map(|s| (*t, s))).collect();
+    let mut genres: HashMap<String, f64> = HashMap::new();
+    for (_, s) in &rows {
+        for g in genres_of.get(&s.id).cloned().flatten().unwrap_or_default().split(';') {
+            if !g.trim().is_empty() {
+                *genres.entry(g.trim().to_string()).or_default() += s.duration_ms as f64 / 60_000.0;
+            }
+        }
+    }
+    let mut genres: Vec<_> = genres.into_iter().collect();
+    genres.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out["genre"] =
+        genres.iter().take(5).map(|(g, m)| json!({ "name": g, "minutes": m.round() as i64 })).collect::<Vec<_>>().into();
+    out["firstSong"] = rows.first().map(|(_, s)| stat_song(s, 1)).unwrap_or(Value::Null);
+    // the longest run of days in a row with music
+    let days: std::collections::BTreeSet<NaiveDate> =
+        rows.iter().filter_map(|(t, _)| Local.timestamp_opt(*t, 0).single().map(|d| d.date_naive())).collect();
+    let (mut best, mut run, mut best_from, mut run_from, mut prev) = (0, 0, None, None, None::<NaiveDate>);
+    for d in &days {
+        if prev.is_some_and(|p| (*d - p).num_days() == 1) {
+            run += 1;
+        } else {
+            run = 1;
+            run_from = Some(*d);
+        }
+        if run > best {
+            best = run;
+            best_from = run_from;
+        }
+        prev = Some(*d);
+    }
+    out["streak"] = json!({ "days": best, "from": best_from.map(|d| d.format("%Y-%m-%d").to_string()) });
+    // the busiest hour of the day, by unrounded listening time (the first of equals)
+    let mut hours = [0f64; 24];
+    for (t, s) in &rows {
+        if let Some(dt) = Local.timestamp_opt(*t, 0).single() {
+            hours[dt.hour() as usize] += s.duration_ms as f64;
+        }
+    }
+    out["peakHour"] = if hours.iter().any(|h| *h > 0.0) {
+        let top = hours.iter().cloned().fold(0.0, f64::max);
+        hours.iter().position(|h| *h == top).into()
+    } else {
+        Value::Null
+    };
+    let heard_before: HashSet<String> =
+        sqlx::query_scalar("SELECT DISTINCT track_id FROM play WHERE user_id = ? AND played_at < ?")
+            .bind(&c.user.id)
+            .bind(start)
+            .fetch_all(&c.st.db)
+            .await?
+            .into_iter()
+            .collect();
+    let mut n: HashMap<&str, i64> = HashMap::new();
+    for (_, s) in &rows {
+        if !heard_before.contains(&s.id) {
+            *n.entry(s.id.as_str()).or_default() += 1;
+        }
+    }
+    let mut found: Vec<(&str, i64)> = n.into_iter().filter(|(_, k)| *k >= 10).collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    out["discoveryCount"] = found.len().into();
+    out["discoveries"] = found.iter().take(10).map(|(id, k)| stat_song(&songs[*id], *k)).collect::<Vec<_>>().into();
+    ok(json!({ "listeningReview": out }))
 }
 
 async fn songs_by_id(c: &Ctx, ids: Vec<&str>) -> Result<HashMap<String, StatSong>, ApiError> {

@@ -5,6 +5,7 @@
 //!   GET  /jam/<token>                 the page          GET /jam/<token>/state?g=<guest>&n=<name>
 //!   GET  /jam/<token>/search?q=       songs to add      GET /jam/<token>/cover/<id>?s=<size>
 //!   POST /jam/<token>/add | move | remove | skip        (JSON body, becomes a command the app picks up)
+//!   /jam/pl/...: collaborative playlists (`collab`)
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -36,6 +37,7 @@ pub fn router(st: Shared) -> Router {
         .route("/jam/{token}/search", get(search))
         .route("/jam/{token}/cover/{id}", get(cover))
         .route("/jam/{token}/{action}", post(action))
+        .merge(crate::collab::router())
         .fallback(|| async { (StatusCode::NOT_FOUND, "Not found") })
         .layer(axum::middleware::map_response(|mut r: Response| async move {
             let h = r.headers_mut();
@@ -97,7 +99,7 @@ fn exists(st: &AppState, token: &str) -> bool {
     token_ok(token) && st.live.lock().jams.contains_key(token)
 }
 
-fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
+pub fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
     h.get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(',').next())
@@ -179,10 +181,22 @@ async fn search(
     if text.chars().count() < 2 {
         return Json(json!({ "songs": [] })).into_response();
     }
+    let songs = find_songs(&st, &text, 20).await;
+    if let Some(j) = st.live.lock().jams.get_mut(&token) {
+        j.covers.extend(songs.iter().filter_map(|s| s["cover"].as_str().map(String::from)));
+    }
+    (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(json!({ "songs": songs }))).into_response()
+}
+
+/// Library songs whose title / artist / album hold every word (for the guest pages).
+pub async fn find_songs(st: &AppState, text: &str, limit: i64) -> Vec<Value> {
     let words: Vec<String> = text
         .split_whitespace()
         .map(|w| format!("%{}%", w.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")))
         .collect();
+    if words.is_empty() {
+        return vec![];
+    }
     let cond = words
         .iter()
         .map(|_| "(t.title || ' ' || t.artist_name || ' ' || t.album_name) LIKE ? ESCAPE '\\'")
@@ -190,23 +204,20 @@ async fn search(
         .join(" AND ");
     let sql = format!(
         "SELECT t.id, t.title, t.artist_name, t.album_name, t.album_id, t.duration_ms FROM track t
-         WHERE t.missing_since IS NULL AND {cond} ORDER BY t.sort_title LIMIT 20"
+         WHERE t.missing_since IS NULL AND {cond} ORDER BY t.sort_title LIMIT {limit}"
     );
     let mut qq = sqlx::query_as::<_, (String, String, String, String, String, i64)>(&sql);
     for w in &words {
         qq = qq.bind(w);
     }
-    let rows = qq.fetch_all(&st.db).await.unwrap_or_default();
-    let songs: Vec<Value> = rows
-        .iter()
+    qq.fetch_all(&st.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
         .map(|(id, title, artist, album, cover, d)| {
             json!({ "id": id, "title": title, "artist": artist, "album": album, "cover": cover, "duration": d / 1000, "lookup": false })
         })
-        .collect();
-    if let Some(j) = st.live.lock().jams.get_mut(&token) {
-        j.covers.extend(rows.into_iter().map(|r| r.4));
-    }
-    (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(json!({ "songs": songs }))).into_response()
+        .collect()
 }
 
 #[derive(Deserialize, Default)]

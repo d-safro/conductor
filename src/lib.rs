@@ -4,6 +4,7 @@ pub mod admin;
 pub mod api;
 pub mod auth;
 pub mod catalog;
+pub mod collab;
 pub mod config;
 pub mod db;
 pub mod import_nd;
