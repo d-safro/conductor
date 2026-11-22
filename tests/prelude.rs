@@ -151,7 +151,11 @@ async fn each_vpn_choice_again_later() {
     std::fs::write(&p.config, format!("vpn_ip_url = \"{same}/home\"\n")).unwrap();
     let out = scripted(&p.config, &["vpn"], &["1", &format!("{same}/check"), "", "y"]).await;
     assert!(out.contains("✗ downloads would use this computer's own address"), "{out}");
-    // set one up: a WireGuard .conf (a fake one), written but not started
+    // set one up: Linux with Docker only (on Windows Prelude says so and sets nothing up)
+    if cfg!(windows) {
+        return;
+    }
+    // a WireGuard .conf (a fake one), written but not started
     let conf = p.root.join("fake.conf");
     std::fs::write(&conf, "[Interface]\nPrivateKey = TestOnlyPrivateKeyNotReal00000000000000000=\nAddress = 10.2.0.2/32\n[Peer]\nPublicKey = TestOnlyPublicKeyNotReal000000000000000000=\nEndpoint = 127.0.0.1:51820\n").unwrap();
     let out = scripted(
@@ -196,9 +200,13 @@ async fn yes_mode_from_flags() {
     let out = String::from_utf8(out).unwrap();
     assert!(!out.contains("FlagTestPrivateKey") && !out.contains("pw-from-flag"), "{out}");
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
-    assert_eq!((c.vpn.as_str(), c.downloads_require_vpn, c.libraries.len()), ("gluetun", true, 1));
-    assert!(c.slskd_url.as_deref().unwrap().starts_with("http://127.0.0.1:"));
-    assert!(read(&p.root.join("data/downloads-vpn/compose.yml")).contains("network_mode: service:gluetun"));
+    // a VPN set up with Docker is Linux-only: on Windows Prelude leaves it off (the kill switch still asked for)
+    let made = if cfg!(windows) { "none" } else { "gluetun" };
+    assert_eq!((c.vpn.as_str(), c.downloads_require_vpn, c.libraries.len()), (made, true, 1));
+    if !cfg!(windows) {
+        assert!(c.slskd_url.as_deref().unwrap().starts_with("http://127.0.0.1:"));
+        assert!(read(&p.root.join("data/downloads-vpn/compose.yml")).contains("network_mode: service:gluetun"));
+    }
     // and a proxy, the same way
     let px = proxy().await;
     let mut out = Vec::new();
