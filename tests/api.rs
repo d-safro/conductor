@@ -1419,8 +1419,14 @@ async fn listenbrainz_discovery_and_plays() {
         pid
     };
     wait_for(async || file.is_file(), "the discovery download").await;
+    // both in it as songs of yours: until the download is scanned in, it's listed as on its way ("⏳ …", its ⬇ id),
+    // and two entries alone don't mean it has arrived
     wait_for(
-        async || s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"].as_array().is_some_and(|e| e.len() == 2),
+        async || {
+            s.ok("getPlaylist", &[("id", &pid)]).await["playlist"]["entry"]
+                .as_array()
+                .is_some_and(|e| e.len() == 2 && e.iter().all(|x| !x["id"].as_str().unwrap_or("dz-").starts_with("dz-")))
+        },
         "both songs in it",
     )
     .await;
