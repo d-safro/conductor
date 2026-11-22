@@ -276,10 +276,11 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
         // the body is a short recording, whatever it's labelled as (many HTTP libraries call any body a form); the
         // login is in the query
         body = to_bytes(req.into_body(), 16 << 20).await.unwrap_or_default();
-    } else if is_post && is_form {
-        if let Ok(b) = to_bytes(req.into_body(), 1 << 20).await {
-            pairs.extend(form_urlencoded::parse(&b).into_owned());
-        }
+    } else if is_post
+        && is_form
+        && let Ok(b) = to_bytes(req.into_body(), 1 << 20).await
+    {
+        pairs.extend(form_urlencoded::parse(&b).into_owned());
     }
     let p = Params(pairs);
     let fmt = match p.get("f") {
