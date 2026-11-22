@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
     body::to_bytes,
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -19,11 +19,30 @@ const PAGE: &str = include_str!("../../web/setup/index.html");
 
 /// Open: nobody has an account yet, and the request is from this computer or has the token.
 pub fn allowed(no_users: bool, local: bool, given: Option<&str>, token: &str) -> bool {
-    no_users && (local || given.is_some_and(|g| !g.is_empty() && g == token))
+    no_users && (local || given.is_some_and(|g| !g.is_empty() && crate::auth::constant_eq(g, token)))
 }
 
+/// A name for this computer itself ("localhost", 127.0.0.1, [::1]), with or without a port.
+pub fn loopback_host(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None => match host.rsplit_once(':') {
+            Some((h, port)) if !h.contains(':') && port.bytes().all(|b| b.is_ascii_digit()) => h,
+            _ => host,
+        },
+    };
+    name.eq_ignore_ascii_case("localhost") || name.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Really from this computer: the connection is, it wasn't passed on by a proxy (a reverse proxy on this computer
+/// connects from 127.0.0.1 for everyone it serves), and it was addressed to this computer by name (a web page whose
+/// own name was pointed at 127.0.0.1, DNS rebinding, is reached from the browser here but keeps its own Host).
 fn local(req: &Request) -> bool {
-    req.extensions().get::<ConnectInfo<std::net::SocketAddr>>().is_some_and(|c| c.0.ip().is_loopback())
+    let peer = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>().is_some_and(|c| c.0.ip().is_loopback());
+    let h = req.headers();
+    let proxied = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"].iter().any(|k| h.contains_key(*k));
+    let host = h.get(header::HOST).and_then(|v| v.to_str().ok()).map(String::from).or_else(|| req.uri().authority().map(|a| a.to_string()));
+    peer && !proxied && host.as_deref().is_some_and(loopback_host)
 }
 
 fn token_of(req: &Request) -> Option<String> {
@@ -74,11 +93,13 @@ async fn admin(State(st): State<Shared>, req: Request) -> Response {
     if name.is_empty() || pw.chars().count() < 6 {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "a name, and a password of 6 or more characters" }))).into_response();
     }
-    match crate::auth::create_user(&st.db, &st.secrets, name, pw, true).await {
-        Ok(_) => {
+    // only while there's still nobody: of two sent at once, one is made
+    match crate::auth::create_first_admin(&st.db, &st.secrets, name, pw).await {
+        Ok(Some(_)) => {
             tracing::info!(user = name, "first admin made at /setup; /setup is closed now");
             Json(json!({ "ok": true })).into_response()
         }
+        Ok(None) => closed(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("{e:#}") }))).into_response(),
     }
 }
@@ -98,5 +119,16 @@ mod tests {
         assert!(!allowed(true, false, Some("x"), "t"));
         assert!(!allowed(true, false, Some(""), ""));
         assert!(!allowed(false, true, Some("t"), "t"), "closed once someone has an account");
+    }
+
+    #[test]
+    fn this_computers_names() {
+        use super::loopback_host;
+        for h in ["localhost", "LOCALHOST:4533", "127.0.0.1", "127.0.0.1:4533", "127.9.9.9:80", "[::1]", "[::1]:4533", "::1"] {
+            assert!(loopback_host(h), "{h}");
+        }
+        for h in ["", "evil.example", "evil.example:4533", "localhost.evil.example", "192.168.1.5:4533", "[::2]:4533", "127.0.0.1.evil.example"] {
+            assert!(!loopback_host(h), "{h}");
+        }
     }
 }

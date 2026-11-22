@@ -2715,12 +2715,27 @@ async fn setup_page_only_before_anyone_has_an_account() {
     assert!(page.text().await.unwrap().contains("Prelude"));
     let st: Value = s.http.get(url("/setup/api/status")).send().await.unwrap().json().await.unwrap();
     assert_eq!(st["libraries"][0]["connected"], true);
+    // from this computer only in name too: not through a proxy here, not a web page pointed at 127.0.0.1
+    let rebound = s.http.get(url("/setup")).header("Host", "evil.example:4533").send().await.unwrap();
+    assert_eq!(rebound.status(), 404, "DNS rebinding: another site's name");
+    let proxied = s.http.get(url("/setup")).header("X-Forwarded-For", "203.0.113.9").send().await.unwrap();
+    assert_eq!(proxied.status(), 404, "passed on by a proxy on this computer");
+    let rebound = s.http.post(url("/setup/api/admin")).header("Host", "evil.example").header("X-Conductor", "1")
+        .json(&json!({ "name": "evil", "password": "longenough" })).send().await.unwrap();
+    assert_eq!(rebound.status(), 404);
+    let with_token = s.http.get(url(&format!("/setup?token={token}"))).header("X-Forwarded-For", "203.0.113.9").send().await.unwrap();
+    assert_eq!(with_token.status(), 200, "the token still opens it");
     let body = json!({ "name": "first", "password": "longenough" });
     assert_eq!(s.http.post(url("/setup/api/admin")).json(&body).send().await.unwrap().status(), 403, "needs the header");
     let short = json!({ "name": "first", "password": "123" });
     assert_eq!(s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&short).send().await.unwrap().status(), 400);
-    let made = s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&body).send().await.unwrap();
-    assert_eq!(made.status(), 200);
+    // several at once: one admin is made
+    let tries = (0..8).map(|i| {
+        let b = json!({ "name": format!("first{i}"), "password": "longenough" });
+        s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&b).send()
+    });
+    let made = futures_util::future::join_all(tries).await.into_iter().filter(|r| r.as_ref().unwrap().status() == 200).count();
+    assert_eq!(made, 1);
     // closed for good
     assert_eq!(s.http.get(url("/setup")).send().await.unwrap().status(), 404);
     let again = s.http.post(url("/setup/api/admin")).header("X-Conductor", "1").json(&json!({ "name": "second", "password": "longenough" })).send().await.unwrap();

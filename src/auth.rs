@@ -79,6 +79,22 @@ pub async fn create_user(db: &Db, s: &Secrets, name: &str, password: &str, admin
     Ok(id)
 }
 
+/// The first account (an admin), made only while there's no account at all: of two sent at once, only one is
+/// made. None: someone has an account already.
+pub async fn create_first_admin(db: &Db, s: &Secrets, name: &str, password: &str) -> Result<Option<String>> {
+    let id = db::random_id();
+    let r = sqlx::query(
+        "INSERT INTO user (id, name, password_enc, is_admin, created_at) SELECT ?, ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM user)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(s.encrypt(password))
+    .bind(db::now())
+    .execute(db)
+    .await?;
+    Ok((r.rows_affected() > 0).then_some(id))
+}
+
 pub async fn set_password(db: &Db, s: &Secrets, name: &str, password: &str) -> Result<bool> {
     let r =
         sqlx::query("UPDATE user SET password_enc = ? WHERE name = ?").bind(s.encrypt(password)).bind(name).execute(db).await?;
@@ -171,6 +187,6 @@ pub async fn login(db: &Db, secrets: &Secrets, c: Credentials<'_>) -> Result<Use
     if ok { Ok(user) } else { Err(LoginError::Wrong) }
 }
 
-fn constant_eq(a: &str, b: &str) -> bool {
+pub(crate) fn constant_eq(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
