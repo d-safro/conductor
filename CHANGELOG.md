@@ -4,12 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased (0.4.0)
+## 0.4.0 (2026-11-22)
 
 ### New
 - **Scrobbling for every user**: everyone links their own ListenBrainz and Last.fm in Encore; plays go to each, and
   ones a service missed are sent later, in order. (Before, only the owner's plays went to ListenBrainz.)
 - **A picture for albums without a cover** for apps other than Encore, as Navidrome sends, instead of "not found".
+- **Conductor on your domain** (`conductor setup domain`): HTTPS on your own domain with Caddy, a Cloudflare Tunnel,
+  or Tailscale Funnel, each set up for you.
+- **Prelude finds your music**: it looks at the computer's drives and the music on them, and offers the folder with
+  the most songs, or a new one on the drive with the most room (with the drive guard on a USB drive).
 - **Prelude sets up the whole music lab for you** in one Docker folder: the downloader (optionally inside a VPN with
   a kill switch), Lidarr, AudioMuse-AI, Pitch and Metronome, and only with AI on, Ollama and Interlude's voice. Each
   one's address and keys go into Conductor's settings by themselves. Works on SELinux systems (Fedora, RHEL).
