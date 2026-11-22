@@ -1672,3 +1672,55 @@ async fn song_id_and_automix() {
     let r = s.ok("getMixInfo", &[("id", &two)]).await;
     assert_eq!(r["mixInfo"]["song"][0]["bpm"], 90);
 }
+
+#[tokio::test]
+async fn concerts_near_you() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (mb, _) = stand_in(|path, query, _| {
+        let q: std::collections::HashMap<String, String> = form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+        match path {
+            "/artist" if q["query"] == "artist:\"Alpha\"" => {
+                Some(serde_json::json!({ "artists": [{ "id": "mb-alpha", "name": "Alpha", "score": 100 }] }))
+            }
+            "/artist" => Some(serde_json::json!({ "artists": [] })),
+            "/event" if q["query"] == "arid:mb-alpha" => Some(serde_json::json!({ "events": [
+                { "id": "e1", "name": "Alpha live", "life-span": { "begin": "2099-05-01" }, "time": "20:00",
+                  "relations": [{ "place": { "name": "Club" } }, { "area": { "name": "Berlin" } }] },
+                { "id": "e2", "name": "Alpha far", "life-span": { "begin": "2099-05-03" },
+                  "relations": [{ "area": { "name": "Paris" } }] },
+                { "id": "e0", "name": "Alpha past", "life-span": { "begin": "2001-01-01" }, "relations": [{ "area": { "name": "Berlin" } }] }
+            ] })),
+            _ => None,
+        }
+    })
+    .await;
+    let s = Server::start_with(move |c| {
+        c.catalog = false;
+        c.musicbrainz_url = mb;
+    })
+    .await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let now_ms = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()).to_string();
+    s.ok("scrobble", &[("id", &one), ("time", &now_ms)]).await;
+    s.ok("syncSet", &[("key", "showsPrefs"), ("value", r#"{"city":"berlin"}"#), ("at", "1000"), ("id", "phone-aaaa1111")]).await;
+    let r = s.ok("getConcerts", &[]).await;
+    assert!(r["concerts"]["show"].as_array().unwrap().is_empty()); // the first look starts now
+    let mut shows = Value::Null;
+    wait_for(
+        async || {
+            shows = s.ok("getConcerts", &[]).await["concerts"].clone();
+            shows["updated"].as_i64().unwrap_or(0) > 0
+        },
+        "concerts looked up",
+    )
+    .await;
+    assert_eq!(shows["source"], "MusicBrainz");
+    assert_eq!(shows["city"], "berlin");
+    let list = shows["show"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0]["venue"], "Club");
+    assert_eq!(list[0]["artist"], "Alpha");
+    assert!(list[0]["first"].as_i64().unwrap() > 0);
+}
