@@ -96,18 +96,28 @@ struct Row {
 pub async fn move_into_songs(st: &AppState, local_id: &str, rel: &str, folder: &str) -> Result<String> {
     let Some((lib, root)) = root(st) else { return Ok(rel.to_string()) };
     let Some(rest) = rel.strip_prefix(&format!("{folder}/")) else { return Ok(rel.to_string()) };
-    let new_rel = format!("Songs/{rest}");
-    let (src, dst) = (root.join(rel), root.join(&new_rel));
+    let mut new_rel = format!("Songs/{rest}");
+    let src = root.join(rel);
     if src.is_file() {
+        // another file may have this name in Songs/ (another version, a song of yours): it stays, and this one
+        // goes beside it
+        let (stem, ext) = match new_rel.rsplit_once('.') {
+            Some((s, e)) if !e.contains('/') => (s.to_string(), format!(".{e}")),
+            _ => (new_rel.clone(), String::new()),
+        };
+        let mut n = 2;
+        while tokio::fs::try_exists(root.join(&new_rel)).await.unwrap_or(true) {
+            if n > 99 {
+                anyhow::bail!("{new_rel} and 98 others like it are there already");
+            }
+            new_rel = format!("{stem} ({n}){ext}");
+            n += 1;
+        }
+        let dst = root.join(&new_rel);
         if let Some(d) = dst.parent() {
             tokio::fs::create_dir_all(d).await?;
         }
-        if dst.exists() {
-            tokio::fs::remove_file(&src).await?; // already have that file: drop this copy
-        } else if tokio::fs::rename(&src, &dst).await.is_err() {
-            tokio::fs::copy(&src, &dst).await?;
-            tokio::fs::remove_file(&src).await?;
-        }
+        super::acquire::move_into(&src, &dst).await?;
         if let Some(p) = src.parent() {
             prune(&root.join(folder), p.to_path_buf());
         }

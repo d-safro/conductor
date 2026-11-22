@@ -933,6 +933,40 @@ async fn songs_on_trial_kept() {
 }
 
 #[tokio::test]
+async fn a_kept_trial_song_never_replaces_or_loses_a_file() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let (s, _tmp) = trial_server(|_| {}).await;
+    s.ok("lookupSongs", &[("id", "dz-t-900"), ("fetch", "true")]).await;
+    let mut local = String::new();
+    wait_for(
+        async || {
+            let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().unwrap_or("").to_string();
+            !local.is_empty()
+        },
+        "the trial song",
+    )
+    .await;
+    // meanwhile another song you have sits where the kept one would go in Songs/
+    let there = s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer.flac");
+    tone(&there, "Heaven", "Talking Heads", "Fear of Music", 7, 2);
+    let before = std::fs::read(&there).unwrap();
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    s.ok("star", &[("id", &local)]).await;
+    let kept = s.music.join("Songs/Talking Heads/Talking Heads - Psycho Killer (2).flac");
+    wait_for(async || kept.is_file(), "the kept song to move beside it").await;
+    assert_eq!(std::fs::read(&there).unwrap(), before, "the other song is untouched");
+    wait_for(
+        async || s.ok("getSong", &[("id", &local)]).await["song"]["path"] == "Songs/Talking Heads/Talking Heads - Psycho Killer (2).flac",
+        "the kept song's new place",
+    )
+    .await;
+    assert!(s.ok("getSong", &[("id", &local)]).await["song"]["starred"].is_string());
+}
+
+#[tokio::test]
 async fn songs_on_trial_expire() {
     if !have_ffmpeg() {
         return;
