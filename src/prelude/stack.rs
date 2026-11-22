@@ -115,6 +115,24 @@ fn private(path: &Path, text: &str) -> Result<()> {
     crate::config::write_private(path, text.as_bytes()).with_context(|| format!("writing {}", path.display()))
 }
 
+/// The port on this computer a part's file gives a container's port (`127.0.0.1:HOST:INNER`). Run again, a part
+/// keeps its port: its own container holds it, so it looks taken, and the settings would point at nothing.
+pub fn part_port(dir: &Path, part: &str, inner: u16) -> Option<u16> {
+    let text = std::fs::read_to_string(dir.join(format!("{part}.yml"))).ok()?;
+    text.lines().find_map(|l| {
+        let l = l.split('#').next()?.trim().strip_prefix('-')?.trim().trim_matches('"');
+        let mut it = l.rsplit(':');
+        let i: u16 = it.next()?.parse().ok()?;
+        let h: u16 = it.next()?.parse().ok()?;
+        (i == inner).then_some(h)
+    })
+}
+
+/// A value from an env file (KEY=VALUE). Run again, the keys a service already holds are kept.
+pub fn env_value(path: &Path, key: &str) -> Option<String> {
+    std::fs::read_to_string(path).ok()?.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().to_string())).filter(|v| !v.is_empty())
+}
+
 /// SELinux (Fedora, RHEL…) keeps containers out of folders that aren't labelled for them: with it, every folder
 /// mounted gets `:z` (Docker labels it once, shared). Elsewhere nothing is added.
 pub fn selinux() -> bool {
@@ -200,8 +218,10 @@ pub struct AudioMuse<'a> {
 }
 
 pub fn audiomuse(dir: &Path, a: &AudioMuse) -> Result<()> {
-    let db_pass = super::new_key();
-    let jwt = super::new_key();
+    // its database keeps the password it was made with: an earlier run's stays
+    let env = dir.join("audiomuse.env");
+    let db_pass = env_value(&env, "POSTGRES_PASSWORD").unwrap_or_else(super::new_key);
+    let jwt = env_value(&env, "JWT_SECRET").unwrap_or_else(super::new_key);
     private(
         &dir.join("audiomuse.env"),
         &format!(
@@ -401,13 +421,14 @@ pub fn validate(dir: &Path) -> Result<()> {
 }
 
 /// Start (or update) everything in the folder. An earlier version's downloader project is stopped first: its
-/// containers have the same names and now belong to this one.
+/// containers have the same names and now belong to this one. A part taken out (or gluetun, when the downloader
+/// leaves the VPN) has its container removed.
 pub fn up(dir: &Path) -> Result<()> {
     let old = Command::new("docker").args(["compose", "ls", "-a", "-q"]).output();
     if old.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "conductor-downloads")) {
         let _ = Command::new("docker").args(["compose", "-p", "conductor-downloads", "down"]).output();
     }
-    docker(dir, &["up", "-d", "--build"]).map(|_| ())
+    docker(dir, &["up", "-d", "--build", "--remove-orphans"]).map(|_| ())
 }
 
 /// A container's command, for after it's up (e.g. Ollama fetching a model).

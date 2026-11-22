@@ -39,7 +39,7 @@ pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", 
 
 const VALUE_FLAGS: &[&str] = &[
     "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "docker", "vpn", "vpn-check-url", "vpn-check-key",
-    "wg-conf", "vpn-provider", "vpn-key", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
+    "wg-conf", "vpn-provider", "vpn-key", "vpn-address", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
     "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
     "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service",
 ];
@@ -200,7 +200,8 @@ Parts: music, server, admin, downloads, vpn, services, import, service (default:
         (your own slskd)   or --no-downloads
   --vpn existing --vpn-check-url URL [--vpn-check-key KEY]
   --vpn wireguard --wg-conf PATH | --vpn provider --vpn-provider NAME (key: CONDUCTOR_VPN_KEY)
-        [--port-forwarding]   (the downloader container inside that VPN; Linux)
+        [--vpn-address ADDR (mullvad, ivpn, airvpn, windscribe, surfshark)] [--port-forwarding (protonvpn)]
+        (the downloader container inside that VPN; Linux)
   --vpn proxy --proxy URL [--proxy-metadata]
   --vpn none
   --require-vpn | --no-require-vpn   (pause downloads while the VPN is down)
@@ -275,6 +276,25 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
             _ => {}
         }
         w.d.save()?;
+        let mut vpn_ran = only.contains(&"vpn");
+        // only the downloads step: a VPN set up before is never dropped without a word
+        if *s == "downloads" && !vpn_ran && w.make.is_some() {
+            match w.d.str("vpn").as_deref() {
+                Some("gluetun") if gluetun::current(&stack::dir(&w.d.path)).vpn => {
+                    w.ui.say("  It stays inside your VPN (conductor setup vpn changes that).");
+                    let pf = w.d.bool("vpn_port_sync").unwrap_or(false);
+                    let a = w.make.take().expect("asked for");
+                    w.make_downloader(Some((gluetun::Vpn::Keep, pf)), a).await?;
+                    w.d.save()?;
+                }
+                Some(v) if v != "none" => {
+                    w.ui.say(&format!("  Your downloads used a VPN ({v}): choose how the new downloader does."));
+                    w.vpn().await?;
+                    vpn_ran = true;
+                }
+                _ => {}
+            }
+        }
         // the downloader on its own: the VPN step didn't put it inside one (or didn't run)
         if (*s == "vpn" || (*s == "downloads" && !only.contains(&"vpn")))
             && let Some(a) = w.make.take()
@@ -282,7 +302,7 @@ pub async fn run(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn Ui) -
             w.make_downloader(None, a).await?;
             w.d.set("vpn", "none");
             w.d.set("vpn_port_sync", false);
-            if !only.contains(&"vpn") {
+            if !vpn_ran {
                 w.d.set("downloads_require_vpn", false); // the VPN step didn't run: no VPN, nothing to wait for
             }
             w.d.save()?;
@@ -455,8 +475,9 @@ impl Wizard<'_> {
                 return Ok(());
             }
             self.ui.say("  slskd, a Soulseek client, runs in its own container; Conductor asks it for songs and files what arrives.");
-            let user = self.ask_or("slsk-user", "Your Soulseek user name (a new account is made if the name is free)", None, "");
-            let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", None);
+            let cur = gluetun::current(&stack::dir(&self.d.path));
+            let user = self.ask_or("slsk-user", "Your Soulseek user name (a new account is made if the name is free)", cur.soulseek_user, "");
+            let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", cur.soulseek_password);
             if user.is_empty() || pass.is_empty() {
                 self.ui.say("  ✗ a Soulseek user name and password are needed; downloads stay off");
                 return Ok(());
@@ -504,7 +525,8 @@ impl Wizard<'_> {
         self.ui.say("\n5. Send downloads through a VPN?");
         self.ui.say("   On Soulseek, others see the address you download from. A VPN hides it.");
         if self.make.is_some() {
-            let def = match self.f.get("vpn") {
+            let cur = self.d.str("vpn");
+            let def = match self.f.get("vpn").or(cur.as_deref()) {
                 Some("wireguard" | "provider" | "gluetun") => 0,
                 _ => 1,
             };
@@ -614,31 +636,84 @@ impl Wizard<'_> {
             self.ui.say("  ✗ Docker (with compose) isn't here. Install it, or choose another way.");
             return Ok(());
         }
-        let from_conf = self.f.get("wg-conf").is_some() || self.f.get("vpn-provider").is_none();
-        let how = self.ui.choose("The VPN:", &["A WireGuard .conf file from your provider (any provider)", "A provider gluetun knows, and its WireGuard key"], if from_conf { 0 } else { 1 });
-        let vpn = if how == 0 {
-            let p = self.ask_or("wg-conf", "Path to the .conf", None, "");
-            let text = std::fs::read_to_string(&p).with_context(|| format!("reading {p}"))?;
-            gluetun::Vpn::Conf(gluetun::parse_wg(&text)?)
+        let cur = gluetun::current(&stack::dir(&self.d.path));
+        // a VPN set up here before can stay as it is (the default then)
+        let can_keep = cur.vpn && self.d.str("vpn").as_deref() == Some("gluetun");
+        let mut opts = vec!["A WireGuard .conf file from your provider (any provider)", "A provider gluetun knows, and its WireGuard key"];
+        if can_keep {
+            opts.insert(0, "Keep the current VPN");
+        }
+        let def = if self.f.get("wg-conf").is_some() {
+            1
+        } else if self.f.get("vpn-provider").is_some() {
+            2
+        } else if can_keep {
+            0
         } else {
-            self.ui.say(&format!("  e.g. {}", gluetun::PROVIDERS.join(", ")));
-            let name = self.ask_or("vpn-provider", "Provider", None, "protonvpn").to_lowercase();
-            let key = self.secret_or("vpn-key", "VPN_KEY", "Its WireGuard private key", None);
-            if key.is_empty() {
-                bail!("the provider's WireGuard private key is needed (--vpn-key or CONDUCTOR_VPN_KEY)");
-            }
-            let countries = self.ask_or("vpn-countries", "Countries to use (Enter: any)", None, "");
-            gluetun::Vpn::Provider { name, private_key: key, addresses: None, countries: Some(countries).filter(|c| !c.is_empty()) }
+            1
         };
-        let pf_default = self.f.has("port-forwarding") || matches!(&vpn, gluetun::Vpn::Provider { name, .. } if gluetun::PORT_FORWARDING.contains(&name.as_str()));
-        let pf = self.ui.yes("Use the VPN's port forwarding (Proton VPN, PIA: more downloads work)?", pf_default);
+        let first = if can_keep { 0 } else { 1 };
+        let how = self.ui.choose("The VPN:", &opts, def - first) + first;
+        let vpn = match how {
+            0 => Ok(gluetun::Vpn::Keep),
+            1 => {
+                let p = self.ask_or("wg-conf", "Path to the .conf", None, "");
+                if p.is_empty() {
+                    Err("no .conf given".to_string())
+                } else {
+                    std::fs::read_to_string(&p).with_context(|| format!("reading {p}")).and_then(|t| gluetun::parse_wg(&t)).map(gluetun::Vpn::Conf).map_err(|e| format!("{e:#}"))
+                }
+            }
+            _ => {
+                self.ui.say(&format!("  e.g. {}", gluetun::PROVIDERS.join(", ")));
+                let name = self.ask_or("vpn-provider", "Provider", None, "protonvpn").to_lowercase();
+                let key = self.secret_or("vpn-key", "VPN_KEY", "Its WireGuard private key", None);
+                let needs = gluetun::NEEDS_ADDRESS.contains(&name.as_str());
+                let address = if needs {
+                    self.ask_or("vpn-address", "Its WireGuard address (the Address line of a .conf it gives, e.g. 10.64.0.2/32)", None, "")
+                } else {
+                    self.f.get("vpn-address").unwrap_or("").to_string()
+                };
+                let countries = self.ask_or("vpn-countries", "Countries to use (Enter: any)", None, "");
+                if key.is_empty() {
+                    Err("the provider's WireGuard private key is needed (--vpn-key or CONDUCTOR_VPN_KEY)".to_string())
+                } else if needs && address.is_empty() {
+                    Err(format!("{name} needs its WireGuard address too (--vpn-address)"))
+                } else {
+                    Ok(gluetun::Vpn::Provider { name, private_key: key, addresses: Some(address).filter(|a| !a.is_empty()), countries: Some(countries).filter(|c| !c.is_empty()) })
+                }
+            }
+        };
+        let vpn = match vpn {
+            Ok(v) => v,
+            Err(e) if can_keep => {
+                self.ui.say(&format!("  ✗ {e}: the current VPN stays"));
+                gluetun::Vpn::Keep
+            }
+            Err(e) => {
+                self.ui.say(&format!("  ✗ {e}: no VPN set up"));
+                return Ok(());
+            }
+        };
+        let pf_default = self.f.has("port-forwarding")
+            || match &vpn {
+                gluetun::Vpn::Provider { name, .. } => gluetun::PORT_FORWARDING.contains(&name.as_str()),
+                gluetun::Vpn::Keep => self.d.bool("vpn_port_sync").unwrap_or(false),
+                gluetun::Vpn::Conf(_) => false,
+            };
+        let pf = self.ui.yes("Use the VPN's port forwarding (Proton VPN: more downloads work)?", pf_default);
         let a = match self.make.take() {
             Some(a) => a,
             None => {
-                let user = self.ask_or("slsk-user", "Your Soulseek user name (a new one is made if it's free)", None, "");
-                let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", None);
+                // Enter keeps what slskd has now
+                let user = self.ask_or("slsk-user", "Your Soulseek user name (a new one is made if it's free)", cur.soulseek_user, "");
+                let pass = self.secret_or("slsk-pass", "SLSK_PASSWORD", "Its Soulseek password", cur.soulseek_password);
                 let data = self.d.str("data_dir").map(PathBuf::from).unwrap_or_else(config::default_data_dir);
-                let dl = self.ask_or("downloads-dir", "Where downloads go", None, &data.join("downloads").to_string_lossy());
+                let dl = self.ask_or("downloads-dir", "Where downloads go", self.d.str("slskd_downloads"), &data.join("downloads").to_string_lossy());
+                if user.is_empty() || pass.is_empty() {
+                    self.ui.say("  ✗ a Soulseek user name and password are needed; nothing changed");
+                    return Ok(());
+                }
                 Downloader { soulseek_user: user, soulseek_password: pass, downloads: dl }
             }
         };
@@ -648,8 +723,9 @@ impl Wizard<'_> {
     /// The downloader folder: written, checked, its address and key saved, and started if you say so.
     async fn make_downloader(&mut self, vpn: Option<(gluetun::Vpn, bool)>, a: Downloader) -> Result<()> {
         let dir = stack::dir(&self.d.path);
-        let web_port = self.port(5030);
-        let control_port = self.port(8000);
+        let cur = gluetun::current(&dir);
+        let web_port = self.keep_port(cur.web_port, 5030);
+        let control_port = self.keep_port(cur.control_port, 8000);
         let with_vpn = vpn.is_some();
         let (vpn, pf) = match vpn {
             Some((v, pf)) => (Some(v), pf),
@@ -662,12 +738,13 @@ impl Wizard<'_> {
             soulseek_password: a.soulseek_password,
             downloads: PathBuf::from(&a.downloads),
             web_port,
-            listen_port: if with_vpn { 50300 } else { self.port(50300) },
+            // inside the VPN it's gluetun's own; on its own, the one this computer gave it before
+            listen_port: if with_vpn { 50300 } else { self.keep_port(cur.listen_port.filter(|_| !cur.vpn), 50300) },
             control_port,
             port_forwarding: pf,
-            slskd_key: new_key(),
-            control_key: new_key(),
-            slskd_password: new_key()[..20].to_string(),
+            slskd_key: cur.slskd_key.unwrap_or_else(new_key),
+            control_key: cur.control_key.unwrap_or_else(new_key),
+            slskd_password: cur.web_password.unwrap_or_else(|| new_key()[..20].to_string()),
         };
         gluetun::write(&setup)?;
         if with_vpn {
@@ -753,6 +830,14 @@ impl Wizard<'_> {
         }
     }
 
+    /// The port a part had before (its own container holds it), else a free one.
+    fn keep_port(&mut self, had: Option<u16>, want: u16) -> u16 {
+        match had {
+            Some(p) if self.ports.insert(p) => p,
+            _ => self.port(want),
+        }
+    }
+
     /// A port on 127.0.0.1 that's free, and not given to another service in this run.
     fn port(&mut self, want: u16) -> u16 {
         let p = (want..want.saturating_add(200))
@@ -793,8 +878,9 @@ impl Wizard<'_> {
         match c {
             0 => match music.clone() {
                 Some(m) => {
-                    let port = self.port(8686);
-                    let key = new_key()[..32].to_string();
+                    let port = self.keep_port(stack::part_port(&dir, "lidarr", 8686), 8686);
+                    // the key Lidarr has already, if it's been set up here before
+                    let key = stack::env_value(&dir.join("lidarr.env"), "LIDARR__AUTH__APIKEY").unwrap_or_else(|| new_key()[..32].to_string());
                     let dl = self.d.str("slskd_downloads");
                     stack::lidarr(&dir, &stack::Lidarr { port, key: &key, music: &m, downloads: dl.as_deref() })?;
                     self.d.set("lidarr_url", format!("http://127.0.0.1:{port}"));
@@ -847,10 +933,12 @@ impl Wizard<'_> {
                 if !reachable {
                     self.ui.say("  ! Conductor listens only on 127.0.0.1, so AudioMuse (in Docker) can't reach it: use 0.0.0.0 in the address step");
                 }
-                let port = self.port(8010);
-                let token = new_key();
-                let web = new_key()[..20].to_string();
-                let pass = new_key()[..24].to_string();
+                let port = self.keep_port(stack::part_port(&dir, "audiomuse", 8000), 8010);
+                // what AudioMuse has already, if it's been set up here before
+                let env = dir.join("audiomuse.env");
+                let token = stack::env_value(&env, "API_TOKEN").unwrap_or_else(new_key);
+                let web = stack::env_value(&env, "AUDIOMUSE_PASSWORD").unwrap_or_else(|| new_key()[..20].to_string());
+                let pass = stack::env_value(&env, "NAVIDROME_PASSWORD").unwrap_or_else(|| new_key()[..24].to_string());
                 // its own account, to read the library with (not yours)
                 self.service_account("audiomuse", &pass).await?;
                 stack::audiomuse(&dir, &stack::AudioMuse { port, conductor_url: &url, user: "audiomuse", password: &pass, api_token: &token, web_password: &web })?;
@@ -881,7 +969,7 @@ impl Wizard<'_> {
         match c {
             0 => match music.clone() {
                 Some(_) => {
-                    let port = self.port(4540);
+                    let port = self.keep_port(stack::part_port(&dir, "pitch", 4540), 4540);
                     stack::pitch(&dir, port, &self.all_music())?;
                     self.d.set("songid_url", format!("http://127.0.0.1:{port}"));
                     self.ui.say("  ✓ Pitch: it fingerprints your songs once, slowly, newest first (about 150 MB of memory for 2,000 songs)");
@@ -939,10 +1027,11 @@ impl Wizard<'_> {
             let have = self.d.str("ollama_url").is_some() || self.f.get("ollama-url").is_some();
             match self.how("Ollama and Interlude's voice?", "ai", have) {
                 0 => {
-                    // an Ollama already running here is used as it is
-                    let running = http().get("http://127.0.0.1:11434/api/tags").send().await.is_ok_and(|r| r.status().is_success());
-                    let ollama_port = if running { None } else { Some(self.port(11434)) };
-                    let voice = self.port(4541);
+                    // an Ollama already running here is used as it is (one set up here before is ours, and stays)
+                    let ours = std::fs::read_to_string(dir.join("ai.yml")).is_ok_and(|t| t.contains("conductor-ollama"));
+                    let running = !ours && http().get("http://127.0.0.1:11434/api/tags").send().await.is_ok_and(|r| r.status().is_success());
+                    let ollama_port = if running { None } else { Some(self.keep_port(stack::part_port(&dir, "ai", 11434), 11434)) };
+                    let voice = self.keep_port(stack::part_port(&dir, "ai", 4541), 4541);
                     stack::ai(&dir, ollama_port, voice)?;
                     self.d.set("ollama_url", format!("http://127.0.0.1:{}", ollama_port.unwrap_or(11434)));
                     self.d.set("dj_voice_url", format!("http://127.0.0.1:{voice}"));

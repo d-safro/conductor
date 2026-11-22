@@ -14,8 +14,11 @@ use serde_json::{Value, json};
 
 /// A stand-in HTTP service: path → JSON (404 when None).
 async fn stand_in(answer: impl Fn(&str) -> Option<Value> + Clone + Send + Sync + 'static) -> String {
+    serve_on(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(), answer)
+}
+
+fn serve_on(l: tokio::net::TcpListener, answer: impl Fn(&str) -> Option<Value> + Clone + Send + Sync + 'static) -> String {
     use axum::{extract::Request, response::IntoResponse};
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
     let app = axum::Router::new().fallback(move |req: Request| {
         let answer = answer.clone();
@@ -347,4 +350,108 @@ async fn sets_up_the_whole_music_lab() {
     assert!(!main.contains("pitch.yml") && main.contains("lidarr.yml") && main.contains("downloads.yml"), "{main}");
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
     assert!(c.songid_url.is_none());
+}
+
+async fn yes(config: &Path, args: &[&str]) -> String {
+    let mut out = Vec::new();
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(config.to_path_buf()), args, &mut ui).await.unwrap();
+    }
+    String::from_utf8(out).unwrap()
+}
+
+fn port_of(u: &Option<String>) -> u16 {
+    let after = u.as_deref().unwrap().rsplit(':').next().unwrap();
+    after.split('/').next().unwrap().parse().unwrap()
+}
+
+#[tokio::test]
+async fn a_run_again_keeps_what_is_running() {
+    if cfg!(windows) {
+        return; // the VPN container is for Linux
+    }
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    let dir = data.join("services");
+    let conf = p.root.join("fake.conf");
+    std::fs::write(&conf, "[Interface]\nPrivateKey = KeepTestPrivateKey000000000000000000000000=\nAddress = 10.9.0.2/32\n[Peer]\nPublicKey = KeepTestPublicKey0000000000000000000000000=\nEndpoint = 127.0.0.1:51820\n").unwrap();
+    let dl = p.root.join("dl");
+    yes(
+        &p.config,
+        &[
+            "--yes", "--music", p.music.to_str().unwrap(), "--data", data.to_str().unwrap(), "--listen", "0.0.0.0:45936", "--vpn", "wireguard", "--wg-conf", conf.to_str().unwrap(),
+            "--slsk-user", "someone", "--slsk-pass", "pw-keep", "--downloads-dir", dl.to_str().unwrap(), "--require-vpn", "--docker", "lidarr,audiomuse,pitch,ai", "--ai",
+        ],
+    )
+    .await;
+    let first = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(first.vpn, "gluetun");
+    let files = |names: &[&str]| names.iter().map(|n| read(&dir.join(n))).collect::<Vec<_>>();
+    let kept = ["vpn.env", "slskd/slskd.yml", "gluetun/auth/config.toml", "audiomuse.env", "lidarr.env"];
+    let before = files(&kept);
+    // their containers are running: each holds its port (Ollama answers, as it would)
+    let urls = [&first.slskd_url, &first.vpn_check_url, &first.lidarr_url, &first.audiomuse_url, &first.songid_url, &first.dj_voice_url];
+    let _held: Vec<_> = urls.iter().filter_map(|u| std::net::TcpListener::bind(("127.0.0.1", port_of(u))).ok()).collect();
+    let ollama = port_of(&first.ollama_url);
+    if let Ok(l) = tokio::net::TcpListener::bind(("127.0.0.1", ollama)).await {
+        serve_on(l, |p| (p == "/api/tags").then(|| json!({ "models": [] })));
+    }
+
+    // only the downloads step, "set it up for me" again: it stays inside the VPN
+    let out = yes(&p.config, &["--yes", "downloads", "--downloads", "docker"]).await;
+    assert!(out.contains("stays inside your VPN"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.vpn.as_str(), c.downloads_require_vpn, c.vpn_port_sync), ("gluetun", true, first.vpn_port_sync));
+    assert!(read(&dir.join("downloads.yml")).contains("network_mode: service:gluetun"));
+    assert_eq!((&c.slskd_url, &c.slskd_api_key, &c.vpn_check_url, &c.vpn_check_key), (&first.slskd_url, &first.slskd_api_key, &first.vpn_check_url, &first.vpn_check_key));
+    assert_eq!(files(&kept), before, "the same keys and logins");
+
+    // the VPN step again, asking nothing: the current VPN is kept (no .conf needed)
+    yes(&p.config, &["--yes", "vpn"]).await;
+    // and in a terminal: Enter keeps it; a .conf left blank doesn't end the wizard; blank Soulseek answers keep slskd's
+    let out = scripted(&p.config, &["vpn"], &["", "", "", "", "", "", "n", ""]).await;
+    assert!(out.contains("Keep the current VPN"), "{out}");
+    let out = scripted(&p.config, &["vpn"], &["", "2", "", "", "", "", "", "n", ""]).await;
+    assert!(out.contains("✗ no .conf given: the current VPN stays"), "{out}");
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!((c.vpn.as_str(), &c.slskd_url, &c.slskd_api_key), ("gluetun", &first.slskd_url, &first.slskd_api_key));
+    assert_eq!(files(&kept), before);
+    assert!(read(&dir.join("slskd/slskd.yml")).contains("pw-keep"));
+
+    // the services again: the same ports, the same keys, our own Ollama still ours
+    yes(&p.config, &["--yes", "services", "--docker", "lidarr,audiomuse,pitch,ai", "--ai"]).await;
+    let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
+    assert_eq!(
+        (&c.lidarr_url, &c.lidarr_api_key, &c.audiomuse_url, &c.audiomuse_token, &c.songid_url, &c.ollama_url, &c.dj_voice_url),
+        (&first.lidarr_url, &first.lidarr_api_key, &first.audiomuse_url, &first.audiomuse_token, &first.songid_url, &first.ollama_url, &first.dj_voice_url)
+    );
+    assert_eq!(files(&kept), before, "AudioMuse's database password, its token and logins, Lidarr's key");
+    assert!(read(&dir.join("ai.yml")).contains("conductor-ollama"), "our own Ollama stays in ai.yml");
+    if prelude::gluetun::has_docker() {
+        prelude::stack::validate(&dir).expect("docker compose accepts it");
+    }
+}
+
+#[tokio::test]
+async fn a_provider_that_needs_its_address() {
+    if cfg!(windows) {
+        return;
+    }
+    let base = services().await;
+    let p = place(&base);
+    let dir = p.root.join("data/services");
+    let dl = p.root.join("dl");
+    let args = ["--yes", "vpn", "--vpn", "provider", "--vpn-provider", "mullvad", "--vpn-key", "ProviderTestKey", "--slsk-user", "someone", "--slsk-pass", "pw", "--downloads-dir", dl.to_str().unwrap()];
+    let out = yes(&p.config, &args).await;
+    assert!(out.contains("mullvad needs its WireGuard address too (--vpn-address)"), "{out}");
+    assert!(!dir.join("vpn.env").exists(), "nothing half set up");
+    let mut with = args.to_vec();
+    with.extend(["--vpn-address", "10.64.0.2/32"]);
+    let out = yes(&p.config, &with).await;
+    assert!(!out.contains("ProviderTestKey"), "{out}");
+    let env = read(&dir.join("vpn.env"));
+    assert!(env.contains("VPN_SERVICE_PROVIDER=mullvad") && env.contains("WIREGUARD_ADDRESSES=10.64.0.2/32"), "{env}");
+    assert!(!read(&dir.join("downloads.yml")).contains("VPN_PORT_FORWARDING: \"on\""), "mullvad has no port forwarding");
 }
