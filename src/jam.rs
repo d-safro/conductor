@@ -100,11 +100,20 @@ fn exists(st: &AppState, token: &str) -> bool {
     token_ok(token) && st.live.lock().jams.contains_key(token)
 }
 
+/// Who's asking, for the rate limits. X-Forwarded-For counts only when the connection comes from a proxy on this
+/// computer (Tailscale Funnel, Caddy…), and then only its last address: the one that proxy added. The ones before it
+/// are whatever the guest sent, so a guest could otherwise be someone new on every request.
 pub fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
-    h.get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
+    if !peer.ip().is_loopback() {
+        return peer.ip().to_string();
+    }
+    h.get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .rfind(|s| !s.is_empty())
+        .map(String::from)
         .unwrap_or_else(|| peer.ip().to_string())
 }
 
@@ -318,4 +327,25 @@ pub async fn serve(st: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     tracing::info!(%addr, "Jam guest page listening");
     axum::serve(listener, router(st).into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_ip;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn who_is_asking() {
+        let local: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let far: std::net::SocketAddr = "198.51.100.7:5000".parse().unwrap();
+        let mut h = HeaderMap::new();
+        assert_eq!(client_ip(&h, far), "198.51.100.7");
+        assert_eq!(client_ip(&h, local), "127.0.0.1");
+        // the guest's own header, then what the proxy here added
+        h.insert("x-forwarded-for", "1.2.3.4, 203.0.113.5".parse().unwrap());
+        assert_eq!(client_ip(&h, local), "203.0.113.5", "the proxy's address, not the one the guest made up");
+        assert_eq!(client_ip(&h, far), "198.51.100.7", "not through a proxy here: the header is the guest's own");
+        h.append("x-forwarded-for", "203.0.113.6".parse().unwrap());
+        assert_eq!(client_ip(&h, local), "203.0.113.6");
+    }
 }
