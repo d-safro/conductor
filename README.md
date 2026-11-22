@@ -1,4 +1,9 @@
-# Conductor
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/conductor-lockup-dark.svg">
+    <img alt="Conductor" src="assets/brand/conductor-lockup-light.svg" width="440">
+  </picture>
+</p>
 
 A music server for [Encore](https://github.com/d-safro/encore) and for any app that speaks the
 **Subsonic / OpenSubsonic** API. It's written in Rust and runs as a single program on Linux and Windows.

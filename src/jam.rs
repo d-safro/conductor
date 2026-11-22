@@ -38,6 +38,7 @@ pub fn router(st: Shared) -> Router {
         .route("/jam/{token}/cover/{id}", get(cover))
         .route("/jam/{token}/{action}", post(action))
         .merge(crate::collab::router())
+        .merge(crate::brand::routes())
         .fallback(|| async { (StatusCode::NOT_FOUND, "Not found") })
         .layer(axum::middleware::map_response(|mut r: Response| async move {
             let h = r.headers_mut();

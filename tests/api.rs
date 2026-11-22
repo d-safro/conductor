@@ -1195,7 +1195,10 @@ async fn admin_page() {
     let s = Server::start().await;
     let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
     let page = http.get(format!("{}/admin", s.base)).send().await.unwrap().text().await.unwrap();
-    assert!(page.contains("<title>Podium · Conductor</title>"));
+    assert!(page.contains("<title>Podium · Conductor</title>") && page.contains("href=\"/favicon.svg\""));
+    let icon = http.get(format!("{}/favicon.svg", s.base)).send().await.unwrap();
+    assert_eq!(icon.headers()["content-type"], "image/svg+xml");
+    assert!(icon.text().await.unwrap().contains("<svg"));
     let api = |p: &str| format!("{}/admin/api/{p}", s.base);
     assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
     // sign-in needs the header (other sites can't send it), and the right password

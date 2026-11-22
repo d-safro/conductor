@@ -49,3 +49,6 @@ tempfile = "3"
 lto = "thin"
 codegen-units = 4
 strip = true
+
+[build-dependencies]
+winresource = "0.1.34"
