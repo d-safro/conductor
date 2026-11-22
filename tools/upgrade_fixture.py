@@ -98,6 +98,17 @@ os.makedirs(OUT)
 for f in os.listdir(data):
     if f.endswith((".db", ".db-wal", ".db-shm")) or f == "secret.key":
         shutil.copy(os.path.join(data, f), os.path.join(OUT, f))
+# one file: what's still in the write-ahead log goes into the database (git keeps only *.db, not -wal / -shm)
+import sqlite3
+for f in os.listdir(OUT):
+    if f.endswith(".db"):
+        c = sqlite3.connect(os.path.join(OUT, f))
+        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        c.execute("PRAGMA journal_mode=DELETE")
+        c.close()
+for f in os.listdir(OUT):
+    if f.endswith(("-wal", "-shm")):
+        os.remove(os.path.join(OUT, f))
 json.dump(expected, open(os.path.join(OUT, "expected.json"), "w"), indent=1, sort_keys=True)
 shutil.rmtree(tmp)
 print("made", OUT, sorted(os.listdir(OUT)))
