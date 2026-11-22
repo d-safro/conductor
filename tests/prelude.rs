@@ -259,3 +259,29 @@ async fn downloader_container_on_its_own() {
     let c = conductor::config::Config::load(Some(p.config.clone())).unwrap();
     assert!(c.slskd_url.is_none() && !c.catalog);
 }
+
+#[tokio::test]
+async fn docker_file_uses_the_same_settings() {
+    if cfg!(windows) {
+        return; // the Docker choice is for Linux
+    }
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    let mut out = Vec::new();
+    let args = ["--yes", "--music", p.music.to_str().unwrap(), "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45934", "--service", "docker"];
+    {
+        let mut ui = Auto { out: &mut out };
+        prelude::run(Some(p.config.clone()), &args, &mut ui).await.unwrap();
+    }
+    let compose = p.config.with_file_name("conductor-compose.yml");
+    let text = read(&compose);
+    assert!(text.contains("ghcr.io/d-safro/conductor:latest") && text.contains("network_mode: host"), "{text}");
+    let music = p.music.to_str().unwrap();
+    assert!(text.contains(&format!("\"{music}:{music}\"")), "the music at the same place: {text}");
+    assert!(text.contains(&format!("CONDUCTOR_CONFIG: \"{}\"", p.config.display())), "{text}");
+    if prelude::gluetun::has_docker() {
+        let ok = std::process::Command::new("docker").args(["compose", "-f"]).arg(&compose).args(["config", "-q"]).status().unwrap().success();
+        assert!(ok, "docker compose accepts it");
+    }
+}

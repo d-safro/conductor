@@ -28,6 +28,16 @@ The detailed list. The [README](../README.md) has the short version.
 - **Login**: Subsonic token (`t` + `s`), password (`p`, also `enc:`), and OpenSubsonic API keys (`apiKey`).
   Passwords are stored encrypted with a key in `secret.key` beside the database, never in it. Wrong passwords are
   limited per user per address (30 every 15 minutes from apps, 10 on the admin page); a right one resets the count.
+- **Users** (`getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword`, `getAvatar`): admins
+  manage users from any app or Podium; everyone can change their own password; the last admin can't be removed or
+  demoted. Two kinds of user, admins and everyone else; `getAvatar` draws a simple picture per user.
+- **Shares** (`getShares`, `createShare`, `updateShare`, `deleteShare`): a link to songs, albums or playlists that
+  anyone can play without an account, on the Jam listener at `jam_public_url`. The songs are fixed when the share is
+  made; visitors get them by their place in the list, never an id, rate-limited per address; expiry and visit counts.
+- **Backups**: `conductor backup [FILE]`, `conductor restore FILE [--force]`, and one a day in `<data>/backups` (the
+  newest `backup_keep`, 7, kept). One private zip: a consistent copy of the database, `secret.key`, `config.toml`
+  and `secrets.toml`, the playlist pictures. Restoring refuses while Conductor runs or over an existing library
+  without `--force` (then it's moved aside, never deleted).
 - **Smart playlists** in Navidrome's rule format (`all`/`any`, is, contains, gt/lt, inTheRange, inTheLast,
   before/after, inPlaylist…; sort, order, limit). They refill themselves when read (at most once a minute) and
   can't be edited by hand (`readonly`). `inPlaylist` only sees your own playlists and public ones.
@@ -66,6 +76,9 @@ The detailed list. The [README](../README.md) has the short version.
   bookmarks per user. Episode and show ids are the same as music-lookup's. Adding, removing, refreshing and saving
   shows is for admins. Feeds, episodes and covers are fetched only from the internet, redirects included, never this
   computer or your network (`podcast_local = true` allows those).
+- **Downloads are optional**: without slskd or Lidarr, songs you don't have aren't shown (`catalog` is off unless set),
+  and everything else works. Prelude sets the downloader up as one Docker container (slskd; Linux or Windows with
+  Docker), on this computer's connection or inside a VPN (gluetun), or uses your own slskd.
 - **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or

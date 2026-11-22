@@ -1,10 +1,17 @@
-# Builds release files when a tag like v0.1.0 is pushed: conductor.exe (+ install.ps1, uninstall.ps1, config example)
-# as a zip for Windows, and a static Linux binary. Tests run on both first.
+# A tag like v0.3.0 makes a release:
+#   - tests on Windows, Linux x86-64 and Linux ARM64, then the files: conductor.exe (+ install.ps1, uninstall.ps1,
+#     the config example) zipped for Windows, and a static binary for each Linux;
+#   - the Docker image ghcr.io/d-safro/conductor (linux/amd64 and linux/arm64), from those same binaries, tagged
+#     with the version, its x.y and latest;
+#   - a draft release with the files and SHA256SUMS.txt, to read over and publish.
+# Run by hand (workflow_dispatch), it only builds and tests.
 name: release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   windows:
     runs-on: windows-latest
@@ -23,13 +30,68 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: conductor-windows-x86_64, path: conductor-windows-x86_64.zip }
   linux:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with: { targets: x86_64-unknown-linux-musl }
+        with: { targets: "${{ matrix.arch }}-unknown-linux-musl" }
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg musl-tools
       - run: cargo test --release
-      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - run: cargo build --release --target ${{ matrix.arch }}-unknown-linux-musl
+      - name: check it runs
+        run: target/${{ matrix.arch }}-unknown-linux-musl/release/conductor setup --help | head -1
       - uses: actions/upload-artifact@v4
-        with: { name: conductor-linux-x86_64, path: target/x86_64-unknown-linux-musl/release/conductor }
+        with: { name: "conductor-linux-${{ matrix.arch }}", path: "target/${{ matrix.arch }}-unknown-linux-musl/release/conductor" }
+  publish:
+    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: art }
+      - name: package
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p out bin
+          for a in x86_64 aarch64; do
+            install -m 755 "art/conductor-linux-$a/conductor" conductor
+            tar czf "out/conductor-$v-linux-$a.tar.gz" conductor
+            rm conductor
+          done
+          cp art/conductor-windows-x86_64/conductor-windows-x86_64.zip "out/conductor-$v-windows-x86_64.zip"
+          (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          install -m 755 art/conductor-linux-x86_64/conductor bin/conductor-amd64
+          install -m 755 art/conductor-linux-aarch64/conductor bin/conductor-arm64
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: image tags
+        id: tags
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          img=ghcr.io/${GITHUB_REPOSITORY,,}
+          echo "list=$img:$v,$img:${v%.*},$img:latest" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+      - name: draft release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          [ -f "$notes" ] || { echo "Conductor $v" > /tmp/notes.md; notes=/tmp/notes.md; }
+          gh release create "$GITHUB_REF_NAME" --draft --title "Conductor $v" --notes-file "$notes" out/*

@@ -1,8 +1,8 @@
-# Example only. Runs beside Navidrome on another port.
+# Example only. Runs beside Navidrome on another port. (To build from the source: image: conductor:dev and
+# build: { context: .., dockerfile: deploy/Dockerfile })
 services:
   conductor:
-    image: conductor:dev
-    build: { context: .., dockerfile: deploy/Dockerfile }
+    image: ghcr.io/d-safro/conductor:latest
     container_name: conductor
     restart: unless-stopped
     user: ${PUID}:${PGID}

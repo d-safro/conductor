@@ -1,19 +1,27 @@
 # Running Conductor
 
-## Docker (Linux)
+## Docker (Linux, x86-64 and ARM64)
+
+The published image, `ghcr.io/d-safro/conductor` (tags: the version, its `x.y`, and `latest`):
 
 ```bash
-docker build -f deploy/Dockerfile -t conductor:dev .
 docker run -d --name conductor -p 127.0.0.1:4533:4533 \
   -e CONDUCTOR_ADMIN_USER=me -e CONDUCTOR_ADMIN_PASSWORD='…' \
-  -v /srv/conductor:/data -v /path/to/music:/music conductor:dev
+  -v /srv/conductor:/data -v /path/to/music:/music ghcr.io/d-safro/conductor
 ```
 
-The image is small (Alpine + ffmpeg + one static binary) and has a health check on `/health`. Keep `/data` on a disk
-that doesn't go away (the database, the password key and caches live there). The music folder needs to be writable
-only if Conductor should file downloads, keep trial songs or save covers (`CONDUCTOR_READ_ONLY=1` otherwise).
+Without the two admin settings, the first admin is made at `/setup` (from the server itself, or with the one-time
+link in `docker logs conductor`). To build the image from the source instead:
+`docker build -f deploy/Dockerfile -t conductor:dev .`
 
-`deploy/compose.example.yml` is a starting point for Docker Compose.
+The image is small (Alpine + ffmpeg + one static binary) and has a health check on `/health`. Keep `/data` on a disk
+that doesn't go away (the database, the password key, caches and the daily backups live there). The music folder
+needs to be writable only if Conductor should file downloads, keep trial songs or save covers
+(`CONDUCTOR_READ_ONLY=1` otherwise).
+
+`deploy/compose.example.yml` is a starting point for Docker Compose. Prelude's "With Docker" choice writes a compose
+file that reads the same `config.toml` as running it directly (same folders, this computer's network), so the
+downloader it sets up works there too.
 
 ## Windows
 
@@ -31,4 +39,5 @@ Data goes to `%ProgramData%\conductor` unless `data_dir` says otherwise. If slsk
 administrator, `powershell -ExecutionPolicy Bypass -File install.ps1 -Music "D:\Music"` (add `-OpenFirewall` for the
 local network). Or by hand: `conductor.exe --config C:\ProgramData\conductor\config.toml service install`, then
 `service start` / `service stop` / `service uninstall`. `uninstall.ps1` removes it (data kept unless `-RemoveData`).
-Release zips are built by `.github/workflows/release.yml` on a `v*` tag (Windows tests run on a GitHub runner there).
+Release files and the image are built by `.github/workflows/release.yml` on a `v*` tag, after the tests pass on Windows,
+Linux x86-64 and Linux ARM64.

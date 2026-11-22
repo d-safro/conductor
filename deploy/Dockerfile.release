@@ -1,0 +1,15 @@
+# The published image (ghcr.io/d-safro/conductor), made by .github/workflows/release.yml from the release's own
+# static binaries, already built and tested there for each architecture. To build from the source instead, use
+# deploy/Dockerfile.
+FROM alpine:3
+ARG TARGETARCH
+RUN apk add --no-cache ffmpeg tini
+COPY bin/conductor-${TARGETARCH} /usr/local/bin/conductor
+ENV CONDUCTOR_DATA_DIR=/data CONDUCTOR_MUSIC=/music CONDUCTOR_LISTEN=0.0.0.0:4533
+VOLUME ["/data"]
+EXPOSE 4533
+HEALTHCHECK --interval=60s --timeout=5s CMD wget -qO- http://127.0.0.1:4533/health >/dev/null || exit 1
+LABEL org.opencontainers.image.source="https://github.com/d-safro/conductor" \
+      org.opencontainers.image.description="Conductor, a music server for Encore and any Subsonic app" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+ENTRYPOINT ["/sbin/tini", "--", "conductor"]

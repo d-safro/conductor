@@ -397,13 +397,14 @@ impl Config {
             }
             None => Config::default(),
         };
-        if let Some(v) = var_os("DATA_DIR") {
+        // empty: as if unset (Prelude's Docker file clears the image's defaults this way, to use config.toml)
+        if let Some(v) = var_os("DATA_DIR").filter(|v| !v.is_empty()) {
             c.data_dir = v.into();
         }
-        if let Ok(v) = var("LISTEN") {
+        if let Ok(v) = var("LISTEN").map(|v| v.trim().to_string()).and_then(|v| if v.is_empty() { Err(std::env::VarError::NotPresent) } else { Ok(v) }) {
             c.listen = v.parse().context("CONDUCTOR_LISTEN")?;
         }
-        if let Some(v) = var_os("MUSIC") {
+        if let Some(v) = var_os("MUSIC").filter(|v| !v.is_empty()) {
             // one library from the environment, handy for Docker: CONDUCTOR_MUSIC=/music
             c.libraries = vec![LibraryConfig {
                 name: "Music".into(),

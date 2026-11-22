@@ -101,30 +101,72 @@ pub fn windows(ui: &mut dyn Ui, exe: &Path, config: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A compose file for running Conductor in Docker, beside config.toml.
-pub fn docker(ui: &mut dyn Ui, d: &Draft) -> Result<()> {
-    let music = d.cfg.get("libraries").and_then(|l| l.as_array()).and_then(|l| l.first()).and_then(|l| l.get("path")).and_then(|p| p.as_str()).unwrap_or("/path/to/music").to_string();
-    let data = d.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let port = d.str("listen").and_then(|l| l.rsplit(':').next().map(String::from)).unwrap_or_else(|| "4533".into());
-    let text = format!(
-        "# Conductor in Docker, made by `conductor setup`. Build the image from the source: docker build -f deploy/Dockerfile -t conductor:dev .
+/// The published image (Linux, x86-64 and ARM64).
+pub const IMAGE: &str = "ghcr.io/d-safro/conductor:latest";
+
+/// A compose file for running Conductor in Docker, beside config.toml. The container sees the same folders at the
+/// same places and shares this computer's network, so config.toml works unchanged in it (its address, the music
+/// folders, and the downloader's address).
+pub fn docker_yaml(d: &Draft) -> String {
+    let mut folders: Vec<String> = d
+        .cfg
+        .get("libraries")
+        .and_then(|l| l.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.get("path").and_then(|p| p.as_str()).map(String::from))
+        .collect();
+    let data = d.str("data_dir").unwrap_or_else(|| d.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default());
+    let cfg_dir = d.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    for extra in [d.str("slskd_downloads"), d.str("podcast_dir"), Some(cfg_dir.clone())].into_iter().flatten() {
+        if !extra.is_empty() && extra != data && !folders.contains(&extra) {
+            folders.push(extra);
+        }
+    }
+    let (uid, gid) = ids();
+    let q = |s: &str| serde_json::to_string(s).unwrap_or_default();
+    let mut vols = format!("      - {}\n", q(&format!("{data}:{data}")));
+    for f in &folders {
+        vols += &format!("      - {}\n", q(&format!("{f}:{f}")));
+    }
+    format!(
+        "# Conductor in Docker, made by `conductor setup`. Start: docker compose -f conductor-compose.yml up -d
+# It reads the same config.toml as Conductor outside Docker: the same folders, mounted at the same places,
+# and this computer's network (so its address and the downloader's work as they are).
 services:
   conductor:
-    image: conductor:dev
+    image: {IMAGE}
     container_name: conductor
     restart: unless-stopped
+    network_mode: host
+    user: \"{uid}:{gid}\"
     environment:
-      CONDUCTOR_DATA_DIR: /data
-      CONDUCTOR_MUSIC: /music
+      CONDUCTOR_CONFIG: {cfg}
+      # the image's own defaults (/data, /music), cleared: config.toml says where things are
+      CONDUCTOR_DATA_DIR: \"\"
+      CONDUCTOR_MUSIC: \"\"
+      CONDUCTOR_LISTEN: \"\"
     volumes:
-      - {data}:/data
-      - {music}:/music
-    ports:
-      - \"{port}:4533\"
-"
-    );
+{vols}",
+        cfg = q(&d.path.to_string_lossy()),
+    )
+}
+
+pub fn docker(ui: &mut dyn Ui, d: &Draft) -> Result<()> {
     let path = d.path.with_file_name("conductor-compose.yml");
-    std::fs::write(&path, text)?;
+    std::fs::write(&path, docker_yaml(d))?;
     ui.say(&format!("  ✓ {} (start: docker compose -f {} up -d)", path.display(), path.display()));
     Ok(())
+}
+
+fn ids() -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        let n = |a: &str| Command::new("id").arg(a).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).and_then(|s| s.trim().parse().ok());
+        (n("-u").unwrap_or(1000), n("-g").unwrap_or(1000))
+    }
+    #[cfg(not(unix))]
+    {
+        (1000, 1000)
+    }
 }

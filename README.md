@@ -8,13 +8,13 @@
 <p align="center">
   <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/d-safro/conductor?label=release"></a>
   <a href="../../actions/workflows/ci.yml"><img alt="CI" src="https://github.com/d-safro/conductor/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Linux and Windows" src="https://img.shields.io/badge/runs%20on-Linux%20%7C%20Windows-555">
+  <img alt="Linux, Windows and Docker" src="https://img.shields.io/badge/runs%20on-Linux%20%7C%20Windows%20%7C%20Docker-555">
   <img alt="AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue">
 </p>
 
 <p align="center">
   <b>A self-hosted music server</b> for <a href="https://github.com/d-safro/encore">Encore</a> and any app that speaks
-  <b>Subsonic / OpenSubsonic</b>.<br>One Rust program for Linux and Windows: your library, downloads, mixes, lyrics and a web player.
+  <b>Subsonic / OpenSubsonic</b>.<br>One Rust program for Linux (x86-64 and ARM64) and Windows: your library, mixes, lyrics, a web player, and downloads if you want them.
 </p>
 
 > Early development, used daily by its author. Conductor was called Maestro until November 2026: `MAESTRO_*`
@@ -27,21 +27,31 @@
   - the Subsonic API for any app;
   - **Recital**, a small built-in web player;
   - Encore's extras for phone, desktop and watch.
-- **Gets music you don't have:**
-  - search shows it, and hearting fetches it from Soulseek through slskd (**Stagehand**);
+- **Gets music you don't have, if you want it** (everything else works without it):
+  - Prelude sets the downloader up as one Docker container, optionally inside a VPN;
+  - search shows what you don't have, and hearting fetches it from Soulseek through slskd (**Stagehand**);
   - songs you only try out come and go as **Auditions**;
   - Lidarr's wanted albums too.
 - **Made for you:** Discover Weekly, Release Radar, Daily Mixes and the Daylist (**Repertoire**); concerts near you (**Marquee**); your year in review (**Curtain Call**).
 - **Brings your history with you** (**Transpose**): Spotify, Apple Music / iTunes, YouTube Music, Last.fm, ListenBrainz and playlist files, matched to your library and undoable.
 - **Optional AI, all local:** lyrics translation (**Libretto**), a DJ between songs (**Interlude**), song ID (**Pitch**).
 - **Easy to set up:** **Prelude** asks a few questions, tests each answer, and can put downloads behind a VPN with a kill switch.
+- **Safe to run for years:** a backup every day (database, its key and your settings, in one zip) and `conductor restore` to bring one back.
+- **Share and manage:** share links anyone can play without an account; users managed from any Subsonic app or Podium.
 
 Everything, in detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Get it
 
-Download the program for your system from the [latest release](../../releases/latest) (Linux and Windows), or build it
-(below). Then run **`conductor setup`**; Prelude walks you through the rest. Coming from Navidrome? Prelude offers to
+Download the program for your system from the [latest release](../../releases/latest) (Linux x86-64 and ARM64,
+Windows), use the Docker image, or build it (below). Then run **`conductor setup`**; Prelude walks you through the
+rest.
+
+```bash
+docker run -d --name conductor -p 4533:4533 -v conductor-data:/data -v /path/to/music:/music:ro ghcr.io/d-safro/conductor
+```
+
+(With Docker, the first admin is made at `http://<server>:4533/setup`.) Coming from Navidrome? Prelude offers to
 bring everything over, keeping your songs' ids so your apps carry on where they were.
 
 ## The parts, by name
@@ -77,7 +87,8 @@ cargo build --release
 ```
 
 **Prelude** (`conductor setup`, or `conductor prelude`) walks through the music folders, the data folder and port,
-the first admin, downloads (slskd, tested), **a VPN for downloads**, the other services, bringing your history in
+the first admin, downloads (optional: the downloader set up for you as one Docker container, or your own slskd),
+**a VPN for downloads**, the other services, bringing your history in
 (Navidrome, music-lookup, Transpose) and running it as a service (systemd, the Windows service, or Docker). Run it
 again to change one part (`conductor setup vpn`); `--yes` with flags answers everything for scripts
 (`conductor setup --help`). Keys and passwords go to `secrets.toml` (mode 600) beside `config.toml`.
@@ -96,18 +107,26 @@ By hand instead: `cp config.example.toml config.toml`, set your music folder, th
 
 Or with the environment only: `CONDUCTOR_MUSIC=/path/to/music CONDUCTOR_ADMIN_USER=me CONDUCTOR_ADMIN_PASSWORD=… conductor`.
 
-Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key).
+Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key),
+`backup [FILE]` and `restore FILE [--force]`.
+
+**Backups:** every day Conductor saves one zip in `<data>/backups` (the newest 7 kept; `backup_keep`, `backup_dir`)
+with a consistent copy of the database, `secret.key` (the saved passwords need it), your settings and the playlist
+pictures. `conductor backup` makes one now. To bring one back, stop Conductor and run `conductor restore FILE`
+(with `--force` over an existing library, which is moved aside, never deleted). The zip holds secrets: keep it
+private.
 
 **Moving over from Navidrome:** stop Navidrome, copy its data folder, then
 `conductor import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
-password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
+password is carried over from Navidrome's encrypted copy (`--nd-key` if Navidrome had its own key). Running it again
+replaces what it brought over the last time.
 Then `conductor import-music-lookup <music-lookup DATA folder> [<its state folder with podcasts.json>]` adds
 music-lookup's listening log, Encore's sync values and the podcasts (plays already brought over from Navidrome
 aren't counted twice).
 
-Docker, Windows (`conductor.exe`, cross-built in a container): see `deploy/README.md`.
+Docker and Windows details: see `deploy/README.md`.
 
 ## Develop
 
