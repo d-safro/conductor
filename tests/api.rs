@@ -2175,6 +2175,116 @@ async fn pick_a_file_by_hand() {
 }
 
 #[tokio::test]
+async fn better_copy_swapped_in_same_id() {
+    if !have_ffmpeg() {
+        return;
+    }
+    use serde_json::json;
+    use std::sync::Mutex;
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    tone(&tmp.path().join("four.flac"), "Four", "Alpha", "First Album", 4, 2);
+    tone(&tmp.path().join("five.flac"), "Five", "Alpha", "First Album", 5, 20); // not the song's length
+    let files: std::collections::HashMap<&str, Vec<u8>> = [
+        ("04 Four.flac", std::fs::read(tmp.path().join("four.flac")).unwrap()),
+        ("05 Five.flac", std::fs::read(tmp.path().join("five.flac")).unwrap()),
+    ]
+    .into();
+    let asked = Arc::new(Mutex::new(String::new()));
+    let sent: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (a2, s2, dl2) = (asked.clone(), sent.clone(), downloads.clone());
+    let (base, _) = stand_in(move |path, _q, body| {
+        let b: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+        Some(match path {
+            "/api/v0/application" => json!({ "server": { "isLoggedIn": true } }),
+            "/api/v0/searches" => {
+                *a2.lock().unwrap() = b["searchText"].as_str().unwrap_or("").to_string();
+                json!({})
+            }
+            p if p.ends_with("/responses") => {
+                let name = if a2.lock().unwrap().contains("Four") { "04 Four.flac" } else { "05 Five.flac" };
+                json!([{ "username": "peer", "hasFreeUploadSlot": true, "uploadSpeed": 1_000_000, "files": [
+                    { "filename": format!(r"Music\Alpha\First Album\{name}"), "size": 1, "length": 2, "extension": "flac" }] }])
+            }
+            p if p.starts_with("/api/v0/searches/") => json!({ "isComplete": true }),
+            "/api/v0/transfers/downloads/peer" if !body.is_empty() => {
+                let remote = b[0]["filename"].as_str().unwrap().to_string();
+                let name = remote.rsplit('\\').next().unwrap().to_string();
+                std::fs::create_dir_all(dl2.join("First Album")).unwrap();
+                std::fs::write(dl2.join("First Album").join(&name), &files[name.as_str()]).unwrap();
+                s2.lock().unwrap().push(remote);
+                json!({})
+            }
+            "/api/v0/transfers/downloads" => {
+                let f: Vec<Value> = s2.lock().unwrap().iter().enumerate()
+                    .map(|(i, r)| json!({ "id": format!("t{i}"), "filename": r, "state": "Completed, Succeeded" })).collect();
+                json!([{ "username": "peer", "directories": [{ "files": f }] }])
+            }
+            _ => json!({}),
+        })
+    })
+    .await;
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.slskd_url = Some(base.clone());
+        c.slskd_api_key = Some("k".into());
+        c.slskd_downloads = Some(downloads.clone());
+        c.slskd_fast_test = true;
+    })
+    .await;
+    // two songs Maestro downloaded earlier as MP3 from the right album
+    tone(&s.music.join("Songs/Alpha/Alpha - Four.mp3"), "Four", "Alpha", "First Album", 4, 2);
+    tone(&s.music.join("Songs/Alpha/Alpha - Five.mp3"), "Five", "Alpha", "First Album", 5, 2);
+    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let id_of = async |t: &str| s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let (four, five) = (id_of("Four").await, id_of("Five").await);
+    s.ok("star", &[("id", &four)]).await;
+    for (key, title, id, at) in [("dz-t-4", "Four", &four, 2), ("dz-t-5", "Five", &five, 1)] {
+        sqlx::query(
+            "INSERT INTO request (key, title, artists_json, album, duration_ms, status, rel, local_id, same_album, arrived_at, asked_at)
+             VALUES (?, ?, '[\"Alpha\"]', 'First Album', 2000, 'done', ?, ?, 1, ?, 1)",
+        )
+        .bind(key)
+        .bind(title)
+        .bind(format!("Songs/Alpha/Alpha - {title}.mp3"))
+        .bind(id)
+        .bind(at)
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    }
+    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    wait_for(
+        async || {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE upgrade_tried = 1 AND status = 'done'")
+                .fetch_one(&s.st.db)
+                .await
+                .unwrap();
+            n == 2
+        },
+        "both songs to be looked at",
+    )
+    .await;
+    // Four: the FLAC is in, the MP3 gone, the same song id (and heart)
+    assert!(s.music.join("Songs/Alpha/Alpha - Four.flac").is_file());
+    assert!(!s.music.join("Songs/Alpha/Alpha - Four.mp3").exists());
+    let song = s.ok("getSong", &[("id", &four)]).await["song"].clone();
+    assert_eq!((song["suffix"].as_str(), song["path"].as_str().map(|p| p.ends_with("Four.flac"))), (Some("flac"), Some(true)), "{song}");
+    assert!(song["starred"].is_string());
+    let rel: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-4'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(rel, "Songs/Alpha/Alpha - Four.flac");
+    // Five: the download didn't check out, so the MP3 stays and nothing is left behind
+    assert!(s.music.join("Songs/Alpha/Alpha - Five.mp3").is_file());
+    assert!(!s.music.join("Songs/Alpha/Alpha - Five.flac").exists());
+    assert_eq!(s.ok("getSong", &[("id", &five)]).await["song"]["suffix"], "mp3");
+    let left: Vec<_> = std::fs::read_dir(s.music.join("Songs/Alpha")).unwrap().filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with('.')).collect();
+    assert!(left.is_empty(), "temporary files left: {left:?}");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track WHERE title IN ('Four', 'Five') AND missing_since IS NULL").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!(n, 2, "no extra songs");
+}
+
+#[tokio::test]
 async fn music_lookup_mixes_shares_and_concerts_come_over() {
     if !have_ffmpeg() {
         return;

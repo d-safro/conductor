@@ -2,6 +2,11 @@
 //! file (the same album first, then FLAC over 320 kbit/s, right title, artist and length, no live/remix/cover
 //! versions unless asked), download it, file it as `<folder>/<Artist>/<Artist> - <Title>.<ext>` in the music
 //! folder, scan, then heart it / add it to playlists for whoever asked.
+//!
+//! Upgrades: when there's nothing else to do, a song it filed from another album than the one it was asked from
+//! is looked for once more on that album, and a lossy one from the right album as FLAC. A better copy replaces the
+//! old file safely (checked first, swapped in while scans wait, old file removed last) and the song keeps its id,
+//! hearts, plays and playlists. Only songs in `Songs/` (filed by Maestro), never Lidarr's album folders.
 
 use std::{
     collections::HashSet,
@@ -241,8 +246,9 @@ pub(crate) async fn search(st: &AppState, sl: &Slskd, text: &str) -> Result<Vec<
     Ok(res.as_array().cloned().unwrap_or_default())
 }
 
-/// Search for one song and queue the best file. Returns a short note.
-async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
+/// Search Soulseek for one song: the best file of each user who has it (score, user, file), best first. The
+/// album search is tried only when the first search had nothing from that album.
+async fn gather(st: &AppState, sl: &Slskd, r: &Req, tried: &[String]) -> Result<Vec<(f64, String, Value)>> {
     let artists = r.artists();
     let (title, artist) = (clean_title(&r.title), artists.first().cloned().unwrap_or_default());
     let album = clean_album(&r.album);
@@ -250,7 +256,6 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
     let album_q = if same_album(r, &album).is_some() { Some(format!("{artist} {album} {title}")) } else { None };
     queries.push(album_q.clone());
     queries.push(if norm(&title).chars().count() >= 6 { Some(title.clone()) } else { None });
-    let tried = r.tried();
     let mut cands: Vec<(f64, String, Value)> = vec![];
     let last = queries.len() - 1;
     for (i, text) in queries.into_iter().enumerate() {
@@ -266,7 +271,7 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
         for resp in search(st, sl, &text).await? {
             let mut best_here: Option<(f64, String, Value)> = None; // best file per user
             for f in resp["files"].as_array().into_iter().flatten() {
-                if let Some(sc) = score_file(r, &resp, f, &tried)
+                if let Some(sc) = score_file(r, &resp, f, tried)
                     && best_here.as_ref().is_none_or(|b| sc > b.0)
                 {
                     best_here = Some((sc, resp["username"].as_str().unwrap_or("").to_string(), f.clone()));
@@ -278,6 +283,14 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
             break;
         }
     }
+    cands.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok(cands)
+}
+
+/// Search for one song and queue the best file. Returns a short note.
+async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
+    let tried = r.tried();
+    let cands = gather(st, sl, r, &tried).await?;
     let searches = r.searches + 1;
     sqlx::query("UPDATE request SET searches = ?, last_search = ? WHERE key = ?")
         .bind(searches)
@@ -285,7 +298,6 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
         .bind(&r.key)
         .execute(&st.db)
         .await?;
-    cands.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut tried = tried;
     for (_, user, f) in cands.iter().take(5) {
         let body = json!([{ "filename": f["filename"], "size": f["size"] }]);
@@ -296,12 +308,13 @@ async fn find_and_queue(st: &AppState, sl: &Slskd, r: &Req) -> Result<String> {
         }
         let file = f["filename"].as_str().unwrap_or("").to_string();
         sqlx::query(
-            "UPDATE request SET status = 'queued', slsk_user = ?, slsk_file = ?, since = ?, tried_json = ? WHERE key = ?",
+            "UPDATE request SET status = 'queued', slsk_user = ?, slsk_file = ?, since = ?, tried_json = ?, same_album = ? WHERE key = ?",
         )
         .bind(user)
         .bind(&file)
         .bind(now())
         .bind(serde_json::to_string(&tried)?)
+        .bind(same_album(r, &file))
         .bind(&r.key)
         .execute(&st.db)
         .await?;
@@ -356,6 +369,7 @@ pub(crate) fn locate(downloads: &Path, remote: &str) -> Option<PathBuf> {
 async fn check_transfers(st: &AppState, sl: &Slskd) -> Result<usize> {
     let transfers = sl.get("/transfers/downloads").await?;
     let queued: Vec<Req> = sqlx::query_as("SELECT * FROM request WHERE status = 'queued'").fetch_all(&st.db).await?;
+    let upgrading: Vec<Upgrade> = sqlx::query_as(UPGRADE_SELECT).fetch_all(&st.db).await?;
     let mut known = HashSet::new();
     let mut moved = 0;
     for u in transfers.as_array().into_iter().flatten() {
@@ -364,6 +378,10 @@ async fn check_transfers(st: &AppState, sl: &Slskd) -> Result<usize> {
             for f in d["files"].as_array().into_iter().flatten() {
                 let file = f["filename"].as_str().unwrap_or("");
                 known.insert((user.to_string(), file.to_string()));
+                if let Some(u) = upgrading.iter().find(|u| u.up_user.as_deref() == Some(user) && u.up_file.as_deref() == Some(file)) {
+                    upgrade_transfer(st, sl, u, f).await?;
+                    continue;
+                }
                 let Some(r) =
                     queued.iter().find(|r| r.slsk_user.as_deref() == Some(user) && r.slsk_file.as_deref() == Some(file))
                 else {
@@ -405,6 +423,13 @@ async fn check_transfers(st: &AppState, sl: &Slskd) -> Result<usize> {
                     }
                 }
             }
+        }
+    }
+    for u in &upgrading {
+        if now() - u.up_since.unwrap_or(0) > 600
+            && !known.contains(&(u.up_user.clone().unwrap_or_default(), u.up_file.clone().unwrap_or_default()))
+        {
+            upgrade_over(st, &u.req.key, "slskd lost the transfer").await?; // keep the copy you have
         }
     }
     // slskd lost the transfer (restart, cleared list): look again
@@ -575,7 +600,9 @@ async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
     // songs asked for most recently first (that's what someone is waiting for)
     let waiting: Vec<Req> =
         sqlx::query_as("SELECT * FROM request WHERE status = 'retry' ORDER BY asked_at DESC LIMIT 50").fetch_all(&st.db).await?;
-    for r in waiting.into_iter().filter(|r| now() - r.last_search >= retry_wait(r)).take((IN_FLIGHT - in_flight) as usize) {
+    let due: Vec<Req> = waiting.into_iter().filter(|r| now() - r.last_search >= retry_wait(r)).collect();
+    let idle = due.is_empty() && in_flight == 0;
+    for r in due.into_iter().take((IN_FLIGHT - in_flight) as usize) {
         match find_and_queue(st, sl, &r).await {
             Ok(note) => info!(song = %r.title, "Soulseek: {note}"),
             Err(e) => {
@@ -584,7 +611,184 @@ async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
             }
         }
     }
+    // nothing else to do: look for a better copy of one song
+    if idle && st.cfg.upgrades {
+        let busy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE status = 'upgrading'").fetch_one(&st.db).await?;
+        if busy == 0
+            && let Err(e) = upgrade_one(st, sl).await
+        {
+            warn!("looking for a better copy: {e:#}");
+        }
+    }
     Ok(())
+}
+
+// ───────────── upgrades ─────────────
+
+/// A song filed by Maestro that may get a better copy, or is getting one.
+#[derive(sqlx::FromRow)]
+struct Upgrade {
+    #[sqlx(flatten)]
+    req: Req,
+    rel: String,
+    local_id: String,
+    same_album: Option<bool>,
+    up_user: Option<String>,
+    up_file: Option<String>,
+    up_since: Option<i64>,
+}
+
+const UPGRADE_SELECT: &str = "SELECT * FROM request WHERE status = 'upgrading' AND rel IS NOT NULL AND local_id IS NOT NULL";
+
+fn ext_of(path: &str) -> String {
+    path.rsplit('.').next().filter(|e| !e.contains(['/', '\\'])).unwrap_or("").to_lowercase()
+}
+
+/// Is `file` better than the copy you have? From the album asked for when yours is from another one; else FLAC
+/// when yours is lossy (and not from another album than yours).
+pub fn better(r: &Req, have_same: Option<bool>, have_ext: &str, file: &str) -> bool {
+    let same = same_album(r, file);
+    if have_same == Some(false) {
+        return same == Some(true);
+    }
+    have_ext != "flac" && ext_of(file) == "flac" && (same != Some(false) || have_same.is_none())
+}
+
+async fn upgrade_one(st: &AppState, sl: &Slskd) -> Result<()> {
+    let u: Option<Upgrade> = sqlx::query_as(
+        "SELECT * FROM request WHERE status = 'done' AND local_id IS NOT NULL AND rel LIKE 'Songs/%' AND upgrade_tried = 0
+            AND trial = 0 AND (same_album = 0 OR lower(rel) NOT LIKE '%.flac')
+         ORDER BY arrived_at DESC LIMIT 1",
+    )
+    .fetch_optional(&st.db)
+    .await?;
+    let Some(u) = u else { return Ok(()) };
+    let have = ext_of(&u.rel);
+    let cands: Vec<_> = gather(st, sl, &u.req, &[])
+        .await?
+        .into_iter()
+        .filter(|c| better(&u.req, u.same_album, &have, c.2["filename"].as_str().unwrap_or("")))
+        .collect();
+    for (_, user, f) in cands.iter().take(5) {
+        let body = json!([{ "filename": f["filename"], "size": f["size"] }]);
+        if sl.call(reqwest::Method::POST, &format!("/transfers/downloads/{}", urlencode(user)), Some(body)).await.is_err() {
+            continue;
+        }
+        let file = f["filename"].as_str().unwrap_or("");
+        sqlx::query("UPDATE request SET status = 'upgrading', up_user = ?, up_file = ?, up_since = ? WHERE key = ?")
+            .bind(user)
+            .bind(file)
+            .bind(now())
+            .bind(&u.req.key)
+            .execute(&st.db)
+            .await?;
+        info!(song = %u.req.title, from = %user, file = %file.replace('\\', "/"), "getting a better copy");
+        return Ok(());
+    }
+    upgrade_over(st, &u.req.key, if cands.is_empty() { "no better copy" } else { "nobody reachable" }).await
+}
+
+/// Done looking for a better copy of this song: the one you have stays.
+async fn upgrade_over(st: &AppState, key: &str, why: &str) -> Result<()> {
+    sqlx::query("UPDATE request SET status = 'done', upgrade_tried = 1, up_user = NULL, up_file = NULL, up_since = NULL WHERE key = ?")
+        .bind(key)
+        .execute(&st.db)
+        .await?;
+    info!(key, "keeping the copy you have ({why})");
+    Ok(())
+}
+
+async fn upgrade_transfer(st: &AppState, sl: &Slskd, u: &Upgrade, f: &Value) -> Result<()> {
+    let state = f["state"].as_str().unwrap_or("");
+    let user = u.up_user.clone().unwrap_or_default();
+    let remove = format!("/transfers/downloads/{}/{}?remove=true", urlencode(&user), urlencode(f["id"].as_str().unwrap_or("")));
+    if state.contains("Succeeded") {
+        let file = u.up_file.clone().unwrap_or_default();
+        let Some(src) = st.cfg.slskd_downloads.as_deref().and_then(|d| locate(d, &file)) else { return Ok(()) };
+        match swap_in(st, u, &src).await {
+            Ok(rel) => {
+                sqlx::query(
+                    "UPDATE request SET status = 'done', rel = ?, slsk_user = up_user, slsk_file = up_file, same_album = ?,
+                        upgrade_tried = 1, up_user = NULL, up_file = NULL, up_since = NULL WHERE key = ?",
+                )
+                .bind(&rel)
+                .bind(same_album(&u.req, &file))
+                .bind(&u.req.key)
+                .execute(&st.db)
+                .await?;
+                info!(song = %u.req.title, file = %rel, "swapped in a better copy (same song id)");
+                library::scan(&st.db, &st.libs, &st.scan, false).await?;
+                st.catalog.generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            Err(e) => {
+                warn!(song = %u.req.title, "the better copy wasn't used: {e:#}");
+                let _ = tokio::fs::remove_file(&src).await;
+                upgrade_over(st, &u.req.key, "the new file didn't check out").await?;
+            }
+        }
+        let _ = sl.call(reqwest::Method::DELETE, &remove, None).await;
+    } else if ["Errored", "Rejected", "TimedOut", "Cancelled", "Aborted"].iter().any(|x| state.contains(x))
+        || (now() - u.up_since.unwrap_or(0) > 6 * 3600 && state.contains("Queued"))
+    {
+        upgrade_over(st, &u.req.key, "the download didn't come").await?;
+        if !state.contains("Completed") {
+            let _ = sl.call(reqwest::Method::DELETE, &remove, None).await;
+        }
+    }
+    Ok(())
+}
+
+/// Put the downloaded better copy where the old file is: copied in beside it under a hidden name and checked
+/// (it reads, and is as long as the song), then, while scans wait, the song's row moves to the new name (same id)
+/// and the file is renamed into place; the old file goes last. Returns the new place.
+async fn swap_in(st: &AppState, u: &Upgrade, src: &Path) -> Result<String> {
+    let (lib, root) = import_root(st).ok_or_else(|| anyhow!("no music folder"))?;
+    if !u.rel.starts_with("Songs/") || u.rel.contains("..") {
+        bail!("only songs Maestro filed in Songs/ are swapped");
+    }
+    let old = root.join(&u.rel);
+    if !old.is_file() {
+        bail!("the old file isn't there");
+    }
+    let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let new_rel = match u.rel.rsplit_once('.') {
+        Some((stem, _)) => format!("{stem}.{ext}"),
+        None => format!("{}.{ext}", u.rel),
+    };
+    let new = root.join(&new_rel);
+    let dir = old.parent().ok_or_else(|| anyhow!("no folder"))?.to_path_buf();
+    let tmp = dir.join(format!(".maestro-upgrade-{}.{ext}", u.req.key));
+    if tokio::fs::rename(src, &tmp).await.is_err() {
+        tokio::fs::copy(src, &tmp).await.with_context(|| format!("copying to {}", tmp.display()))?;
+        let _ = tokio::fs::remove_file(src).await;
+    }
+    let t2 = tmp.clone();
+    let m = tokio::task::spawn_blocking(move || library::read_meta(&t2)).await?;
+    let want = u.req.duration_ms;
+    if m.duration_ms <= 0 || (want > 0 && (m.duration_ms - want).abs() > 8000) {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        bail!("the new file doesn't read as this song ({} ms, wanted {want} ms)", m.duration_ms);
+    }
+    let Some(_hold) = library::hold_scans(&st.scan).await else {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        bail!("a scan kept running");
+    };
+    let mut tx = st.db.begin().await?;
+    sqlx::query("UPDATE track SET rel_path = ? WHERE id = ?").bind(&new_rel).bind(&u.local_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT OR REPLACE INTO id_override (kind, key, id) VALUES ('track', ?, ?)")
+        .bind(library::track_key(lib, &new_rel))
+        .bind(&u.local_id)
+        .execute(&mut *tx)
+        .await?;
+    if let Err(e) = tokio::fs::rename(&tmp, &new).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e).context("moving the new file into place"); // the transaction is dropped: nothing changed
+    }
+    tx.commit().await?;
+    if new != old {
+        let _ = tokio::fs::remove_file(&old).await;
+    }
+    Ok(new_rel)
 }
 
 #[cfg(test)]
@@ -624,6 +828,15 @@ mod tests {
         assert!(score_file(&r, &resp, &f(r"Someone Else\Once in a Lifetime.flac", 0, 259.0), &[]).is_none()); // other artist
         assert!(score_file(&r, &resp, &f(r"Talking Heads\Once in a Lifetime.flac", 0, 259.0), &["u".into()]).is_none());
         assert_eq!(same_album(&req("Song", "A", "Song", 1), "x/y.flac"), None);
+        // a better copy: the album asked from when yours is from another; else FLAC over lossy, same album
+        let r = req("Once in a Lifetime", "Talking Heads", "Remain in Light", 259);
+        let (album_mp3, album_flac, other_flac) =
+            (r"TH\Remain in Light\03 Once.mp3", r"TH\Remain in Light\03 Once.flac", r"TH\Best Of\Once.flac");
+        assert!(better(&r, Some(false), "flac", album_mp3));
+        assert!(!better(&r, Some(false), "mp3", other_flac));
+        assert!(better(&r, Some(true), "mp3", album_flac));
+        assert!(!better(&r, Some(true), "mp3", other_flac), "not a different version");
+        assert!(!better(&r, Some(true), "flac", album_flac), "nothing to gain");
         assert!(artist_in(&["Аквариум".into()], "Akvarium - Album/01.flac"));
     }
 }

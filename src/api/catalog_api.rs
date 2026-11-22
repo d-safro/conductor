@@ -433,7 +433,7 @@ fn status_json(k: &str, s: Option<&Status>) -> Value {
     let status = match s {
         Some(Status { local_id: Some(_), .. }) => "ready",
         None => "none",
-        Some(Status { status: Some(st), .. }) if st == "notfound" => "notfound",
+        Some(Status { status: Some(st), .. }) if st == "notfound" || st == "skipped" => "notfound",
         Some(Status { status: Some(st), .. }) if st == "queued" || st == "done" => "downloading",
         Some(_) => "searching",
     };

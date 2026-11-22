@@ -174,7 +174,7 @@ pub async fn statuses(st: &AppState, keys: &[String]) -> HashMap<String, Status>
 fn mark(s: Option<&Status>) -> (&'static str, i64) {
     match s.and_then(|s| s.status.as_deref()) {
         None => ("⬇ ", 0),
-        Some("notfound") => ("✕ ", 2),
+        Some("notfound") | Some("skipped") => ("✕ ", 2), // skipped: set aside on the admin page
         Some(_) => ("⏳ ", 1),
     }
 }

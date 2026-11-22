@@ -378,6 +378,25 @@ pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatu
     r
 }
 
+/// Keeps scans off while a file is swapped for another (dropped: scans may run again).
+pub struct ScanHold<'a>(&'a ScanStatus);
+impl Drop for ScanHold<'_> {
+    fn drop(&mut self) {
+        self.0.scanning.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Wait (up to a minute) for a running scan to finish, then keep others off until the hold is dropped.
+pub async fn hold_scans(status: &ScanStatus) -> Option<ScanHold<'_>> {
+    for _ in 0..600 {
+        if !status.scanning.swap(true, Ordering::SeqCst) {
+            return Some(ScanHold(status));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    None
+}
+
 async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatus>, full: bool) -> Result<ScanReport> {
     let mut rep = ScanReport::default();
     status.count.store(0, Ordering::SeqCst);

@@ -94,6 +94,9 @@ pub struct Config {
     /// Artist biographies and album notes (MusicBrainz → Wikidata → Wikipedia, pictures from the Cover Art
     /// Archive): looked up when an app first asks, then kept. `info_lang` is Wikipedia's language code.
     pub info_online: bool,
+    /// Look for a better copy of songs it downloaded (the album asked from, FLAC over lossy) when there's nothing
+    /// else to do, and swap it in (same song id).
+    pub upgrades: bool,
     pub info_lang: String,
     pub wikidata_url: String,
     /// "{lang}" is replaced with the language
@@ -168,6 +171,7 @@ impl Default for Config {
             musicbrainz_url: "https://musicbrainz.org/ws/2".into(),
             concerts: true,
             info_online: true,
+            upgrades: true,
             info_lang: "en".into(),
             wikidata_url: "https://www.wikidata.org".into(),
             wikipedia_url: "https://{lang}.wikipedia.org".into(),
@@ -274,6 +278,9 @@ impl Config {
         }
         if let Ok(v) = std::env::var("MAESTRO_INFO_ONLINE") {
             c.info_online = v != "0" && v != "false";
+        }
+        if let Ok(v) = std::env::var("MAESTRO_UPGRADES") {
+            c.upgrades = v != "0" && v != "false";
         }
         if let Ok(v) = std::env::var("MAESTRO_INFO_LANG") {
             c.info_lang = v;
