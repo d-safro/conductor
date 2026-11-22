@@ -158,3 +158,39 @@ async fn every_older_release_upgrades() {
     }
     assert!(n >= 2, "fixtures in {}", root.display());
 }
+
+#[tokio::test]
+async fn a_database_from_a_windows_build_opens() {
+    use sha2::{Digest, Sha384};
+    // the 0.2.1 database, as a build from a Windows checkout (migrations with CRLF) would have fingerprinted it
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade/v0.2.1");
+    let db_path = dir.path().join("conductor.db");
+    std::fs::copy(fixture.join("conductor.db"), &db_path).unwrap();
+    {
+        let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path);
+        let raw = sqlx::SqlitePool::connect_with(opts).await.unwrap();
+        let mut changed = 0;
+        for e in std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations")).unwrap() {
+            let p = e.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().to_string();
+            let Some(version) = name.split('_').next().and_then(|v| v.parse::<i64>().ok()) else { continue };
+            let sql = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n").replace('\n', "\r\n");
+            let r = sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(Sha384::digest(sql.as_bytes()).to_vec())
+                .bind(version)
+                .execute(&raw)
+                .await
+                .unwrap();
+            changed += r.rows_affected();
+        }
+        assert!(changed >= 18, "{changed}");
+        raw.close().await;
+    }
+    // it opens (no "migration was modified"), and its fingerprints are this build's now
+    let pool = db::open(&db_path).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track").fetch_one(&pool).await.unwrap();
+    assert_eq!(n, 3);
+    pool.close().await;
+    db::open(&db_path).await.unwrap();
+}

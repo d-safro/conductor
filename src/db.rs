@@ -15,8 +15,39 @@ pub async fn open(path: &Path) -> Result<Db> {
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(10));
     let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    let migrator = sqlx::migrate!("./migrations");
+    accept_crlf_fingerprints(&pool, &migrator).await?;
+    migrator.run(&pool).await?;
     Ok(pool)
+}
+
+/// A database made by a build whose migrations had Windows line endings (a Windows checkout before .gitattributes
+/// fixed them to LF, as the 0.2 Windows releases were) holds those files' fingerprints; this build would call them
+/// "modified" and refuse to start. The same migration with CRLF is the same migration: its fingerprint is updated.
+async fn accept_crlf_fingerprints(pool: &Db, migrator: &sqlx::migrate::Migrator) -> Result<()> {
+    use sha2::{Digest, Sha384};
+    let has_table: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'").fetch_one(pool).await?;
+    if has_table == 0 {
+        return Ok(());
+    }
+    for m in migrator.iter() {
+        let sql: &str = &m.sql;
+        let crlf = sql.replace("\r\n", "\n").replace('\n', "\r\n");
+        let lf = sql.replace("\r\n", "\n");
+        for other in [crlf, lf] {
+            let theirs = Sha384::digest(other.as_bytes()).to_vec();
+            if theirs.as_slice() != m.checksum.as_ref() {
+                sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ? AND checksum = ?")
+                    .bind(m.checksum.as_ref())
+                    .bind(m.version)
+                    .bind(theirs)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn now() -> i64 {

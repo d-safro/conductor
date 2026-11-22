@@ -1,0 +1,3 @@
+# The migrations are fingerprinted into every database: the same bytes on every system (a Windows checkout would
+# otherwise turn them into CRLF and give them other fingerprints). See db::open.
+migrations/*.sql text eol=lf
