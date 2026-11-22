@@ -311,6 +311,19 @@ async fn subsonic_end_to_end() {
     let img = s.http.get(s.url("getCoverArt", &[("id", &cover)])).send().await.unwrap();
     assert_eq!(img.status(), 200);
     assert_eq!(img.headers()["content-type"], "image/png");
+    // kept as a file name, so it's still found once the data folder moves; a whole path as older versions kept
+    // it (here under the old folder name) finds the file of that name in this data folder
+    let kept: String =
+        sqlx::query_scalar("SELECT image_path FROM playlist WHERE id = ?").bind(&sp).fetch_one(&s.st.db).await.unwrap();
+    assert!(!kept.contains(['/', '\\']), "{kept}");
+    let old_path = s.st.cfg.data_dir.parent().unwrap().join("maestro").join("playlist-images").join(&kept);
+    sqlx::query("UPDATE playlist SET image_path = ? WHERE id = ?")
+        .bind(old_path.to_string_lossy().to_string())
+        .bind(&sp)
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(s.http.get(s.url("getCoverArt", &[("id", &cover)])).send().await.unwrap().status(), 200);
     let del = s.http.delete(nd(&format!("/api/playlist/{sp}/image"))).header("x-nd-authorization", &auth).send().await.unwrap();
     assert_eq!(del.status(), 200);
     assert!(!s.ok("getPlaylist", &[("id", &sp)]).await["playlist"]["coverArt"].as_str().unwrap().starts_with("pl-"));
@@ -3930,6 +3943,36 @@ async fn places_count_only_songs_shown() {
     assert_eq!(s.call("getMusicDirectory", &[("id", &album)]).await["error"]["code"], 70);
     assert_eq!(s.call("getSimilarSongs", &[("id", &album)]).await["error"]["code"], 70);
     s.ok("ping", &[]).await;
+}
+
+#[tokio::test]
+async fn a_library_keeps_its_id_when_its_folder_is_written_differently_or_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = db::open(&dir.path().join("conductor.db")).await.unwrap();
+    let lib =
+        |name: &str, p: std::path::PathBuf| LibraryConfig { name: name.into(), path: p, sentinel: None, scan_threads: None };
+    let (old, moved) = (dir.path().join("old"), dir.path().join("moved"));
+    std::fs::create_dir_all(&old).unwrap();
+    let first = library::ensure_libraries(&pool, &[lib("Music", old.clone())]).await.unwrap()[0].0;
+    // with a separator at the end: the same folder
+    let slash = std::path::PathBuf::from(format!("{}/", old.display()));
+    assert_eq!(library::ensure_libraries(&pool, &[lib("Music", slash)]).await.unwrap()[0].0, first);
+    // still there: another folder is another library
+    std::fs::create_dir_all(&moved).unwrap();
+    let other = library::ensure_libraries(&pool, &[lib("Music", old.clone()), lib("Music", moved.clone())]).await.unwrap();
+    assert_eq!(other[0].0, first);
+    assert_ne!(other[1].0, first);
+    sqlx::query("DELETE FROM library WHERE id = ?").bind(other[1].0).execute(&pool).await.unwrap();
+    // the folder moved (the old one is gone): the same library, so the songs keep their ids
+    std::fs::remove_dir_all(&old).unwrap();
+    assert_eq!(library::ensure_libraries(&pool, &[lib("Music", moved.clone())]).await.unwrap()[0].0, first);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library").fetch_one(&pool).await.unwrap();
+    assert_eq!(n, 1);
+    // a gone folder of another name isn't taken over
+    let gone = dir.path().join("gone");
+    let podcasts = library::ensure_libraries(&pool, &[lib("Music", moved.clone()), lib("Audiobooks", gone)]).await.unwrap();
+    assert_eq!(podcasts[0].0, first);
+    assert_ne!(podcasts[1].0, first);
 }
 
 #[tokio::test]

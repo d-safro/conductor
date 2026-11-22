@@ -78,18 +78,69 @@ pub fn is_online(lib: &LibraryConfig) -> bool {
     }
 }
 
+/// A library's folder without separators at the end ("/music/" is "/music"; "/" and "C:\" stay).
+fn trimmed_root(p: &str) -> &str {
+    let t = p.trim_end_matches(['/', '\\']);
+    if t.is_empty() || t.ends_with(':') { p } else { t }
+}
+
+/// Two spellings of one folder: the same once trimmed, and on Windows in any case and with either slash.
+fn same_root(a: &str, b: &str) -> bool {
+    let (a, b) = (trimmed_root(a), trimmed_root(b));
+    if cfg!(windows) { a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\")) } else { a == b }
+}
+
+/// The database's library for each configured one. Song ids are made from the library's id, so it must stay the
+/// same when the folder is written differently or has moved:
+/// - a folder already known (written with or without a separator at the end, or on Windows in another case) is
+///   that library;
+/// - else a known library of the same name whose folder is gone (the drive got another letter, the music was
+///   moved) is pointed at the new folder, so its songs keep their ids and stars, plays and playlists stay. One
+///   whose folder is still there is left alone: then the new folder is another library;
+/// - else it's a new library.
 pub async fn ensure_libraries(db: &Db, libs: &[LibraryConfig]) -> Result<Vec<(i64, LibraryConfig)>> {
+    let rows: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, name, root_path FROM library ORDER BY id").fetch_all(db).await?;
+    let roots: Vec<String> = libs.iter().map(|l| trimmed_root(&l.path.to_string_lossy()).to_string()).collect();
+    let mut claimed = std::collections::HashSet::new();
+    let mut ids: Vec<Option<i64>> = vec![None; libs.len()];
+    for (i, root) in roots.iter().enumerate() {
+        if let Some(r) = rows.iter().find(|r| !claimed.contains(&r.0) && same_root(&r.2, root)) {
+            claimed.insert(r.0);
+            ids[i] = Some(r.0);
+        }
+    }
+    for (i, l) in libs.iter().enumerate() {
+        if ids[i].is_some() {
+            continue;
+        }
+        let gone: Vec<&(i64, String, String)> =
+            rows.iter().filter(|r| !claimed.contains(&r.0) && r.1 == l.name && !Path::new(&r.2).exists()).collect();
+        if let [r] = gone[..] {
+            info!(library = %l.name, from = %r.2, to = %roots[i], "library folder moved: same library, same song ids");
+            sqlx::query("UPDATE library SET root_path = ? WHERE id = ?").bind(&roots[i]).bind(r.0).execute(db).await?;
+            claimed.insert(r.0);
+            ids[i] = Some(r.0);
+        }
+    }
     let mut out = vec![];
-    for l in libs {
-        let root = l.path.to_string_lossy().to_string();
-        sqlx::query(
-            "INSERT INTO library (name, root_path) VALUES (?, ?) ON CONFLICT(root_path) DO UPDATE SET name = excluded.name",
-        )
-        .bind(&l.name)
-        .bind(&root)
-        .execute(db)
-        .await?;
-        let id: i64 = sqlx::query_scalar("SELECT id FROM library WHERE root_path = ?").bind(&root).fetch_one(db).await?;
+    for ((l, root), id) in libs.iter().zip(&roots).zip(ids) {
+        let id = match id {
+            Some(id) => {
+                sqlx::query("UPDATE library SET name = ? WHERE id = ?").bind(&l.name).bind(id).execute(db).await?;
+                id
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO library (name, root_path) VALUES (?, ?) ON CONFLICT(root_path) DO UPDATE SET name = excluded.name",
+                )
+                .bind(&l.name)
+                .bind(root)
+                .execute(db)
+                .await?;
+                sqlx::query_scalar("SELECT id FROM library WHERE root_path = ?").bind(root).fetch_one(db).await?
+            }
+        };
         out.push((id, l.clone()));
     }
     Ok(out)
@@ -152,9 +203,14 @@ fn first_num(s: &str) -> Option<i64> {
     s.split('/').next()?.trim().parse().ok()
 }
 
-pub fn read_meta(path: &Path) -> Meta {
+/// What a file whose tags can't be read is known by: its name.
+fn untagged(path: &Path) -> Meta {
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let mut m = Meta { title: stem, ..Default::default() };
+    Meta { title: stem, ..Default::default() }
+}
+
+pub fn read_meta(path: &Path) -> Meta {
+    let mut m = untagged(path);
     // Pictures are skipped here (they're often most of a file's tag bytes); covers are read when asked for.
     let opts = lofty::config::ParseOptions::new().read_cover_art(false);
     let Ok(tf) = lofty::probe::Probe::open(path).and_then(|p| p.options(opts).read()) else {
@@ -344,6 +400,10 @@ fn walk(root: &Path) -> Vec<FileStat> {
 
 /// Read tags on a few threads. Spinning drives do best with 1-2, SSDs with more (`scan_threads`).
 fn read_all(files: Vec<FileStat>, threads: usize) -> Vec<(FileStat, Meta)> {
+    read_all_with(files, threads, read_meta)
+}
+
+fn read_all_with(files: Vec<FileStat>, threads: usize, read: fn(&Path) -> Meta) -> Vec<(FileStat, Meta)> {
     let threads = threads.clamp(1, 16);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut out: Vec<Option<Meta>> = vec![None; files.len()];
@@ -354,7 +414,12 @@ fn read_all(files: Vec<FileStat>, threads: usize) -> Vec<(FileStat, Meta)> {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(f) = files.get(i) else { break };
-                    let m = read_meta(&f.abs);
+                    // a tag reader that falls over on one strange file: that file counts as unreadable, and the
+                    // scan goes on
+                    let m = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&f.abs))).unwrap_or_else(|_| {
+                        warn!(file = %f.abs.display(), "the tags couldn't be read (the reader failed)");
+                        untagged(&f.abs)
+                    });
                     **slots[i].lock().unwrap() = Some(m);
                 }
             });
@@ -363,6 +428,9 @@ fn read_all(files: Vec<FileStat>, threads: usize) -> Vec<(FileStat, Meta)> {
     drop(slots);
     files.into_iter().zip(out).map(|(f, m)| (f, m.unwrap_or_default())).collect()
 }
+
+/// Songs written to the database per transaction while scanning.
+const SCAN_BATCH: usize = 500;
 
 /// Scan every library. `full` re-reads tags of unchanged files too.
 pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatus>, full: bool) -> Result<ScanReport> {
@@ -439,7 +507,13 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
 
         let now = db::now();
         let mut tx = db.begin().await?;
-        for (f, m) in &metas {
+        for (n, (f, m)) in metas.iter().enumerate() {
+            // written in batches, so a big first scan doesn't keep other writes (plays, stars) waiting past their
+            // timeout
+            if n > 0 && n % SCAN_BATCH == 0 {
+                tx.commit().await?;
+                tx = db.begin().await?;
+            }
             status.count.fetch_add(1, Ordering::Relaxed);
             let suffix = Path::new(&f.rel).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
             let id = ids.track(*lib_id, &f.rel);
@@ -609,6 +683,20 @@ pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
 #[cfg(test)]
 mod genre_tests {
     use super::*;
+
+    #[test]
+    fn a_reader_that_falls_over_is_one_unreadable_file() {
+        fn picky(p: &Path) -> Meta {
+            if p.ends_with("bad.mp3") {
+                panic!("strange file");
+            }
+            Meta { title: "fine".into(), ..Default::default() }
+        }
+        let f = |name: &str| FileStat { rel: name.into(), abs: PathBuf::from("/m").join(name), size: 1, mtime: 1 };
+        let out = read_all_with(vec![f("a.mp3"), f("bad.mp3"), f("c.mp3")], 2, picky);
+        let titles: Vec<&str> = out.iter().map(|(_, m)| m.title.as_str()).collect();
+        assert_eq!(titles, ["fine", "bad", "fine"]);
+    }
 
     #[test]
     fn album_keys_like_navidrome() {

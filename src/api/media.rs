@@ -261,7 +261,7 @@ async fn playlist_image(st: &AppState, pid: &str) -> Result<Option<Vec<u8>>, Api
     let path: Option<String> =
         sqlx::query_scalar("SELECT image_path FROM playlist WHERE id = ?").bind(pid).fetch_optional(&st.db).await?.flatten();
     Ok(match path {
-        Some(p) => tokio::fs::read(p).await.ok(),
+        Some(p) => tokio::fs::read(st.cfg.playlist_image(&p)).await.ok(),
         None => None,
     })
 }
