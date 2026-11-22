@@ -714,15 +714,15 @@ pub fn has_genre_sql(col: &str) -> String {
 pub async fn normalize_genres(db: &Db) -> anyhow::Result<u64> {
     let mut changed = 0;
     for table in ["track", "album"] {
-        let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+        let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT id, genre FROM {table} WHERE genre LIKE '%,%' OR genre LIKE '%/%' OR genre LIKE '%;%' OR genre LIKE '%|%'"
-        ))
+        )))
         .fetch_all(db)
         .await?;
         for (id, g) in rows {
             let new = join_genres(std::slice::from_ref(&g));
             if new.as_deref() != Some(g.as_str()) {
-                sqlx::query(&format!("UPDATE {table} SET genre = ? WHERE id = ?")).bind(new).bind(id).execute(db).await?;
+                sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} SET genre = ? WHERE id = ?"))).bind(new).bind(id).execute(db).await?;
                 changed += 1;
             }
         }

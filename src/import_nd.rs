@@ -462,7 +462,7 @@ fn nd_time(s: Option<String>) -> Option<i64> {
 /// replaces them all (whether they came from Navidrome before or were made here since).
 pub async fn has_data(ours: &Db) -> Result<bool> {
     for t in ["annotation", "play", "playlist", "play_queue", "radio", "id_override"] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}")).fetch_one(ours).await?;
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {t}"))).fetch_one(ours).await?;
         if n > 0 {
             return Ok(true);
         }
@@ -513,11 +513,11 @@ pub async fn run(
 
     let mut tx = ours.begin().await?;
     for t in ["id_override", "annotation", "play", "playlist_entry", "playlist", "play_queue", "radio"] {
-        sqlx::query(&format!("DELETE FROM {t}")).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {t}"))).execute(&mut *tx).await?;
     }
     // the library is rescanned below, now with the old ids
     for t in ["track", "album", "artist"] {
-        sqlx::query(&format!("DELETE FROM {t}")).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {t}"))).execute(&mut *tx).await?;
     }
 
     // users: same ids, and the same passwords (Navidrome keeps them encrypted with a key we know, unless it was given
@@ -740,7 +740,7 @@ pub async fn run(
     for (table, rows) in [("track", &added_songs), ("album", &added_albums)] {
         for (id, at) in rows {
             if let Some(t) = nd_time(at.clone()) {
-                sqlx::query(&format!("UPDATE {table} SET created_at = ? WHERE id = ?"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} SET created_at = ? WHERE id = ?")))
                     .bind(t)
                     .bind(id)
                     .execute(&mut *tx)

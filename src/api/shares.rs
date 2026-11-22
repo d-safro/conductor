@@ -134,7 +134,7 @@ async fn expand(c: &Ctx, ids: &[&str]) -> Result<Vec<String>, ApiError> {
 }
 
 async fn load(c: &Ctx, id: &str) -> Result<Row, ApiError> {
-    let r: Row = sqlx::query_as(&format!("{SELECT} WHERE s.id = ?"))
+    let r: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE s.id = ?")))
         .bind(id)
         .fetch_optional(&c.st.db)
         .await?
@@ -146,7 +146,7 @@ async fn load(c: &Ctx, id: &str) -> Result<Row, ApiError> {
 }
 
 pub async fn get_shares(c: &Ctx) -> Result<Reply, ApiError> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} WHERE s.user_id = ? ORDER BY s.created_at DESC"))
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE s.user_id = ? ORDER BY s.created_at DESC")))
         .bind(&c.user.id)
         .fetch_all(&c.st.db)
         .await?;
@@ -234,7 +234,7 @@ async fn open(st: &Shared, token: &str) -> Option<(String, String, Vec<String>)>
     if !token_ok(token) {
         return None;
     }
-    let r: Row = sqlx::query_as(&format!("{SELECT} WHERE s.id = ?")).bind(token).fetch_optional(&st.db).await.ok()??;
+    let r: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE s.id = ?"))).bind(token).fetch_optional(&st.db).await.ok()??;
     if r.expires_at.is_some_and(|e| e <= now()) {
         return None;
     }

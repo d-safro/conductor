@@ -239,7 +239,7 @@ pub fn artist_json(a: &ArtistRow) -> Value {
 
 pub async fn tracks_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> Result<Vec<TrackRow>, ApiError> {
     let sql = format!("{TRACK_SELECT} WHERE t.missing_since IS NULL AND ({cond}) {tail}");
-    let mut q = sqlx::query_as::<_, TrackRow>(&sql).bind(&c.user.id);
+    let mut q = sqlx::query_as::<_, TrackRow>(sqlx::AssertSqlSafe(sql.to_string())).bind(&c.user.id);
     for b in binds {
         q = q.bind(*b);
     }
@@ -248,7 +248,7 @@ pub async fn tracks_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> Re
 
 pub async fn track(c: &Ctx, id: &str) -> Result<TrackRow, ApiError> {
     let sql = format!("{TRACK_SELECT} WHERE t.id = ?");
-    sqlx::query_as::<_, TrackRow>(&sql)
+    sqlx::query_as::<_, TrackRow>(sqlx::AssertSqlSafe(sql.to_string()))
         .bind(&c.user.id)
         .bind(id)
         .fetch_optional(&c.st.db)
@@ -258,7 +258,7 @@ pub async fn track(c: &Ctx, id: &str) -> Result<TrackRow, ApiError> {
 
 pub async fn albums_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> Result<Vec<AlbumRow>, ApiError> {
     let sql = format!("{ALBUM_SELECT} WHERE al.song_count > 0 AND ({cond}) {tail}");
-    let mut q = sqlx::query_as::<_, AlbumRow>(&sql).bind(&c.user.id);
+    let mut q = sqlx::query_as::<_, AlbumRow>(sqlx::AssertSqlSafe(sql.to_string())).bind(&c.user.id);
     for b in binds {
         q = q.bind(*b);
     }
@@ -267,7 +267,7 @@ pub async fn albums_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> Re
 
 pub async fn artists_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> Result<Vec<ArtistRow>, ApiError> {
     let sql = format!("{ARTIST_SELECT} WHERE ({cond}) {tail}");
-    let mut q = sqlx::query_as::<_, ArtistRow>(&sql).bind(&c.user.id);
+    let mut q = sqlx::query_as::<_, ArtistRow>(sqlx::AssertSqlSafe(sql.to_string())).bind(&c.user.id);
     for b in binds {
         q = q.bind(*b);
     }
@@ -278,7 +278,7 @@ pub async fn artists_where(c: &Ctx, cond: &str, binds: &[&str], tail: &str) -> R
 pub async fn kind_of(c: &Ctx, id: &str) -> Result<Option<&'static str>, ApiError> {
     for (kind, table) in [("track", "track"), ("album", "album"), ("artist", "artist")] {
         let n: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE id = ?")).bind(id).fetch_one(&c.st.db).await?;
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table} WHERE id = ?"))).bind(id).fetch_one(&c.st.db).await?;
         if n > 0 {
             return Ok(Some(kind));
         }

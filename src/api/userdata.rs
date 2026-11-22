@@ -12,8 +12,8 @@ async fn annotate(c: &Ctx, kind: &str, id: &str, set: &str, bind: Option<i64>) -
     );
     // two statements: run them one by one so the binds line up
     let (ins, upd) = sql.split_once(';').unwrap();
-    sqlx::query(ins).bind(&c.user.id).bind(kind).bind(id).execute(&c.st.db).await?;
-    let mut q = sqlx::query(upd);
+    sqlx::query(sqlx::AssertSqlSafe(ins.to_string())).bind(&c.user.id).bind(kind).bind(id).execute(&c.st.db).await?;
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(upd.to_string()));
     if let Some(b) = bind {
         q = q.bind(b);
     }
@@ -178,7 +178,7 @@ fn playlist_json(p: &PlaylistRow) -> Value {
 }
 
 async fn load_playlist(c: &Ctx, id: &str) -> Result<PlaylistRow, ApiError> {
-    let p: PlaylistRow = sqlx::query_as(&format!("{PLAYLIST_SELECT} WHERE p.id = ?"))
+    let p: PlaylistRow = sqlx::query_as(sqlx::AssertSqlSafe(format!("{PLAYLIST_SELECT} WHERE p.id = ?")))
         .bind(id)
         .fetch_optional(&c.st.db)
         .await?
@@ -223,7 +223,7 @@ fn not_smart(p: &PlaylistRow) -> Result<(), ApiError> {
 pub async fn playlists(c: &Ctx) -> Result<Reply, ApiError> {
     refresh_smart(c).await?;
     let rows: Vec<PlaylistRow> =
-        sqlx::query_as(&format!("{PLAYLIST_SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE"))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{PLAYLIST_SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE")))
             .bind(&c.user.id)
             .fetch_all(&c.st.db)
             .await?;

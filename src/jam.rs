@@ -254,7 +254,7 @@ pub async fn find_songs(st: &AppState, text: &str, limit: i64) -> Vec<Value> {
         "SELECT t.id, t.title, t.artist_name, t.album_name, t.album_id, t.duration_ms FROM track t
          WHERE t.missing_since IS NULL AND {cond} ORDER BY t.sort_title LIMIT {limit}"
     );
-    let mut qq = sqlx::query_as::<_, (String, String, String, String, String, i64)>(&sql);
+    let mut qq = sqlx::query_as::<_, (String, String, String, String, String, i64)>(sqlx::AssertSqlSafe(sql.to_string()));
     for w in &words {
         qq = qq.bind(w);
     }

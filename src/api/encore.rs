@@ -435,7 +435,7 @@ async fn compute_stats(c: &Ctx, period: &str, offset: i64) -> Result<Value, ApiE
     let mut range = None;
     if period == "all" {
         let rows: Vec<StatSong> =
-            sqlx::query_as(&format!("{STAT_SELECT} WHERE an.play_count > 0")).bind(uid).fetch_all(&c.st.db).await?;
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("{STAT_SELECT} WHERE an.play_count > 0"))).bind(uid).fetch_all(&c.st.db).await?;
         counted = rows.into_iter().map(|s| (s.clone(), s.play_count.unwrap_or(0))).collect();
     } else {
         let (start, end) = period_range(period, offset).ok_or_else(bad_offset)?;
@@ -544,7 +544,7 @@ pub async fn listening_review(c: &Ctx) -> Result<Reply, ApiError> {
         let ids: Vec<&String> = songs.keys().collect();
         for chunk in ids.chunks(400) {
             let sql = format!("SELECT id, genre FROM track WHERE id IN ({})", vec!["?"; chunk.len()].join(","));
-            let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+            let mut q = sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.to_string()));
             for id in chunk {
                 q = q.bind(*id);
             }
@@ -621,7 +621,7 @@ async fn songs_by_id(c: &Ctx, ids: Vec<&str>) -> Result<HashMap<String, StatSong
     for chunk in ids.chunks(400) {
         let marks = vec!["?"; chunk.len()].join(",");
         let sql = format!("{STAT_SELECT} WHERE t.id IN ({marks})");
-        let mut q = sqlx::query_as::<_, StatSong>(&sql).bind(&c.user.id);
+        let mut q = sqlx::query_as::<_, StatSong>(sqlx::AssertSqlSafe(sql.to_string())).bind(&c.user.id);
         for id in chunk {
             q = q.bind(*id);
         }
@@ -638,7 +638,7 @@ pub async fn folder(c: &Ctx) -> Result<Reply, ApiError> {
     let pre = if path.is_empty() { String::new() } else { format!("{path}/") };
     let pat = format!("{}%", pre.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
     let rows: Vec<StatSong> =
-        sqlx::query_as(&format!("{STAT_SELECT} WHERE t.missing_since IS NULL AND t.rel_path LIKE ? ESCAPE '\\'"))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{STAT_SELECT} WHERE t.missing_since IS NULL AND t.rel_path LIKE ? ESCAPE '\\'")))
             .bind(&c.user.id)
             .bind(&pat)
             .fetch_all(&c.st.db)

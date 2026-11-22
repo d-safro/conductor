@@ -386,7 +386,7 @@ async fn upkeep(st: &AppState) -> Result<()> {
     let keep = st.cfg.podcast_keep;
     let shows: Vec<String> = sqlx::query_scalar("SELECT id FROM podcast").fetch_all(&st.db).await?;
     for show in shows {
-        let eps: Vec<EpRow> = sqlx::query_as(&format!("{EP_SELECT} WHERE e.podcast_id = ? ORDER BY e.published_at DESC"))
+        let eps: Vec<EpRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{EP_SELECT} WHERE e.podcast_id = ? ORDER BY e.published_at DESC")))
             .bind("")
             .bind(&show)
             .fetch_all(&st.db)
@@ -457,7 +457,7 @@ struct ShowRow {
 }
 
 async fn show_json(c: &Ctx, s: &ShowRow, with_episodes: bool) -> Result<Value, ApiError> {
-    let eps: Vec<EpRow> = sqlx::query_as(&format!("{EP_SELECT} WHERE e.podcast_id = ? ORDER BY e.published_at DESC"))
+    let eps: Vec<EpRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{EP_SELECT} WHERE e.podcast_id = ? ORDER BY e.published_at DESC")))
         .bind(&c.user.id)
         .bind(&s.id)
         .fetch_all(&c.st.db)
@@ -483,8 +483,8 @@ const SHOW_SELECT: &str = "SELECT id, url, title, author, description, image, ad
 pub async fn get_podcasts(c: &Ctx) -> Result<Reply, ApiError> {
     let with = c.p.get("includeEpisodes") != Some("false");
     let rows: Vec<ShowRow> = match c.p.get("id").filter(|i| !i.is_empty()) {
-        Some(id) => sqlx::query_as(&format!("{SHOW_SELECT} WHERE id = ?")).bind(id).fetch_all(&c.st.db).await?,
-        None => sqlx::query_as(&format!("{SHOW_SELECT} ORDER BY title COLLATE NOCASE")).fetch_all(&c.st.db).await?,
+        Some(id) => sqlx::query_as(sqlx::AssertSqlSafe(format!("{SHOW_SELECT} WHERE id = ?"))).bind(id).fetch_all(&c.st.db).await?,
+        None => sqlx::query_as(sqlx::AssertSqlSafe(format!("{SHOW_SELECT} ORDER BY title COLLATE NOCASE"))).fetch_all(&c.st.db).await?,
     };
     let mut out = vec![];
     for s in &rows {
@@ -495,7 +495,7 @@ pub async fn get_podcasts(c: &Ctx) -> Result<Reply, ApiError> {
 
 pub async fn newest(c: &Ctx) -> Result<Reply, ApiError> {
     let n = c.p.int("count").unwrap_or(20).clamp(1, 200);
-    let eps: Vec<EpRow> = sqlx::query_as(&format!("{EP_SELECT} ORDER BY e.published_at DESC LIMIT {n}"))
+    let eps: Vec<EpRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{EP_SELECT} ORDER BY e.published_at DESC LIMIT {n}")))
         .bind(&c.user.id)
         .fetch_all(&c.st.db)
         .await?;
@@ -503,7 +503,7 @@ pub async fn newest(c: &Ctx) -> Result<Reply, ApiError> {
 }
 
 async fn episode(c: &Ctx, id: &str) -> Result<EpRow, ApiError> {
-    sqlx::query_as(&format!("{EP_SELECT} WHERE e.id = ?"))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{EP_SELECT} WHERE e.id = ?")))
         .bind(&c.user.id)
         .bind(id)
         .fetch_optional(&c.st.db)
@@ -572,7 +572,7 @@ pub async fn create(c: &Ctx) -> Result<Reply, ApiError> {
     let n = store(&c.st, &url, &f, true).await?;
     info!(show = %f.title, episodes = n, "podcast subscribed");
     c.st.podcast_wake.notify_one();
-    let s: ShowRow = sqlx::query_as(&format!("{SHOW_SELECT} WHERE id = ?")).bind(&f.id).fetch_one(&c.st.db).await?;
+    let s: ShowRow = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SHOW_SELECT} WHERE id = ?"))).bind(&f.id).fetch_one(&c.st.db).await?;
     ok(json!({ "podcastChannel": show_json(c, &s, false).await? }))
 }
 
@@ -686,7 +686,7 @@ pub async fn get_bookmarks(c: &Ctx) -> Result<Reply, ApiError> {
         }
     }
     let eps: Vec<(EpRow, i64)> = {
-        let rows: Vec<EpRow> = sqlx::query_as(&format!("{EP_SELECT} WHERE pr.position_ms > 0 AND pr.done = 0"))
+        let rows: Vec<EpRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{EP_SELECT} WHERE pr.position_ms > 0 AND pr.done = 0")))
             .bind(&c.user.id)
             .fetch_all(&c.st.db)
             .await?;

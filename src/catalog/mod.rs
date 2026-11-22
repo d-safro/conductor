@@ -159,7 +159,7 @@ pub async fn statuses(st: &AppState, keys: &[String]) -> HashMap<String, Status>
     for chunk in keys.chunks(400) {
         let marks = vec!["?"; chunk.len()].join(",");
         let sql = format!("SELECT key, status, local_id, trial FROM request WHERE key IN ({marks})");
-        let mut q = sqlx::query_as::<_, (String, String, Option<String>, bool)>(&sql);
+        let mut q = sqlx::query_as::<_, (String, String, Option<String>, bool)>(sqlx::AssertSqlSafe(sql.to_string()));
         for k in chunk {
             q = q.bind(k);
         }

@@ -308,7 +308,7 @@ async fn ensure_rows(st: &AppState, uid: &str) -> Result<(), sqlx::Error> {
 }
 
 async fn list_of(st: &AppState, uid: &str, kind: &str, col: &str) -> Vec<String> {
-    let raw: Option<String> = sqlx::query_scalar(&format!("SELECT {col} FROM mix_state WHERE user_id = ? AND kind = ?"))
+    let raw: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {col} FROM mix_state WHERE user_id = ? AND kind = ?")))
         .bind(uid)
         .bind(kind)
         .fetch_optional(&st.db)

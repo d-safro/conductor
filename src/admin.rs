@@ -144,7 +144,7 @@ async fn logout(State(st): State<Shared>, h: HeaderMap) -> Response {
 }
 
 async fn count(st: &Shared, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(&st.db).await.unwrap_or(0)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string())).fetch_one(&st.db).await.unwrap_or(0)
 }
 
 async fn status(State(st): State<Shared>, h: HeaderMap) -> Response {

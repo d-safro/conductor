@@ -266,7 +266,7 @@ pub async fn evaluate(st: &AppState, owner: &str, rules: &Value) -> Result<Vec<S
          LEFT JOIN annotation an ON an.user_id = (SELECT uid FROM me) AND an.item_kind = 'track' AND an.item_id = t.id
          WHERE t.missing_since IS NULL AND {wh} {tail}"
     );
-    let mut q = sqlx::query_scalar::<_, String>(&sql).bind(owner);
+    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.to_string())).bind(owner);
     for b in binds {
         q = match b {
             Bind::Text(s) => q.bind(s),

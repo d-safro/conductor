@@ -32,7 +32,7 @@ async fn accept_crlf_fingerprints(pool: &Db, migrator: &sqlx::migrate::Migrator)
         return Ok(());
     }
     for m in migrator.iter() {
-        let sql: &str = &m.sql;
+        let sql: &str = m.sql.as_str();
         let crlf = sql.replace("\r\n", "\n").replace('\n', "\r\n");
         let lf = sql.replace("\r\n", "\n");
         for other in [crlf, lf] {

@@ -128,13 +128,13 @@ fn to_json(r: &Row) -> Value {
 }
 
 async fn load(st: &Shared, id: &str) -> Option<Row> {
-    sqlx::query_as(&format!("{SELECT} WHERE p.id = ?")).bind(id).fetch_optional(&st.db).await.ok().flatten()
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE p.id = ?"))).bind(id).fetch_optional(&st.db).await.ok().flatten()
 }
 
 async fn list(State(st): State<Shared>, h: HeaderMap) -> Response {
     let u = need_user!(st, h);
     let rows: Vec<Row> =
-        match sqlx::query_as(&format!("{SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE"))
+        match sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE")))
             .bind(&u.id)
             .fetch_all(&st.db)
             .await

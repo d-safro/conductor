@@ -158,7 +158,7 @@ pub async fn mix_info(c: &Ctx) -> Result<Reply, ApiError> {
     let mut paths: Vec<(String, String, String)> = vec![];
     for chunk in ids.chunks(200) {
         let sql = format!("SELECT id, library_id, rel_path FROM track WHERE id IN ({})", vec!["?"; chunk.len()].join(","));
-        let mut q = sqlx::query_as::<_, (String, i64, String)>(&sql);
+        let mut q = sqlx::query_as::<_, (String, i64, String)>(sqlx::AssertSqlSafe(sql.to_string()));
         for id in chunk {
             q = q.bind(*id);
         }

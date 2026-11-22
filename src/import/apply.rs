@@ -378,7 +378,7 @@ const MARK: &str = "Imported from";
 
 async fn plays_of(db: &Db, table: &str, col: &str, user: &str) -> Result<HashMap<String, Vec<i64>>> {
     let rows: Vec<(String, i64)> =
-        sqlx::query_as(&format!("SELECT track_id, {col} FROM {table} WHERE user_id = ?")).bind(user).fetch_all(db).await?;
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT track_id, {col} FROM {table} WHERE user_id = ?"))).bind(user).fetch_all(db).await?;
     let mut m: HashMap<String, Vec<i64>> = HashMap::new();
     for (t, at) in rows {
         m.entry(t).or_default().push(at);
@@ -736,12 +736,12 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
     let mut tx = db.begin().await?;
     // plays: counts back down, then the plays go
     for (kind, col) in [("track", "p.track_id"), ("album", "t.album_id"), ("artist", "t.artist_id")] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE annotation SET play_count = MAX(0, play_count - (SELECT COUNT(*) FROM play p JOIN track t ON t.id = p.track_id
                  WHERE p.client = ?1 AND p.user_id = annotation.user_id AND {col} = annotation.item_id))
              WHERE user_id = ?2 AND item_kind = '{kind}'
                AND item_id IN (SELECT {col} FROM play p JOIN track t ON t.id = p.track_id WHERE p.client = ?1)"
-        ))
+        )))
         .bind(&client)
         .bind(&user)
         .execute(&mut *tx)
