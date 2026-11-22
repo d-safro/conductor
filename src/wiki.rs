@@ -2,9 +2,9 @@
 //! group, found by the MusicBrainz id in the tags or by name) → Wikidata (which Wikipedia page that is) →
 //! Wikipedia's page summary. Album pictures from the Cover Art Archive. Answers are kept (catalog_cache: found
 //! for 30 days, not found for 7), so each artist or album is looked up once. MusicBrainz is asked at most once
-//! a second, by everything in Maestro together (concerts use the same queue).
+//! a second, by everything in Conductor together (concerts use the same queue).
 //!
-//! Off with `info_online = false` (MAESTRO_INFO_ONLINE=0). Language: `info_lang` (Wikipedia's code, e.g. "en",
+//! Off with `info_online = false` (CONDUCTOR_INFO_ONLINE=0). Language: `info_lang` (Wikipedia's code, e.g. "en",
 //! "ru"), with English when that language has no page.
 
 use std::{
@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::{api::AppState, db::now};
 
-pub const UA: &str = "Maestro/0.1 (self-hosted music server; https://github.com/d-safro/maestro)";
+pub const UA: &str = "Conductor/0.1 (self-hosted music server; https://github.com/d-safro/conductor)";
 const FOUND_DAYS: i64 = 30;
 const MISSING_DAYS: i64 = 7;
 

@@ -106,9 +106,9 @@ pub async fn read(st: &AppState, input: &Value) -> Result<Parsed> {
     }
 }
 
-/// Match to Maestro's library, with ISRCs from Spotify for Spotify songs the names didn't match.
+/// Match to Conductor's library, with ISRCs from Spotify for Spotify songs the names didn't match.
 pub async fn plan(st: &AppState, p: &Parsed, opts: &Options) -> Result<Plan> {
-    let lib = apply::maestro_library(&st.db).await?;
+    let lib = apply::conductor_library(&st.db).await?;
     let none = std::collections::HashMap::new();
     let first = apply::plan(p, &lib, opts, &none);
     let unmatched: Vec<&super::Song> = first.missing.iter().map(|m| &m.song).filter(|s| s.spotify.is_some() && s.isrc.is_none()).collect();

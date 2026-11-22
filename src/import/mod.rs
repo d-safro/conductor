@@ -1,7 +1,7 @@
 //! Bring your music in from elsewhere: Spotify, Apple Music / iTunes, YouTube Music, Last.fm, ListenBrainz, Deezer,
 //! plain M3U / CSV playlists. Each source reads what that service gives you (its data export, or its API) into one
 //! shape (`Parsed`): liked songs, saved albums, followed artists, playlists, plays with their times, ratings, play
-//! counts and podcasts. Then the songs are matched to your library (`matching`) and applied (`apply`): to Maestro
+//! counts and podcasts. Then the songs are matched to your library (`matching`) and applied (`apply`): to Conductor
 //! directly, as a batch that can be undone, or to any Subsonic server through its API (e.g. Navidrome before a
 //! switch).
 //!

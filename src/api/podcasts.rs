@@ -31,7 +31,7 @@ use tracing::{info, warn};
 use super::{ApiError, AppState, Ctx, Reply, empty, ok, raw};
 use crate::db::{self, now};
 
-const UA: &str = concat!("Maestro/", env!("CARGO_PKG_VERSION"), " (podcasts)");
+const UA: &str = concat!("Conductor/", env!("CARGO_PKG_VERSION"), " (podcasts)");
 const ITUNES: &str = "http://www.itunes.com/dtds/podcast-1.0.dtd";
 const CONTENT: &str = "http://purl.org/rss/1.0/modules/content/";
 const REFRESH_SECS: i64 = 2 * 3600;

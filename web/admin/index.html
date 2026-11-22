@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Maestro admin</title>
+<title>Podium · Conductor</title>
 <style>
   :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --ok:#1d7a46; --warn:#a85b00; --bad:#b3261e;
           font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
@@ -56,7 +56,7 @@
 <body>
 <div id="login" hidden>
   <form class="card" id="loginForm">
-    <h2>Maestro admin</h2>
+    <h2>Podium</h2><p class="muted">Conductor's admin page</p>
     <label>Username <input id="u" autocomplete="username" required></label>
     <label>Password <input id="p" type="password" autocomplete="current-password" required></label>
     <button>Sign in</button>
@@ -65,12 +65,12 @@
 </div>
 <div id="app" hidden>
   <header>
-    <h1>Maestro</h1>
+    <h1>Conductor <span class="muted" style="font-weight:400">Podium</span></h1>
     <nav id="tabs">
       <button data-tab="status" aria-current="page">Status</button>
-      <button data-tab="downloads">Downloads</button>
+      <button data-tab="downloads" title="Downloads and better copies">Stagehand</button>
       <button data-tab="pick">Pick by hand</button>
-      <button data-tab="import">Import</button>
+      <button data-tab="import" title="Bring your music in from other services">Transpose</button>
       <button data-tab="lidarr">Lidarr albums</button>
       <button data-tab="users">Users</button>
     </nav>
@@ -98,7 +98,7 @@
       <div class="card"><h2>Set aside</h2><table id="pickSkipped"></table></div>
     </section>
     <section id="import" hidden>
-      <div class="card"><h2>Bring your music in</h2>
+      <div class="card"><h2>Transpose: bring your music in</h2>
         <p class="muted">From Spotify (account data or extended streaming history zip, Exportify CSVs), Apple Music / iTunes
           (Library.xml, or Apple's privacy export), YouTube Music (Google Takeout, history as JSON), ListenBrainz's export,
           or M3U / CSV playlists. Nothing changes until you've seen what was found and start it; every import can be undone.
@@ -131,7 +131,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 async function api(path, opts = {}) {
   const r = await fetch('/admin/api/' + path, { credentials: 'same-origin', ...opts,
-    headers: { 'X-Maestro': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+    headers: { 'X-Conductor': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
   if (r.status === 401) { show(false); throw new Error('sign in'); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
@@ -145,10 +145,10 @@ const pill = (s) => {
 };
 async function loadStatus() {
   const s = await api('status');
-  $('who').textContent = `${s.you} · Maestro ${s.version}`;
+  $('who').textContent = `${s.you} · Conductor ${s.version}`;
   const r = s.requests || {};
   const tiles = [['Songs', s.songs], ['Albums', s.albums], ['Artists', s.artists], ['Playlists', s.playlists], ['Podcasts', s.podcasts],
-    ['Missing files', s.missing], ['Waiting to download', (r.retry || 0) + (r.queued || 0)], ['To pick by hand', r.notfound || 0], ['On trial', s.onTrial], ['Lidarr albums open', s.lidarr]];
+    ['Missing files', s.missing], ['Waiting to download', (r.retry || 0) + (r.queued || 0)], ['To pick by hand', r.notfound || 0], ['On trial (Audition)', s.onTrial], ['Lidarr albums open', s.lidarr]];
   $('tiles').innerHTML = tiles.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
   $('libs').innerHTML = '<tr><th>Name</th><th>Folder</th><th>State</th></tr>' + s.libraries.map((l) =>
     `<tr><td>${esc(l.name)}</td><td><code>${esc(l.path)}</code></td><td>${l.connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>'}</td></tr>`).join('');
@@ -299,7 +299,7 @@ $('impUp').addEventListener('submit', (e) => {
   $('impErr').textContent = '';
   const x = new XMLHttpRequest();
   x.open('POST', `/admin/api/import/upload?user=${encodeURIComponent($('impUser').value)}&name=${encodeURIComponent(file.name)}`);
-  x.setRequestHeader('X-Maestro', '1');
+  x.setRequestHeader('X-Conductor', '1');
   x.upload.onprogress = (p) => { if (p.lengthComputable) $('impUpNote').textContent = `uploading ${pct(p.loaded / p.total)}`; };
   x.onload = () => {
     let j = {}; try { j = JSON.parse(x.responseText); } catch {}

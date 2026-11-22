@@ -36,20 +36,38 @@ jobs:
           $w.Write([int]16); $w.Write([int16]1); $w.Write([int16]1); $w.Write([int]$rate); $w.Write([int]($rate * 2)); $w.Write([int16]2); $w.Write([int16]16)
           $w.Write([Text.Encoding]::ASCII.GetBytes('data')); $w.Write([int]($n * 2)); $w.Write((New-Object byte[] ($n * 2)))
           [IO.File]::WriteAllBytes('C:\ci-music\Artist\Song.wav', $ms.ToArray())
+      - name: an older install from when Conductor was called Maestro (install.ps1 moves it over)
+        shell: pwsh
+        run: |
+          $old = "C:\ProgramData\maestro"
+          New-Item -ItemType Directory -Force $old | Out-Null
+          Set-Content -Encoding UTF8 -Path "$old\config.toml" -Value @"
+          data_dir = "C:\\ProgramData\\maestro"
+          listen = "127.0.0.1:4533"
+
+          [[libraries]]
+          name = "Music"
+          path = "C:\\ci-music"
+          "@
+          sc.exe create Maestro binPath= "C:\Windows\System32\cmd.exe" | Out-Null
+          if (-not (Get-Service Maestro -ErrorAction SilentlyContinue)) { throw "couldn't make the old service" }
       - name: install (install.ps1 in Windows PowerShell 5.1)
         shell: pwsh
-        env: { MAESTRO_PASSWORD: ci-only-secret }
+        env: { CONDUCTOR_PASSWORD: ci-only-secret }
         run: |
           New-Item -ItemType Directory -Force pkg | Out-Null
-          Copy-Item target/release/maestro.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1 pkg/
+          Copy-Item target/release/conductor.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1 pkg/
           powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -Admin ci
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
       - name: it runs, starts with Windows, answers /health and a ping, scans and streams the song
         shell: pwsh
         run: |
           $base = "http://127.0.0.1:4533"
-          if ((Get-Service Maestro).Status -ne 'Running') { throw "the service isn't running" }
-          if ((Get-CimInstance Win32_Service -Filter "Name='Maestro'").StartMode -ne 'Auto') { throw "it won't start with Windows" }
+          if (Get-Service Maestro -ErrorAction SilentlyContinue) { throw "the old Maestro service is still there" }
+          if (Test-Path C:\ProgramData\maestro) { throw "the old data folder wasn't moved" }
+          if (-not (Select-String -Path C:\ProgramData\conductor\config.toml -Pattern 'ProgramData\\\\conductor' -Quiet)) { throw "config.toml still names the old folder" }
+          if ((Get-Service Conductor).Status -ne 'Running') { throw "the service isn't running" }
+          if ((Get-CimInstance Win32_Service -Filter "Name='Conductor'").StartMode -ne 'Auto') { throw "it won't start with Windows" }
           function Wait-Healthy {
             for ($i = 0; $i -lt 60; $i++) {
               # /health answers JSON: {"status":"ok"} (or "degraded" while a music folder isn't connected)
@@ -70,24 +88,24 @@ jobs:
           if ($songs.Count -ne 1) { throw "the song wasn't scanned" }
           $audio = Invoke-WebRequest "$base/rest/stream?$q&id=$($songs[0].id)" -UseBasicParsing
           if ($audio.RawContentLength -lt 16000) { throw "streaming gave $($audio.RawContentLength) bytes" }
-          if (-not (Test-Path C:\ProgramData\maestro\maestro.log)) { throw "no log file" }
+          if (-not (Test-Path C:\ProgramData\conductor\conductor.log)) { throw "no log file" }
           # a restart (stop and start through Windows) comes back
-          Restart-Service Maestro
+          Restart-Service Conductor
           Wait-Healthy
           Write-Host "service OK"
-      - name: Maestro's log
+      - name: Conductor's log
         if: always()
         shell: pwsh
-        run: Get-Content C:\ProgramData\maestro\maestro.log -Tail 80 -ErrorAction SilentlyContinue
+        run: Get-Content C:\ProgramData\conductor\conductor.log -Tail 80 -ErrorAction SilentlyContinue
       - name: remove (uninstall.ps1)
         shell: pwsh
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File pkg/uninstall.ps1 -RemoveData
           if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 failed" }
-          if (Get-Service Maestro -ErrorAction SilentlyContinue) { throw "the service is still there" }
+          if (Get-Service Conductor -ErrorAction SilentlyContinue) { throw "the service is still there" }
           $up = $true
           try { Invoke-WebRequest http://127.0.0.1:4533/health -UseBasicParsing -TimeoutSec 3 | Out-Null } catch { $up = $false }
           if ($up) { throw "something still answers on 4533" }
-          if (Test-Path "$env:ProgramFiles\Maestro") { throw "the program folder is left behind" }
-          if (Test-Path "$env:ProgramData\maestro") { throw "the data folder is left behind (-RemoveData)" }
+          if (Test-Path "$env:ProgramFiles\Conductor") { throw "the program folder is left behind" }
+          if (Test-Path "$env:ProgramData\conductor") { throw "the data folder is left behind (-RemoveData)" }
           Write-Host "removed cleanly"

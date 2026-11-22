@@ -20,7 +20,7 @@ pub struct Deezer {
 impl Deezer {
     pub fn new(base: &str) -> Self {
         let http = reqwest::Client::builder()
-            .user_agent(concat!("Maestro/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Conductor/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(10))
             .build()
             .expect("http client");

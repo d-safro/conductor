@@ -1,10 +1,10 @@
-# Maestro settings. Copy to config.toml (or point MAESTRO_CONFIG / --config at it).
-# Every setting can also come from the environment: MAESTRO_DATA_DIR, MAESTRO_LISTEN, MAESTRO_MUSIC,
-# MAESTRO_SENTINEL, MAESTRO_SCAN_THREADS, MAESTRO_SCAN_INTERVAL_MIN, MAESTRO_FFMPEG.
+# Conductor settings. Copy to config.toml (or point CONDUCTOR_CONFIG / --config at it).
+# Every setting can also come from the environment: CONDUCTOR_DATA_DIR, CONDUCTOR_LISTEN, CONDUCTOR_MUSIC,
+# CONDUCTOR_SENTINEL, CONDUCTOR_SCAN_THREADS, CONDUCTOR_SCAN_INTERVAL_MIN, CONDUCTOR_FFMPEG.
 
 # Database, password key and caches. Keep this on the internal disk, not on the music drive.
-# Default: ~/.local/share/maestro (Linux), %ProgramData%\maestro (Windows).
-# data_dir = "/var/lib/maestro"
+# Default: ~/.local/share/conductor (Linux), %ProgramData%\conductor (Windows).
+# data_dir = "/var/lib/conductor"
 
 listen = "127.0.0.1:4533"
 # Never write to the music folders (no downloads, trial moves or covers): for a trial run beside another server.
@@ -25,7 +25,7 @@ podcast_clean_days = 7
 catalog = true
 catalog_skip_clients = ["symfonium"]
 # slskd_url = "http://127.0.0.1:5030"
-# slskd_api_key = "…"                       # or MAESTRO_SLSKD_API_KEY
+# slskd_api_key = "…"                       # or CONDUCTOR_SLSKD_API_KEY
 # slskd_downloads = "/mnt/media/data/soulseek/complete"
 # import_library = "Music"
 # Songs you play but don't have: deleted this many hours after they arrive unless kept; at most this many a day.
@@ -34,7 +34,7 @@ trial_per_day = 40
 
 # Lidarr's wanted albums, fetched from Soulseek and handed to Lidarr to import (what Soularr did).
 # lidarr_url = "http://127.0.0.1:8686"
-# lidarr_api_key = "…"                      # or MAESTRO_LIDARR_API_KEY
+# lidarr_api_key = "…"                      # or CONDUCTOR_LIDARR_API_KEY
 # lidarr_downloads = "/data/soulseek/complete"   # the downloads folder as Lidarr sees it
 lidarr_interval_min = 5
 lidarr_albums_per_run = 20
@@ -42,13 +42,13 @@ lidarr_match_ratio = 0.8
 
 # ListenBrainz: plays are sent there; its playlists made for you become discovery playlists (what Explo did).
 # listenbrainz_user = "you"
-# listenbrainz_token = "…"                   # or MAESTRO_LISTENBRAINZ_TOKEN
-# listenbrainz_for = "you-in-maestro"        # default: the first admin
+# listenbrainz_token = "…"                   # or CONDUCTOR_LISTENBRAINZ_TOKEN
+# listenbrainz_for = "you-in-conductor"        # default: the first admin
 discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 
 # AudioMuse-AI (optional): sound-alike songs and Encore's recommendation calls.
 # audiomuse_url = "http://127.0.0.1:8000"
-# audiomuse_token = "…"                      # or MAESTRO_AUDIOMUSE_TOKEN
+# audiomuse_token = "…"                      # or CONDUCTOR_AUDIOMUSE_TOKEN
 # ffmpeg = "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"
 
 # Lyrics translation by a local Ollama (off unless set)
@@ -63,7 +63,7 @@ discovery = ["weekly-exploration", "weekly-jams", "daily-jams"]
 # Concerts near you (Ticketmaster with the key set in Encore, else MusicBrainz)
 # concerts = true
 # Imports from Last.fm (scrobbles and loved songs by user name) need a free API key: last.fm/api/account/create
-# lastfm_api_key = "…"                       # or MAESTRO_LASTFM_API_KEY
+# lastfm_api_key = "…"                       # or CONDUCTOR_LASTFM_API_KEY
 # Artist biographies and album notes from MusicBrainz → Wikidata → Wikipedia (no key), kept once found
 # info_online = true
 # info_lang = "en"                         # Wikipedia's language; English when there's no page in it

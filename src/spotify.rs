@@ -40,7 +40,7 @@ async fn set_setting(st: &AppState, key: &str, v: &Value) -> Result<()> {
     Ok(())
 }
 
-/// spotify.py's files (token.json, settings.json, songs.json) → Maestro. Returns (login found, songs mapped).
+/// spotify.py's files (token.json, settings.json, songs.json) → Conductor. Returns (login found, songs mapped).
 pub async fn import_from(st_db: &db::Db, dir: &std::path::Path, lib_id: Option<i64>) -> Result<(bool, usize)> {
     let mut login = false;
     if let Ok(t) = std::fs::read_to_string(dir.join("token.json")) {

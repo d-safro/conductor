@@ -1,15 +1,15 @@
-//! Maestro: a music server for Encore and any Subsonic / OpenSubsonic app.
+//! Conductor: a music server for Encore and any Subsonic / OpenSubsonic app.
 //!
-//!   maestro [--config FILE] [serve]          run the server (default)
-//!   maestro [--config FILE] scan [--full]     scan the libraries once and exit
-//!   maestro [--config FILE] user add NAME [--admin]     password from MAESTRO_PASSWORD or stdin
-//!   maestro [--config FILE] user passwd NAME
-//!   maestro [--config FILE] apikey NAME [LABEL]          prints a new API key
-//!   maestro [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
-//!   maestro [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
-//!   maestro [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
+//!   conductor [--config FILE] [serve]          run the server (default)
+//!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
+//!   conductor [--config FILE] user add NAME [--admin]     password from CONDUCTOR_PASSWORD or stdin
+//!   conductor [--config FILE] user passwd NAME
+//!   conductor [--config FILE] apikey NAME [LABEL]          prints a new API key
+//!   conductor [--config FILE] import-navidrome NAVIDROME.DB [--artwork DIR]   (use a copy of the database)
+//!   conductor [--config FILE] service install|uninstall|start|stop   (Windows: run as a service)
+//!   conductor [--config FILE] import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
 //!                                                         (your music from another service; see src/import/cli.rs)
-//!   maestro [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, mixes, shares,
+//!   conductor [--config FILE] import-music-lookup DATA [STATE]  (play log, Encore's sync values, mixes, shares,
 //!                                                         concerts; podcasts and songs asked for from STATE's
 //!                                                         podcasts.json and requests.json; after import-navidrome)
 
@@ -23,7 +23,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
-use maestro::{
+use conductor::{
     api::{self, AppState},
     auth::{self, Secrets},
     config::{Config, LibraryConfig},
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         #[cfg(windows)]
         return winsvc::command(&args[1..], config_path);
         #[cfg(not(windows))]
-        bail!("`maestro service` is for Windows; on Linux use Docker or a systemd unit (see deploy/README.md)");
+        bail!("`conductor service` is for Windows; on Linux use Docker or a systemd unit (see deploy/README.md)");
     }
     init_logs(None);
     let rt = tokio::runtime::Runtime::new()?;
@@ -72,8 +72,9 @@ fn main() -> Result<()> {
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let cfg = Config::load(config_path)?;
+    conductor::config::move_old_names(&cfg);
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating {}", cfg.data_dir.display()))?;
-    let pool = db::open(&cfg.data_dir.join("maestro.db")).await?;
+    let pool = db::open(&cfg.data_dir.join("conductor.db")).await?;
     let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
     let libs = library::ensure_libraries(&pool, &cfg.libraries).await?;
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -108,18 +109,18 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
         ["import-navidrome", db_path, rest @ ..] => {
             let artwork = rest.iter().position(|a| *a == "--artwork").and_then(|i| rest.get(i + 1)).map(PathBuf::from);
             let rep =
-                maestro::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref()).await?;
+                conductor::import_nd::run(&cfg, &pool, &secrets, &libs, std::path::Path::new(db_path), artwork.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&rep)?);
             if !rep.users.is_empty() {
-                println!("Set a password for each imported user: maestro user passwd NAME");
+                println!("Set a password for each imported user: conductor user passwd NAME");
             }
             Ok(())
         }
         ["import-music-lookup", data, rest @ ..] => {
             let state = rest.first().map(std::path::Path::new);
-            let rep = maestro::import_nd::music_lookup(&pool, std::path::Path::new(data), state).await?;
+            let rep = conductor::import_nd::music_lookup(&pool, std::path::Path::new(data), state).await?;
             if let Some(dir) = state {
-                let (login, mapped) = maestro::spotify::import_from(&pool, dir, libs.first().map(|l| l.0)).await?;
+                let (login, mapped) = conductor::spotify::import_from(&pool, dir, libs.first().map(|l| l.0)).await?;
                 println!(
                     "Spotify: login {}, {mapped} songs matched to their files",
                     if login { "brought over" } else { "not found" }
@@ -132,15 +133,15 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             Ok(())
         }
         ["import", rest @ ..] => {
-            let st = Arc::new(maestro::api::AppState::new(pool, secrets, cfg, libs));
-            maestro::import::cli::run(st, rest).await
+            let st = Arc::new(conductor::api::AppState::new(pool, secrets, cfg, libs));
+            conductor::import::cli::run(st, rest).await
         }
         _ => bail!("unknown command; see the top of src/main.rs"),
     }
 }
 
 fn read_password() -> Result<String> {
-    if let Ok(p) = std::env::var("MAESTRO_PASSWORD") {
+    if let Ok(p) = conductor::config::var("PASSWORD") {
         return Ok(p);
     }
     eprint!("password: ");
@@ -156,18 +157,18 @@ fn read_password() -> Result<String> {
 
 async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, LibraryConfig)>, shutdown: Shutdown) -> Result<()> {
     if auth::user_count(&pool).await? == 0 {
-        match (std::env::var("MAESTRO_ADMIN_USER"), std::env::var("MAESTRO_ADMIN_PASSWORD")) {
+        match (conductor::config::var("ADMIN_USER"), conductor::config::var("ADMIN_PASSWORD")) {
             (Ok(u), Ok(p)) if !u.is_empty() && !p.is_empty() => {
                 auth::create_user(&pool, &secrets, &u, &p, true).await?;
-                info!(user = %u, "first admin created from MAESTRO_ADMIN_USER");
+                info!(user = %u, "first admin created from CONDUCTOR_ADMIN_USER");
             }
             _ => warn!(
-                "no users yet: add one with `maestro user add NAME --admin` or set MAESTRO_ADMIN_USER / MAESTRO_ADMIN_PASSWORD"
+                "no users yet: add one with `conductor user add NAME --admin` or set CONDUCTOR_ADMIN_USER / CONDUCTOR_ADMIN_PASSWORD"
             ),
         }
     }
     if libs.is_empty() {
-        warn!("no music folders configured (config.toml [[libraries]] or MAESTRO_MUSIC)");
+        warn!("no music folders configured (config.toml [[libraries]] or CONDUCTOR_MUSIC)");
     }
     if cfg.read_only {
         warn!("read-only: nothing is written to the music folders");
@@ -175,19 +176,19 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     tokio::spawn(scan_loop(state.clone()));
-    maestro::jam::load(&state).await;
-    tokio::spawn(maestro::api::podcasts::worker(state.clone()));
-    tokio::spawn(maestro::catalog::acquire::worker(state.clone()));
-    tokio::spawn(maestro::online::worker(state.clone()));
-    tokio::spawn(maestro::listenbrainz::worker(state.clone()));
-    tokio::spawn(maestro::spotify::worker(state.clone()));
-    tokio::spawn(maestro::concerts::worker(state.clone()));
-    tokio::spawn(maestro::mixes::worker(state.clone()));
+    conductor::jam::load(&state).await;
+    tokio::spawn(conductor::api::podcasts::worker(state.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(state.clone()));
+    tokio::spawn(conductor::online::worker(state.clone()));
+    tokio::spawn(conductor::listenbrainz::worker(state.clone()));
+    tokio::spawn(conductor::spotify::worker(state.clone()));
+    tokio::spawn(conductor::concerts::worker(state.clone()));
+    tokio::spawn(conductor::mixes::worker(state.clone()));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = maestro::jam::serve(st, jam_addr).await {
+            if let Err(e) = conductor::jam::serve(st, jam_addr).await {
                 warn!("Jam guest page: {e:#}");
             }
         });
@@ -195,7 +196,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
-    info!(%addr, "Maestro listening");
+    info!(%addr, "Conductor listening");
     axum::serve(listener, app).with_graceful_shutdown(shutdown).await?;
     Ok(())
 }

@@ -2,7 +2,7 @@
 //! MusicBrainz id, the file path of an M3U entry), then title + artist (the same keys the ⬇ catalog uses: any
 //! alphabet, "- Remastered" and "(feat. …)" left out), preferring the same album and a close length.
 //!
-//! The library is a plain list, so the same matching works on Maestro's database and on any Subsonic server's
+//! The library is a plain list, so the same matching works on Conductor's database and on any Subsonic server's
 //! songs (`apply::Subsonic`).
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ pub struct LibSong {
     pub duration_s: i64,
     pub isrc: Vec<String>,
     pub mbid: Option<String>,
-    /// relative to the music folder (Maestro), or as the server gives it
+    /// relative to the music folder (Conductor), or as the server gives it
     pub path: String,
 }
 
@@ -46,7 +46,7 @@ pub struct Library {
     by_isrc: HashMap<String, usize>,
     by_mbid: HashMap<String, usize>,
     by_path: HashMap<String, usize>,
-    /// Spotify id → song id (Maestro's Spotify sync remembers these)
+    /// Spotify id → song id (Conductor's Spotify sync remembers these)
     spotify: HashMap<String, String>,
     albums: HashMap<(String, String), String>,
     album_titles: HashMap<String, Vec<String>>,

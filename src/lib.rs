@@ -1,4 +1,4 @@
-//! Maestro as a library, so the binary and the tests share it.
+//! Conductor as a library, so the binary and the tests share it.
 
 pub mod admin;
 pub mod api;

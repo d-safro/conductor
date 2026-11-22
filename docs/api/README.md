@@ -1,6 +1,6 @@
 # Encore extensions
 
-Maestro speaks standard Subsonic 1.16.1 and OpenSubsonic. Extra features for Encore are advertised in
+Conductor speaks standard Subsonic 1.16.1 and OpenSubsonic. Extra features for Encore are advertised in
 `getOpenSubsonicExtensions`, so any app can find and use them, and Encore can tell which servers have them.
 Each one gets its own spec file here before it's built.
 

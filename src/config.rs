@@ -1,4 +1,4 @@
-//! Settings: `config.toml` (path from `--config` or `MAESTRO_CONFIG`), then `MAESTRO_*` environment variables.
+//! Settings: `config.toml` (path from `--config` or `CONDUCTOR_CONFIG`), then `CONDUCTOR_*` environment variables.
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -39,7 +39,7 @@ pub struct Config {
     /// slskd (Soulseek) for downloading songs asked for: its address and API key.
     pub slskd_url: Option<String>,
     pub slskd_api_key: Option<String>,
-    /// slskd's finished-downloads folder, as Maestro sees it (path mapping when they run on different systems).
+    /// slskd's finished-downloads folder, as Conductor sees it (path mapping when they run on different systems).
     pub slskd_downloads: Option<PathBuf>,
     /// The music folder downloads are filed into (a library name; default: the first).
     pub import_library: Option<String>,
@@ -192,136 +192,203 @@ impl Default for Config {
     }
 }
 
-fn default_data_dir() -> PathBuf {
+/// The folder data goes in by default, named `name` ("conductor"; Conductor was called Maestro before).
+fn data_dir_named(name: &str) -> PathBuf {
     if cfg!(windows) {
-        std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\ProgramData")).join("maestro")
+        std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\ProgramData")).join(name)
     } else if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
-        PathBuf::from(x).join("maestro")
+        PathBuf::from(x).join(name)
     } else if let Some(h) = std::env::var_os("HOME") {
-        PathBuf::from(h).join(".local/share/maestro")
+        PathBuf::from(h).join(".local/share").join(name)
     } else {
         PathBuf::from("./data")
     }
 }
 
+fn default_data_dir() -> PathBuf {
+    data_dir_named("conductor")
+}
+
+/// Settings from the environment: CONDUCTOR_<name>, or the old MAESTRO_<name> (still read; noted in the log).
+pub fn var(name: &str) -> Result<String, std::env::VarError> {
+    std::env::var(format!("CONDUCTOR_{name}")).or_else(|e| match std::env::var(format!("{OLD}_{name}")) {
+        Ok(v) => {
+            old_name(name);
+            Ok(v)
+        }
+        Err(_) => Err(e),
+    })
+}
+
+pub fn var_os(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(format!("CONDUCTOR_{name}")).or_else(|| {
+        let v = std::env::var_os(format!("{OLD}_{name}"));
+        if v.is_some() {
+            old_name(name);
+        }
+        v
+    })
+}
+
+/// Conductor's name before.
+const OLD: &str = "MAESTRO";
+static OLD_NAMES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn old_name(name: &str) {
+    let mut v = OLD_NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if !v.iter().any(|n| n == name) {
+        v.push(name.to_string());
+    }
+}
+
+/// Moves what an older version left under the old name: the default data folder (when the new one isn't there
+/// yet) and the database file in the data folder. Runs before the database is opened.
+pub fn move_old_names(cfg: &Config) {
+    let old_dir = data_dir_named(&OLD.to_lowercase());
+    if cfg.data_dir == default_data_dir() && !cfg.data_dir.exists() && old_dir.is_dir() {
+        match std::fs::rename(&old_dir, &cfg.data_dir) {
+            Ok(()) => tracing::info!(from = %old_dir.display(), to = %cfg.data_dir.display(), "data folder moved to the new name"),
+            Err(e) => tracing::warn!(from = %old_dir.display(), "couldn't move the old data folder ({e}); starting a new one"),
+        }
+    }
+    let old_db = cfg.data_dir.join(format!("{}.db", OLD.to_lowercase()));
+    let new_db = cfg.data_dir.join("conductor.db");
+    if old_db.is_file() && !new_db.exists() {
+        for ext in ["", "-wal", "-shm"] {
+            let (a, b) = (PathBuf::from(format!("{}{ext}", old_db.display())), PathBuf::from(format!("{}{ext}", new_db.display())));
+            if a.exists() && let Err(e) = std::fs::rename(&a, &b) {
+                tracing::warn!("couldn't rename {} ({e})", a.display());
+            }
+        }
+        tracing::info!("database renamed to conductor.db");
+    }
+}
+
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
-        let path = path.or_else(|| std::env::var_os("MAESTRO_CONFIG").map(PathBuf::from));
+        let path = path.or_else(|| var_os("CONFIG").map(PathBuf::from));
         let mut c: Config = match &path {
             Some(p) => toml::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
                 .with_context(|| format!("parsing {}", p.display()))?,
             None => Config::default(),
         };
-        if let Some(v) = std::env::var_os("MAESTRO_DATA_DIR") {
+        if let Some(v) = var_os("DATA_DIR") {
             c.data_dir = v.into();
         }
-        if let Ok(v) = std::env::var("MAESTRO_LISTEN") {
-            c.listen = v.parse().context("MAESTRO_LISTEN")?;
+        if let Ok(v) = var("LISTEN") {
+            c.listen = v.parse().context("CONDUCTOR_LISTEN")?;
         }
-        if let Some(v) = std::env::var_os("MAESTRO_MUSIC") {
-            // one library from the environment, handy for Docker: MAESTRO_MUSIC=/music
+        if let Some(v) = var_os("MUSIC") {
+            // one library from the environment, handy for Docker: CONDUCTOR_MUSIC=/music
             c.libraries = vec![LibraryConfig {
                 name: "Music".into(),
                 path: v.into(),
-                sentinel: std::env::var("MAESTRO_SENTINEL").ok(),
-                scan_threads: std::env::var("MAESTRO_SCAN_THREADS").ok().and_then(|v| v.parse().ok()),
+                sentinel: var("SENTINEL").ok(),
+                scan_threads: var("SCAN_THREADS").ok().and_then(|v| v.parse().ok()),
             }];
         }
-        if let Ok(v) = std::env::var("MAESTRO_SCAN_INTERVAL_MIN") {
-            c.scan_interval_min = v.parse().context("MAESTRO_SCAN_INTERVAL_MIN")?;
+        if let Ok(v) = var("SCAN_INTERVAL_MIN") {
+            c.scan_interval_min = v.parse().context("CONDUCTOR_SCAN_INTERVAL_MIN")?;
         }
-        if let Ok(v) = std::env::var("MAESTRO_JAM_LISTEN") {
+        if let Ok(v) = var("JAM_LISTEN") {
             c.jam_listen = v;
         }
-        if let Ok(v) = std::env::var("MAESTRO_JAM_PUBLIC_URL") {
+        if let Ok(v) = var("JAM_PUBLIC_URL") {
             c.jam_public_url = Some(v);
         }
-        if let Some(v) = std::env::var_os("MAESTRO_PODCAST_DIR") {
+        if let Some(v) = var_os("PODCAST_DIR") {
             c.podcast_dir = Some(v.into());
         }
-        if let Ok(v) = std::env::var("MAESTRO_PODCAST_KEEP") {
-            c.podcast_keep = v.parse().context("MAESTRO_PODCAST_KEEP")?;
+        if let Ok(v) = var("PODCAST_KEEP") {
+            c.podcast_keep = v.parse().context("CONDUCTOR_PODCAST_KEEP")?;
         }
-        if let Ok(v) = std::env::var("MAESTRO_PODCAST_CLEAN_DAYS") {
-            c.podcast_clean_days = v.parse().context("MAESTRO_PODCAST_CLEAN_DAYS")?;
+        if let Ok(v) = var("PODCAST_CLEAN_DAYS") {
+            c.podcast_clean_days = v.parse().context("CONDUCTOR_PODCAST_CLEAN_DAYS")?;
         }
-        if let Ok(v) = std::env::var("MAESTRO_CATALOG") {
+        if let Ok(v) = var("CATALOG") {
             c.catalog = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_SLSKD_URL") {
+        if let Ok(v) = var("SLSKD_URL") {
             c.slskd_url = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_SLSKD_API_KEY") {
+        if let Ok(v) = var("SLSKD_API_KEY") {
             c.slskd_api_key = Some(v);
         }
-        if let Some(v) = std::env::var_os("MAESTRO_SLSKD_DOWNLOADS") {
+        if let Some(v) = var_os("SLSKD_DOWNLOADS") {
             c.slskd_downloads = Some(v.into());
         }
-        if let Ok(v) = std::env::var("MAESTRO_LIDARR_URL") {
+        if let Ok(v) = var("LIDARR_URL") {
             c.lidarr_url = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_LIDARR_API_KEY") {
+        if let Ok(v) = var("LIDARR_API_KEY") {
             c.lidarr_api_key = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_LIDARR_DOWNLOADS") {
+        if let Ok(v) = var("LIDARR_DOWNLOADS") {
             c.lidarr_downloads = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_URL") {
+        if let Ok(v) = var("AUDIOMUSE_URL") {
             c.audiomuse_url = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_AUDIOMUSE_TOKEN") {
+        if let Ok(v) = var("AUDIOMUSE_TOKEN") {
             c.audiomuse_token = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_OLLAMA_URL") {
+        if let Ok(v) = var("OLLAMA_URL") {
             c.ollama_url = Some(v).filter(|v| !v.is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_TRANSLATE_MODEL") {
+        if let Ok(v) = var("TRANSLATE_MODEL") {
             c.translate_model = v;
         }
-        if let Ok(v) = std::env::var("MAESTRO_SONGID_URL") {
+        if let Ok(v) = var("SONGID_URL") {
             c.songid_url = Some(v).filter(|v| !v.is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_MIXINFO_DIR") {
+        if let Ok(v) = var("MIXINFO_DIR") {
             c.mixinfo_dir = Some(PathBuf::from(v)).filter(|v| !v.as_os_str().is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_CONCERTS") {
+        if let Ok(v) = var("CONCERTS") {
             c.concerts = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_INFO_ONLINE") {
+        if let Ok(v) = var("INFO_ONLINE") {
             c.info_online = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_DJ_VOICE_URL") {
+        if let Ok(v) = var("DJ_VOICE_URL") {
             c.dj_voice_url = Some(v).filter(|v| !v.is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_DJ_MODEL") {
+        if let Ok(v) = var("DJ_MODEL") {
             c.dj_model = Some(v).filter(|v| !v.is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_UPGRADES") {
+        if let Ok(v) = var("UPGRADES") {
             c.upgrades = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_LASTFM_API_KEY") {
+        if let Ok(v) = var("LASTFM_API_KEY") {
             c.lastfm_api_key = Some(v).filter(|v| !v.is_empty());
         }
-        if let Ok(v) = std::env::var("MAESTRO_INFO_LANG") {
+        if let Ok(v) = var("INFO_LANG") {
             c.info_lang = v;
         }
-        if let Ok(v) = std::env::var("MAESTRO_READ_ONLY") {
+        if let Ok(v) = var("READ_ONLY") {
             c.read_only = v == "1" || v == "true";
         }
-        if let Ok(v) = std::env::var("MAESTRO_COVERS") {
+        if let Ok(v) = var("COVERS") {
             c.covers_fetch = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_LYRICS_ONLINE") {
+        if let Ok(v) = var("LYRICS_ONLINE") {
             c.lyrics_online = v != "0" && v != "false";
         }
-        if let Ok(v) = std::env::var("MAESTRO_LISTENBRAINZ_USER") {
+        if let Ok(v) = var("LISTENBRAINZ_USER") {
             c.listenbrainz_user = Some(v);
         }
-        if let Ok(v) = std::env::var("MAESTRO_LISTENBRAINZ_TOKEN") {
+        if let Ok(v) = var("LISTENBRAINZ_TOKEN") {
             c.listenbrainz_token = Some(v);
         }
-        if let Some(v) = std::env::var_os("MAESTRO_FFMPEG") {
+        if let Some(v) = var_os("FFMPEG") {
             c.ffmpeg = Some(v.into());
+        }
+        let old = OLD_NAMES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if !old.is_empty() {
+            tracing::warn!(
+                "settings named {OLD}_* still work but are now CONDUCTOR_*: rename {}",
+                old.iter().map(|n| format!("{OLD}_{n}")).collect::<Vec<_>>().join(", ")
+            );
         }
         Ok(c)
     }
@@ -332,5 +399,46 @@ impl Config {
 
     pub fn cache_dir(&self) -> PathBuf {
         self.data_dir.join("cache")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // one test touches the environment, so they don't race
+    #[test]
+    fn old_names_still_work() {
+        let tmp = std::env::temp_dir().join(format!("conductor-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // SAFETY: only this test reads or writes these variables
+        unsafe {
+            std::env::set_var(format!("{OLD}_SCAN_INTERVAL_MIN"), "7");
+            std::env::set_var("CONDUCTOR_JAM_LISTEN", "127.0.0.1:1");
+            std::env::set_var(format!("{OLD}_JAM_LISTEN"), "127.0.0.1:2");
+            std::env::set_var("XDG_DATA_HOME", &tmp);
+        }
+        let c = Config::load(None).unwrap();
+        assert_eq!(c.scan_interval_min, 7, "the old prefix is still read");
+        assert_eq!(c.jam_listen, "127.0.0.1:1", "the new one wins");
+        assert!(OLD_NAMES.lock().unwrap().contains(&"SCAN_INTERVAL_MIN".to_string()));
+        // an older install's data folder and database get the new names
+        let old = tmp.join("maestro");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("maestro.db"), b"db").unwrap();
+        std::fs::write(old.join("maestro.db-wal"), b"wal").unwrap();
+        if cfg!(not(windows)) {
+            assert_eq!(c.data_dir, tmp.join("conductor"));
+            move_old_names(&c);
+            assert!(!old.exists());
+            assert_eq!(std::fs::read(c.data_dir.join("conductor.db")).unwrap(), b"db");
+            assert!(c.data_dir.join("conductor.db-wal").exists());
+        }
+        unsafe {
+            std::env::remove_var(format!("{OLD}_SCAN_INTERVAL_MIN"));
+            std::env::remove_var("CONDUCTOR_JAM_LISTEN");
+            std::env::remove_var(format!("{OLD}_JAM_LISTEN"));
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

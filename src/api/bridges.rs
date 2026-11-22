@@ -1,4 +1,4 @@
-//! Two helpers that run beside Maestro (optional, like AudioMuse), both working on the music folder read-only:
+//! Two helpers that run beside Conductor (optional, like AudioMuse), both working on the music folder read-only:
 //!
 //! - **Song ID** (`songid_url`): "What's playing?" against your own library only. `POST identifySong` (login in
 //!   the query, 5–15 s of audio as the body) → `{"songIdentification": {"found": true, "song": {...}, "offset",

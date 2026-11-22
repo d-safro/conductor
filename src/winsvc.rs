@@ -1,6 +1,6 @@
-//! Maestro as a Windows service: `maestro.exe [--config FILE] service install|uninstall|start|stop`.
-//! The service runs `maestro.exe [--config FILE] service run` as LocalSystem, starts with Windows, and writes its
-//! log to `<data_dir>\maestro.log`.
+//! Conductor as a Windows service: `conductor.exe [--config FILE] service install|uninstall|start|stop`.
+//! The service runs `conductor.exe [--config FILE] service run` as LocalSystem, starts with Windows, and writes its
+//! log to `<data_dir>\conductor.log`.
 
 use std::{ffi::OsString, path::PathBuf, sync::Mutex, sync::OnceLock, time::Duration};
 
@@ -16,7 +16,7 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-const NAME: &str = "Maestro";
+const NAME: &str = "Conductor";
 static CONFIG: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 define_windows_service!(ffi_service_main, service_main);
@@ -29,14 +29,14 @@ pub fn command(args: &[String], config: Option<PathBuf>) -> Result<()> {
             let svc = open(ServiceAccess::START | ServiceAccess::QUERY_STATUS)?;
             svc.start::<&str>(&[])?;
             if !wait_for(&svc, ServiceState::Running, 30) {
-                bail!("Maestro didn't start within 30 s; see maestro.log in its data folder");
+                bail!("Conductor didn't start within 30 s; see conductor.log in its data folder");
             }
-            println!("Maestro started");
+            println!("Conductor started");
             Ok(())
         }
         Some("stop") => {
             open(ServiceAccess::STOP)?.stop()?;
-            println!("Maestro stopping");
+            println!("Conductor stopping");
             Ok(())
         }
         Some("run") => {
@@ -44,13 +44,13 @@ pub fn command(args: &[String], config: Option<PathBuf>) -> Result<()> {
             service_dispatcher::start(NAME, ffi_service_main).context("this is started by Windows (use `service start`)")?;
             Ok(())
         }
-        _ => bail!("maestro service install|uninstall|start|stop"),
+        _ => bail!("conductor service install|uninstall|start|stop"),
     }
 }
 
 fn open(access: ServiceAccess) -> Result<windows_service::service::Service> {
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    mgr.open_service(NAME, access).context("the Maestro service isn't installed (maestro service install, as administrator)")
+    mgr.open_service(NAME, access).context("the Conductor service isn't installed (conductor service install, as administrator)")
 }
 
 fn install(config: Option<PathBuf>) -> Result<()> {
@@ -65,7 +65,7 @@ fn install(config: Option<PathBuf>) -> Result<()> {
     launch.push("run".into());
     let info = ServiceInfo {
         name: NAME.into(),
-        display_name: "Maestro music server".into(),
+        display_name: "Conductor music server".into(),
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
@@ -77,7 +77,7 @@ fn install(config: Option<PathBuf>) -> Result<()> {
     };
     let svc = mgr.create_service(&info, ServiceAccess::CHANGE_CONFIG)?;
     svc.set_description("Music server for Encore and any Subsonic app")?;
-    println!("Maestro service installed; it starts with Windows. Start it now: maestro service start");
+    println!("Conductor service installed; it starts with Windows. Start it now: conductor service start");
     Ok(())
 }
 
@@ -98,11 +98,11 @@ fn uninstall() -> Result<()> {
     if svc.query_status()?.current_state != ServiceState::Stopped {
         let _ = svc.stop();
         if !wait_for(&svc, ServiceState::Stopped, 30) {
-            eprintln!("Maestro is taking long to stop; it's removed once it has");
+            eprintln!("Conductor is taking long to stop; it's removed once it has");
         }
     }
     svc.delete()?;
-    println!("Maestro service removed (its data stays)");
+    println!("Conductor service removed (its data stays)");
     Ok(())
 }
 
@@ -125,12 +125,13 @@ fn status(state: ServiceState) -> ServiceStatus {
 fn service_main(_args: Vec<OsString>) {
     let config = CONFIG.get().cloned().flatten();
     // the log goes next to the data (a service has no console)
-    if let Ok(cfg) = maestro::config::Config::load(config.clone()) {
+    if let Ok(cfg) = conductor::config::Config::load(config.clone()) {
+        conductor::config::move_old_names(&cfg); // before the log file makes the new folder
         let _ = std::fs::create_dir_all(&cfg.data_dir);
-        crate::init_logs(std::fs::OpenOptions::new().create(true).append(true).open(cfg.data_dir.join("maestro.log")).ok());
+        crate::init_logs(std::fs::OpenOptions::new().create(true).append(true).open(cfg.data_dir.join("conductor.log")).ok());
     }
     if let Err(e) = run_service(config) {
-        tracing::error!("Maestro service: {e:#}");
+        tracing::error!("Conductor service: {e:#}");
     }
 }
 

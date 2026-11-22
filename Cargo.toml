@@ -1,5 +1,5 @@
 [package]
-name = "maestro"
+name = "conductor"
 version = "0.1.0"
 edition = "2024"
 description = "A music server for Encore and any Subsonic / OpenSubsonic app"

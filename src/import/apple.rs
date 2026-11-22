@@ -92,7 +92,7 @@ fn itunes(lib: &Value, out: &mut Parsed) {
             continue;
         }
         if p.get("Smart Info").is_some() || p.get("Smart Criteria").is_some() {
-            continue; // smart playlists fill themselves; Maestro has its own
+            continue; // smart playlists fill themselves; Conductor has its own
         }
         let songs: Vec<Song> = p["Playlist Items"]
             .as_array()

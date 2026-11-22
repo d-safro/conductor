@@ -1,7 +1,7 @@
 //! The admin page at /admin (admins only): status, scan, downloads (retry / cancel), picking a Soulseek file by
 //! hand for songs the automatic search couldn't get, Lidarr albums, users.
 //! Sign-in sets an HttpOnly, SameSite=Strict cookie (kept in memory for 12 hours); every change also needs the
-//! `X-Maestro: 1` header, which other sites can't send.
+//! `X-Conductor: 1` header, which other sites can't send.
 
 #![allow(clippy::result_large_err)] // handlers return axum Responses as errors
 
@@ -25,7 +25,7 @@ use crate::{
 };
 
 const PAGE: &str = include_str!("../web/admin/index.html");
-const COOKIE: &str = "maestro_admin";
+const COOKIE: &str = "conductor_admin";
 const HOURS: i64 = 12;
 
 pub fn routes() -> Router<Shared> {
@@ -67,10 +67,10 @@ fn cookie_of(h: &HeaderMap) -> Option<String> {
     })
 }
 
-/// The signed-in admin. Changes (`write`) also need the X-Maestro header.
+/// The signed-in admin. Changes (`write`) also need the X-Conductor header.
 async fn admin(st: &Shared, h: &HeaderMap, write: bool) -> Result<User, Response> {
-    if write && h.get("x-maestro").and_then(|v| v.to_str().ok()) != Some("1") {
-        return Err(err(StatusCode::FORBIDDEN, "missing X-Maestro header"));
+    if write && h.get("x-conductor").and_then(|v| v.to_str().ok()) != Some("1") {
+        return Err(err(StatusCode::FORBIDDEN, "missing X-Conductor header"));
     }
     let tok = cookie_of(h).ok_or_else(|| err(StatusCode::UNAUTHORIZED, "sign in"))?;
     let uid = {
@@ -106,8 +106,8 @@ struct Login {
 }
 
 async fn login(State(st): State<Shared>, h: HeaderMap, Json(b): Json<Login>) -> Response {
-    if h.get("x-maestro").and_then(|v| v.to_str().ok()) != Some("1") {
-        return err(StatusCode::FORBIDDEN, "missing X-Maestro header");
+    if h.get("x-conductor").and_then(|v| v.to_str().ok()) != Some("1") {
+        return err(StatusCode::FORBIDDEN, "missing X-Conductor header");
     }
     let Ok(Some(u)) = auth::verify_password(&st.db, &st.secrets, &b.username, &b.password).await else {
         return err(StatusCode::UNAUTHORIZED, "Wrong username or password");
@@ -128,7 +128,7 @@ async fn logout(State(st): State<Shared>, h: HeaderMap) -> Response {
         st.native_tokens.lock().await.remove(&format!("admin:{t}"));
     }
     let mut r = Json(json!({ "ok": true })).into_response();
-    r.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_static("maestro_admin=; Path=/admin; Max-Age=0"));
+    r.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_static("conductor_admin=; Path=/admin; Max-Age=0"));
     r
 }
 

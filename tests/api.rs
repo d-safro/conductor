@@ -2,7 +2,7 @@
 
 use std::{path::Path, process::Command, sync::Arc};
 
-use maestro::{
+use conductor::{
     api::{self, AppState},
     auth::{self, Secrets},
     config::{Config, LibraryConfig},
@@ -101,7 +101,7 @@ impl Server {
         Self::no_network(&mut cfg);
         tune(&mut cfg);
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
-        let pool = db::open(&cfg.data_dir.join("maestro.db")).await.unwrap();
+        let pool = db::open(&cfg.data_dir.join("conductor.db")).await.unwrap();
         let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key")).unwrap();
         auth::create_user(&pool, &secrets, USER, PASS, true).await.unwrap();
         let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();
@@ -470,7 +470,7 @@ async fn encore_extensions() {
     // Jam: the guest page on its own listener
     let jl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let jbase = format!("http://{}", jl.local_addr().unwrap());
-    let app = maestro::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let app = conductor::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move { axum::serve(jl, app).await.unwrap() });
     let r = s.ok("jamStart", &[("name", "Tester")]).await;
     let tok = r["jam"]["token"].as_str().unwrap().to_string();
@@ -548,7 +548,7 @@ async fn podcasts() {
         )
         .nest_service("/ep1.mp3", tower_http::services::ServeFile::new(dir.path().join("ep1.mp3")));
     tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
-    tokio::spawn(maestro::api::podcasts::worker(s.st.clone()));
+    tokio::spawn(conductor::api::podcasts::worker(s.st.clone()));
 
     assert_eq!(s.call("createPodcastChannel", &[("url", "not a url")]).await["error"]["code"], 10);
     let r = s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
@@ -728,7 +728,7 @@ async fn songs_you_dont_have() {
         })
         .await,
     );
-    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
 
     // search: ⬇ items you don't have; your own "One" isn't offered again
     let r = s.ok("search3", &[("query", "psycho")]).await;
@@ -835,7 +835,7 @@ async fn trial_server(tune: impl FnOnce(&mut Config)) -> (Arc<Server>, tempfile:
         })
         .await,
     );
-    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
     (s, tmp)
 }
 
@@ -1028,7 +1028,7 @@ async fn lidarr_wanted_albums() {
         })
         .await,
     );
-    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
     wait_for(
         async || {
             sqlx::query_scalar::<_, String>("SELECT status FROM lidarr_grab WHERE album_id = 42")
@@ -1121,11 +1121,11 @@ async fn lyrics_and_covers_online() {
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
 
     // a cover for the album folder that has none; Artist/Album folders (one level less) are left alone
-    let saved = maestro::online::covers_once(&s.st).await.unwrap();
+    let saved = conductor::online::covers_once(&s.st).await.unwrap();
     assert_eq!(saved, 1);
     assert!(s.music.join("Albums/Gamma/Third/cover.jpg").is_file());
     assert!(!s.music.join("The Beta Band/Second/cover.jpg").exists());
-    assert_eq!(maestro::online::covers_once(&s.st).await.unwrap(), 0); // never twice
+    assert_eq!(conductor::online::covers_once(&s.st).await.unwrap(), 0); // never twice
 }
 
 #[tokio::test]
@@ -1195,7 +1195,7 @@ async fn admin_page() {
     let s = Server::start().await;
     let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
     let page = http.get(format!("{}/admin", s.base)).send().await.unwrap().text().await.unwrap();
-    assert!(page.contains("<title>Maestro admin</title>"));
+    assert!(page.contains("<title>Podium · Conductor</title>"));
     let api = |p: &str| format!("{}/admin/api/{p}", s.base);
     assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
     // sign-in needs the header (other sites can't send it), and the right password
@@ -1203,7 +1203,7 @@ async fn admin_page() {
     assert_eq!(no_header.status(), 403);
     let wrong = http
         .post(api("login"))
-        .header("X-Maestro", "1")
+        .header("X-Conductor", "1")
         .json(&serde_json::json!({"username": USER, "password": "x"}))
         .send()
         .await
@@ -1211,7 +1211,7 @@ async fn admin_page() {
     assert_eq!(wrong.status(), 401);
     let ok = http
         .post(api("login"))
-        .header("X-Maestro", "1")
+        .header("X-Conductor", "1")
         .json(&serde_json::json!({"username": USER, "password": PASS}))
         .send()
         .await
@@ -1228,7 +1228,7 @@ async fn admin_page() {
     );
     let r = http
         .post(api("users"))
-        .header("X-Maestro", "1")
+        .header("X-Conductor", "1")
         .json(&serde_json::json!({"name": "guest", "password": "secret1"}))
         .send()
         .await
@@ -1236,7 +1236,7 @@ async fn admin_page() {
     assert_eq!(r.status(), 200);
     let users: Value = http.get(api("users")).send().await.unwrap().json().await.unwrap();
     assert_eq!(users.as_array().unwrap().len(), 2);
-    let k: Value = http.post(api("users/guest/apikey")).header("X-Maestro", "1").send().await.unwrap().json().await.unwrap();
+    let k: Value = http.post(api("users/guest/apikey")).header("X-Conductor", "1").send().await.unwrap().json().await.unwrap();
     let ping: Value = s
         .http
         .get(format!("{}/rest/ping?f=json&apiKey={}", s.base, k["key"].as_str().unwrap()))
@@ -1251,14 +1251,14 @@ async fn admin_page() {
     let guest = reqwest::Client::builder().cookie_store(true).build().unwrap();
     let r = guest
         .post(api("login"))
-        .header("X-Maestro", "1")
+        .header("X-Conductor", "1")
         .json(&serde_json::json!({"username": "guest", "password": "secret1"}))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 403);
-    assert_eq!(http.post(api("scan")).header("X-Maestro", "1").send().await.unwrap().status(), 200);
-    http.post(api("logout")).header("X-Maestro", "1").send().await.unwrap();
+    assert_eq!(http.post(api("scan")).header("X-Conductor", "1").send().await.unwrap().status(), 200);
+    http.post(api("logout")).header("X-Conductor", "1").send().await.unwrap();
     assert_eq!(http.get(api("status")).send().await.unwrap().status(), 401);
 }
 
@@ -1306,7 +1306,7 @@ async fn listenbrainz_discovery_and_plays() {
         c.discovery = vec!["weekly-exploration".into()];
     })
     .await;
-    tokio::spawn(maestro::listenbrainz::worker(s.st.clone()));
+    tokio::spawn(conductor::listenbrainz::worker(s.st.clone()));
 
     // week 1: the song you have goes straight in; the other is downloaded into Discovery/ and joins
     let file = s.music.join("Discovery/Talking Heads/Talking Heads - Psycho Killer.flac");
@@ -1413,9 +1413,9 @@ async fn spotify_sync() {
     std::fs::write(dir.path().join("songs.json"), r#"{"sp-two": {"rel": "Alpha/First Album/02 Two.flac", "status": "done"}}"#)
         .unwrap();
     let lib = s.st.libs[0].0;
-    assert_eq!(maestro::spotify::import_from(&s.st.db, dir.path(), Some(lib)).await.unwrap(), (true, 1));
+    assert_eq!(conductor::spotify::import_from(&s.st.db, dir.path(), Some(lib)).await.unwrap(), (true, 1));
 
-    let (lists, have, asked) = maestro::spotify::sync_once(&s.st).await.unwrap();
+    let (lists, have, asked) = conductor::spotify::sync_once(&s.st).await.unwrap();
     assert_eq!((lists, have, asked), (2, 2, 1)); // One by title, Two by its file; Psycho Killer asked for (by ISRC)
     let tok: String =
         sqlx::query_scalar("SELECT value FROM setting WHERE key = 'spotify_token'").fetch_one(&s.st.db).await.unwrap();
@@ -1446,7 +1446,7 @@ async fn spotify_sync() {
     let starred = s.ok("getStarred2", &[]).await;
     assert!(starred["starred2"]["song"].as_array().unwrap().iter().any(|x| x["title"] == "One"));
     // a second sync: now everything is here, nothing asked for, Spotify's order
-    let (_, have, asked) = maestro::spotify::sync_once(&s.st).await.unwrap();
+    let (_, have, asked) = conductor::spotify::sync_once(&s.st).await.unwrap();
     assert_eq!((have, asked), (3, 0));
     let order: Vec<String> = s.ok("getPlaylist", &[("id", &liked)]).await["playlist"]["entry"]
         .as_array()
@@ -1476,7 +1476,7 @@ async fn listening_review_and_shared_playlists() {
 
     // the year in review: One played 12 times over the last three days (first heard this year: a discovery),
     // Three heard last year and once now (not a discovery)
-    let now = maestro::db::now();
+    let now = conductor::db::now();
     let year_start = {
         use chrono::{Datelike, TimeZone};
         let y = chrono::Local::now().year();
@@ -1523,7 +1523,7 @@ async fn listening_review_and_shared_playlists() {
 
     let jl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let jbase = format!("{}/jam/pl/{tok}", format_args!("http://{}", jl.local_addr().unwrap()));
-    let app = maestro::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let app = conductor::jam::router(s.st.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move { axum::serve(jl, app).await.unwrap() });
     let page = s.http.get(&jbase).send().await.unwrap();
     assert_eq!(page.status(), 200);
@@ -1801,7 +1801,7 @@ async fn weekly_mixes() {
     let mut mixes = Value::Null;
     wait_for(
         async || {
-            maestro::mixes::tick(&s.st).await;
+            conductor::mixes::tick(&s.st).await;
             mixes = s.ok("getMixes", &[]).await["mixes"].clone();
             mixes["mix"].as_array().unwrap().iter().any(|m| m["kind"] == "discover")
         },
@@ -1822,8 +1822,8 @@ async fn weekly_mixes() {
         sqlx::query_scalar("SELECT mix FROM request WHERE key = 'dz-t-901'").fetch_optional(&s.st.db).await.unwrap().flatten();
     assert!(radar.is_some(), "the new single was asked for");
     // a mix's song isn't in "On trial", and being in the mix doesn't keep it
-    maestro::catalog::trial::tick(&s.st).await.unwrap();
-    let on_trial = maestro::catalog::trial::playlist_id(&s.st, &s.st_user().await, false).await.unwrap();
+    conductor::catalog::trial::tick(&s.st).await.unwrap();
+    let on_trial = conductor::catalog::trial::playlist_id(&s.st, &s.st_user().await, false).await.unwrap();
     if let Some(p) = on_trial {
         let pl = s.ok("getPlaylist", &[("id", &p)]).await;
         assert!(pl["playlist"]["entry"].as_array().is_none_or(|e| e.iter().all(|x| x["id"] != pk.as_str())));
@@ -1832,11 +1832,11 @@ async fn weekly_mixes() {
     assert!(still.starts_with("Trial/"));
     // heart it: kept (moved to Songs/)
     s.ok("star", &[("id", &pk)]).await;
-    maestro::catalog::trial::tick(&s.st).await.unwrap();
+    conductor::catalog::trial::tick(&s.st).await.unwrap();
     let kept: String = sqlx::query_scalar("SELECT rel FROM request WHERE key = 'dz-t-900'").fetch_one(&s.st.db).await.unwrap();
     assert!(kept.starts_with("Songs/"), "{kept}");
     // a song that hasn't arrived is let go when the next mix comes
-    maestro::catalog::let_go_of_mix_song(&s.st, "dz-t-901", radar.as_deref().unwrap()).await.unwrap();
+    conductor::catalog::let_go_of_mix_song(&s.st, "dz-t-901", radar.as_deref().unwrap()).await.unwrap();
     let gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE key = 'dz-t-901'").fetch_one(&s.st.db).await.unwrap();
     assert_eq!(gone, 0);
     // off: its playlist goes
@@ -1949,7 +1949,7 @@ async fn genres_split_like_navidrome() {
     tone_genre(&s.music.join("Gamma/Mixed/01 Four.flac"), "Four", "Gamma", "Mixed", 1, 2, "Pop, Rock");
     // a song scanned before genres were split
     sqlx::query("UPDATE track SET genre = 'Folk/Rock' WHERE title = 'Two'").execute(&s.st.db).await.unwrap();
-    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
     let r = s.ok("getGenres", &[]).await;
     let g: Vec<(String, i64)> = r["genres"]["genre"]
         .as_array()
@@ -1993,7 +1993,7 @@ async fn albums_grouped_like_navidrome() {
     tone_tags(&m.join("Echo/c.flac"), 5, &[t("E3"), ("artist", "Echo"), ("album_artist", "Echo"), ("album", "Rock's Way ")]);
     // no album artist: the (first) artist, trimmed
     tone_tags(&m.join("Echo/d.flac"), 6, &[t("E4"), ("artist", "Echo "), ("album", "Rock's Way")]);
-    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
     let album_of = async |title: &str| {
         let r = s.ok("search3", &[("query", title), ("songCount", "5")]).await;
         let song = r["searchResult3"]["song"].as_array().unwrap().iter().find(|x| x["title"] == title).unwrap().clone();
@@ -2048,7 +2048,7 @@ async fn music_lookup_requests_come_over() {
         "meta": { "trial_playlist": on_trial } });
     std::fs::write(state.path().join("requests.json"), req.to_string()).unwrap();
     let data = tempfile::tempdir().unwrap();
-    let rep = maestro::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
+    let rep = conductor::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
     assert_eq!((rep.requests, rep.requests_waiting, rep.requests_on_trial), (4, 1, 2), "{rep:?}");
     type R = (String, String, Option<String>, bool, Option<i64>, Option<String>, Option<bool>, String);
     let rows: Vec<R> = sqlx::query_as(
@@ -2067,13 +2067,13 @@ async fn music_lookup_requests_come_over() {
     assert_eq!(rows[3].1, "notfound");
     // the same "On trial" playlist goes on; the wish to add Four to Mine waits for it
     let uid: String = sqlx::query_scalar("SELECT id FROM user WHERE name = ?").bind(USER).fetch_one(&s.st.db).await.unwrap();
-    let pid = maestro::catalog::trial::playlist_id(&s.st, &uid, false).await.unwrap();
+    let pid = conductor::catalog::trial::playlist_id(&s.st, &uid, false).await.unwrap();
     assert_eq!(pid.as_deref(), Some(on_trial.as_str()));
     let wants: Vec<(String, String, bool, bool)> =
         sqlx::query_as("SELECT key, playlist_id, star, done FROM request_want ORDER BY key").fetch_all(&s.st.db).await.unwrap();
     assert_eq!(wants, [("dz-t-1".into(), "".into(), true, true), ("dz-t-3".into(), mine.clone(), false, false)]);
     // a second run leaves what's there alone
-    let again = maestro::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
+    let again = conductor::import_nd::music_lookup(&s.st.db, data.path(), Some(state.path())).await.unwrap();
     assert_eq!((again.requests, again.requests_already_there), (0, 4));
 }
 
@@ -2136,9 +2136,9 @@ async fn pick_a_file_by_hand() {
     let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
     let api = |p: &str| format!("{}/admin/api/{p}", s.base);
     let login = json!({ "username": USER, "password": PASS });
-    assert_eq!(http.post(api("login")).header("X-Maestro", "1").json(&login).send().await.unwrap().status(), 200);
+    assert_eq!(http.post(api("login")).header("X-Conductor", "1").json(&login).send().await.unwrap().status(), 200);
     let get = async |p: &str| -> Value { http.get(api(p)).send().await.unwrap().json().await.unwrap() };
-    let post = async |p: &str, b: Value| http.post(api(p)).header("X-Maestro", "1").json(&b).send().await.unwrap();
+    let post = async |p: &str, b: Value| http.post(api(p)).header("X-Conductor", "1").json(&b).send().await.unwrap();
     let l = get("pick").await;
     let song = l["songs"].as_array().unwrap().iter().find(|x| x["key"] == "dz-t-9").unwrap().clone();
     assert_eq!((song["group"].as_str(), song["query"].as_str()), (Some("pick"), Some("Alpha Four")));
@@ -2160,7 +2160,7 @@ async fn pick_a_file_by_hand() {
     let picked = post("pick/dz-t-9", json!({ "user": f["user"], "filename": f["filename"], "size": f["size"] })).await;
     assert_eq!(picked.status(), 200);
     assert!(sent.load(SeqCst));
-    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
     wait_for(
         async || sqlx::query_scalar::<_, Option<String>>("SELECT local_id FROM request WHERE key = 'dz-t-9'").fetch_one(&s.st.db).await.unwrap().is_some(),
         "the picked file to be filed and scanned",
@@ -2232,10 +2232,10 @@ async fn better_copy_swapped_in_same_id() {
         c.slskd_fast_test = true;
     })
     .await;
-    // two songs Maestro downloaded earlier as MP3 from the right album
+    // two songs Conductor downloaded earlier as MP3 from the right album
     tone(&s.music.join("Songs/Alpha/Alpha - Four.mp3"), "Four", "Alpha", "First Album", 4, 2);
     tone(&s.music.join("Songs/Alpha/Alpha - Five.mp3"), "Five", "Alpha", "First Album", 5, 2);
-    maestro::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
     let id_of = async |t: &str| s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
     let (four, five) = (id_of("Four").await, id_of("Five").await);
     s.ok("star", &[("id", &four)]).await;
@@ -2253,7 +2253,7 @@ async fn better_copy_swapped_in_same_id() {
         .await
         .unwrap();
     }
-    tokio::spawn(maestro::catalog::acquire::worker(s.st.clone()));
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
     wait_for(
         async || {
             let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE upgrade_tried = 1 AND status = 'done'")
@@ -2355,7 +2355,7 @@ async fn dj_lines() {
     let a = s.http.get(s.url("djAudio", &[("id", &id)])).send().await.unwrap();
     assert_eq!(a.headers()["content-type"], "audio/wav");
     assert_eq!(a.bytes().await.unwrap().to_vec(), wav);
-    assert_eq!(s.call("djAudio", &[("id", "../../maestro.db")]).await["error"]["code"], 70);
+    assert_eq!(s.call("djAudio", &[("id", "../../conductor.db")]).await["error"]["code"], 70);
     assert_eq!(s.ok("getDjLine", &[("next", "nope")]).await["djLine"]["error"], "unknown song");
 }
 
@@ -2486,14 +2486,14 @@ async fn import_into_any_subsonic_server() {
       <dict><key>Track ID</key><integer>2</integer></dict><dict><key>Track ID</key><integer>1</integer></dict></array></dict></array></dict></plist>"#;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Library.xml"), lib).unwrap();
-    let parsed = maestro::import::parse_path(&dir.path().join("Library.xml")).unwrap();
+    let parsed = conductor::import::parse_path(&dir.path().join("Library.xml")).unwrap();
     // this test's server stands in for any Subsonic server (Navidrome before a switch)
-    let server = maestro::import::subsonic::Server::new(&s.base, USER, PASS);
+    let server = conductor::import::subsonic::Server::new(&s.base, USER, PASS);
     let library = server.library().await.unwrap();
     assert_eq!(library.len(), 3);
-    let plan = maestro::import::apply::plan(&parsed, &library, &Default::default(), &Default::default());
+    let plan = conductor::import::apply::plan(&parsed, &library, &Default::default(), &Default::default());
     let state_path = dir.path().join("sent.json");
-    let mut state = maestro::import::subsonic::State::default();
+    let mut state = conductor::import::subsonic::State::default();
     let dry = server.apply(&plan, "Imported from iTunes", &mut state, &state_path, true).await.unwrap();
     assert_eq!((dry.hearts, dry.plays, dry.playlists_new), (1, 1, 1));
     assert!(s.ok("getStarred2", &[]).await["starred2"]["song"].as_array().is_none_or(|a| a.is_empty()), "a dry run sends nothing");
@@ -2506,7 +2506,7 @@ async fn import_into_any_subsonic_server() {
     let lists = s.ok("getPlaylists", &[]).await.to_string();
     assert!(lists.contains("Old iPod") && lists.contains("Imported from iTunes"));
     // again: nothing new is sent; undo takes the hearts and the playlist back
-    let mut state = maestro::import::subsonic::State::load(&state_path);
+    let mut state = conductor::import::subsonic::State::load(&state_path);
     let again = server.apply(&plan, "Imported from iTunes", &mut state, &state_path, false).await.unwrap();
     assert_eq!((again.hearts, again.plays, again.playlists_new, again.playlists_updated), (0, 0, 0, 1));
     server.undo(&mut state, &state_path).await.unwrap();
@@ -2554,7 +2554,7 @@ async fn import_from_lastfm_and_deezer() {
     let dz = s.ok("importOnline", &[("source", "deezer"), ("account", "https://www.deezer.com/profile/42")]).await["import"]["id"].as_str().unwrap().to_string();
     let r = wait_import(&s, &dz, "preview").await["report"].clone();
     assert_eq!((r["found"]["liked"].as_i64(), r["found"]["playlists"].as_i64(), r["matched"]["playlistSongs"].as_i64(), r["found"]["podcasts"].as_i64()), (Some(1), Some(1), Some(1), Some(1)), "{r}");
-    assert_eq!(maestro::import::online::podcast_feed(&format!("{base}/itunes"), "Song Exploder", "").await.as_deref(), Some("http://feeds.example/se"));
+    assert_eq!(conductor::import::online::podcast_feed(&format!("{base}/itunes"), "Song Exploder", "").await.as_deref(), Some("http://feeds.example/se"));
     // without a key, Last.fm says why
     let off = Server::start().await;
     let id = off.ok("importOnline", &[("source", "lastfm"), ("account", "bob")]).await["import"]["id"].as_str().unwrap().to_string();
@@ -2627,7 +2627,7 @@ async fn music_lookup_mixes_shares_and_concerts_come_over() {
         serde_json::json!({ "show": [{ "artist": "Alpha", "date": "2099-01-01", "venue": "Club" }], "first": { "alpha|2099-01-01|club": 5 },
         "at": 1700000000, "city": "Berlin", "source": "MusicBrainz", "prefs": "{}" }),
     );
-    let rep = maestro::import_nd::music_lookup(&s.st.db, data.path(), None).await.unwrap();
+    let rep = conductor::import_nd::music_lookup(&s.st.db, data.path(), None).await.unwrap();
     assert_eq!((rep.mix_playlists, rep.playlist_shares, rep.concerts), (1, 1, 1));
     let r = s.ok("getMixes", &[]).await;
     let mixes = r["mixes"]["mix"].as_array().unwrap();

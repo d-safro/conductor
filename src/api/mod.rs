@@ -37,7 +37,7 @@ use crate::{
 };
 
 pub const API_VERSION: &str = "1.16.1";
-pub const SERVER_TYPE: &str = "maestro";
+pub const SERVER_TYPE: &str = "conductor";
 
 pub struct AppState {
     pub db: Db,
@@ -98,7 +98,7 @@ pub fn router(state: Shared) -> Router {
         .route("/health", get(health))
         .merge(native::routes())
         .merge(crate::admin::routes())
-        .route("/", get(|| async { "Maestro. Point a Subsonic app at this address." }))
+        .route("/", get(|| async { "Conductor. Point a Subsonic app at this address." }))
         .with_state(state)
 }
 

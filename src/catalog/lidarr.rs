@@ -2,7 +2,7 @@
 //! slskd for "<artist> <album>", pick one user's folder that holds the whole album (as many audio files as the album
 //! has tracks, FLAC or MP3 320, most track names in the file names, the artist in the path), download the folder,
 //! rename it "<Artist> - <Album>" in the downloads folder and ask Lidarr to import it (DownloadedAlbumsScan). Lidarr
-//! files it into its own music folder; Maestro's scan picks it up. A user whose copy fails isn't tried again.
+//! files it into its own music folder; Conductor's scan picks it up. A user whose copy fails isn't tried again.
 
 use std::{collections::HashMap, time::Duration};
 

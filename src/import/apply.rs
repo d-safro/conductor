@@ -1,5 +1,5 @@
 //! From what was found to what changes: the plan (matched songs, what's missing, a report), what it would change in
-//! Maestro (the preview), applying it as a batch, and undoing a batch.
+//! Conductor (the preview), applying it as a batch, and undoing a batch.
 //!
 //! Liked → hearts (with the date liked when known); saved albums → starred albums; followed artists → Encore's
 //! follows (they feed Release Radar and concerts); playlists → playlists in the same order (marked "Imported from
@@ -323,9 +323,9 @@ pub fn plan(p: &Parsed, lib: &Library, opts: &Options, isrcs: &HashMap<String, S
     out
 }
 
-// ───────────── Maestro: the library, the preview, the import, undo ─────────────
+// ───────────── Conductor: the library, the preview, the import, undo ─────────────
 
-pub async fn maestro_library(db: &Db) -> Result<Library> {
+pub async fn conductor_library(db: &Db) -> Result<Library> {
     type Row = (String, String, String, String, String, String, String, i64, Option<String>, Option<String>, String);
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT t.id, t.title, t.artist_name, al.artist_name, t.album_name, t.album_id, t.artist_id, t.duration_ms / 1000,
@@ -405,7 +405,7 @@ async fn followed(db: &Db, user: &str) -> Result<Vec<Value>> {
 
 async fn set_followed(db: &Db, user: &str, list: &[Value]) -> Result<()> {
     sqlx::query(
-        "INSERT INTO sync_kv (user_id, key, value_json, at, by_device) VALUES (?, 'followedArtists', ?, ?, 'maestro-import')
+        "INSERT INTO sync_kv (user_id, key, value_json, at, by_device) VALUES (?, 'followedArtists', ?, ?, 'conductor-import')
          ON CONFLICT(user_id, key) DO UPDATE SET value_json = excluded.value_json, at = excluded.at, by_device = excluded.by_device",
     )
     .bind(user)

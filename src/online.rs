@@ -12,7 +12,7 @@ use crate::{api::AppState, db::now, library};
 
 fn http() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent(concat!("Maestro/", env!("CARGO_PKG_VERSION"), " (self-hosted music server)"))
+        .user_agent(concat!("Conductor/", env!("CARGO_PKG_VERSION"), " (self-hosted music server)"))
         .timeout(Duration::from_secs(15))
         .build()
         .expect("http client")

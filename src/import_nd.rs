@@ -1,4 +1,4 @@
-//! Moving over from Navidrome: `maestro import-navidrome <navidrome.db> [--artwork <navidrome data>/artwork]`.
+//! Moving over from Navidrome: `conductor import-navidrome <navidrome.db> [--artwork <navidrome data>/artwork]`.
 //!
 //! Reads a Navidrome database (opened read-only; use a copy) and brings over, keeping Navidrome's ids so apps
 //! that remember ids keep working: users (names and admin flag; passwords have to be set again), plays, ratings,
@@ -153,9 +153,9 @@ pub async fn music_lookup(ours: &Db, data: &Path, state: Option<&Path>) -> Resul
 }
 
 /// music-lookup's requests.json: the songs asked for that it was getting or had got (Deezer "dz-t-…" keys, as
-/// Maestro's), so downloads in progress go on, songs on trial keep their clock and "On trial" playlist, and a ⬇
+/// Conductor's), so downloads in progress go on, songs on trial keep their clock and "On trial" playlist, and a ⬇
 /// song asked for again isn't fetched twice. music-lookup kept them for one user: the owner of its "On trial"
-/// playlist, else the first admin. Requests Maestro already has are left as they are.
+/// playlist, else the first admin. Requests Conductor already has are left as they are.
 async fn requests(ours: &Db, d: &serde_json::Value, rep: &mut LookupReport) -> Result<()> {
     let owner_of = async |pid: &str| -> Result<Option<String>> {
         Ok(sqlx::query_scalar("SELECT owner_id FROM playlist WHERE id = ?").bind(pid).fetch_optional(ours).await?)

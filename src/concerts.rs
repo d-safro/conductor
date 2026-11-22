@@ -23,7 +23,7 @@ use crate::{
 };
 
 const TOP: usize = 150;
-const UA: &str = "Maestro/0.1 (self-hosted music server; https://github.com/d-safro/maestro)";
+const UA: &str = "Conductor/0.1 (self-hosted music server; https://github.com/d-safro/conductor)";
 static RUNNING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 
 // ───────────── pure helpers ─────────────

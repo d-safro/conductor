@@ -1,9 +1,34 @@
-# Maestro
+# Conductor
 
 A music server for [Encore](https://github.com/d-safro/encore) and for any app that speaks the
 **Subsonic / OpenSubsonic** API. It's written in Rust and runs as a single program on Linux and Windows.
 
 > Early development. Licence: AGPL-3.0-or-later (see `LICENSE`).
+
+Conductor was called Maestro until November 2026: settings named `MAESTRO_*` still work (the log says which to
+rename), and an older install's data folder and database are moved to the new names when it starts.
+
+## The parts, by name
+
+| Name | What it is |
+|---|---|
+| Prelude | the setup wizard (`conductor setup`; coming next) |
+| Podium | the admin page (`/admin`) |
+| Recital | the web player (in progress) |
+| Transpose | bringing your music in from other services |
+| Stagehand | downloads, hand-picked files and better copies |
+| Audition | songs on trial |
+| Pitch | song ID ("What's playing?") |
+| Metronome | Automix analysis (where songs start, end and fade) |
+| Interlude | the DJ between songs |
+| Libretto | lyrics translation |
+| Ensemble | Jam (friends add to your queue) |
+| Chorus | collaborative playlists |
+| Repertoire | your mixes (Discover Weekly, Release Radar, Daily Mixes, Daylist) |
+| Marquee | concerts near you |
+| Curtain Call | year (and month) in review |
+
+API method names, settings and `encore.*` extension names stay as they were, for the apps that use them.
 
 ## What works now
 
@@ -43,31 +68,31 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   listening stats (`getListeningStats`: week / month / year / all, local time), the year / month in review
   (`getListeningReview`: top fives, genres, first song, longest streak, peak hour, discoveries) and real folders
   (`getFolder`).
-- **Collaborative playlists**: `playlistShareStart/End`, `playlistShares`; friends open the link (on the Jam
+- **Chorus** (collaborative playlists): `playlistShareStart/End`, `playlistShares`; friends open the link (on the Jam
   listener, `/jam/pl/<token>`), search your library and add songs to the real playlist; they can take out only
   their own. Links last 30 days.
-- **Your mixes** (`getMixes`, `setMix`, `refreshMix`; per user, as real playlists): Discover Weekly (Mondays: 30
+- **Repertoire**, your mixes (`getMixes`, `setMix`, `refreshMix`; per user, as real playlists): Discover Weekly (Mondays: 30
   songs you don't have, fetched on trial for a week), Release Radar (Fridays: new releases from followed and top
   artists), Daily Mix 1–6 (your library around your top artists, ~30% new to you), Daylist (what you play at this
   time of day). Discover and Radar need the catalog (Deezer + slskd).
-- **Concerts near you** (`getConcerts`, `refreshConcerts`): weekly, upcoming shows of the artists you play and follow
+- **Marquee**, concerts near you (`getConcerts`, `refreshConcerts`): weekly, upcoming shows of the artists you play and follow
   near the town set in Encore; Ticketmaster with the key set there, else MusicBrainz events (`concerts`).
-- **Lyrics translation** (`translateLyrics`, optional): translated or romanized line by line by a local **Ollama**
+- **Libretto**, lyrics translation (`translateLyrics`, optional): translated or romanized line by line by a local **Ollama**
   (`ollama_url`, `translate_model`); kept once done.
-- **DJ** (`getDjLine` / `djAudio`, optional): before a song, a line or two about it written by the same Ollama
+- **Interlude**, the DJ (`getDjLine` / `djAudio`, optional): before a song, a line or two about it written by the same Ollama
   (`dj_model`, else `translate_model`) and read aloud by Piper (the dj-voice service, `dj_voice_url`), in 13
   languages. Only facts the library has (title, artist, album, year, genre, your plays and hearts); lines are kept.
-- **Song ID** (`identifySong`, optional): a short recording is matched against your own library by the song-id
+- **Pitch**, song ID (`identifySong`, optional): a short recording is matched against your own library by the song-id
   service (`songid_url`). **Automix** (`getMixInfo`, optional): intro / outro / tempo from the mix analyzer's
   `info.jsonl` (`mixinfo_dir`); songs not measured yet are put first in its `wanted.txt`.
-- **Jam**: `jamStart/State/Poll/End` for the app; the guest page on its own listener (`jam_listen`, default
+- **Ensemble** (Jam): `jamStart/State/Poll/End` for the app; the guest page on its own listener (`jam_listen`, default
   127.0.0.1:4535: nothing else is served there), with rate limits and covers only from the queue or guests' searches.
   Set `jam_public_url` to the address guests open (e.g. through Tailscale Funnel).
 - **Podcasts**: the whole Subsonic podcast API; feeds checked every 2 hours; episodes stream through from the
   podcast's server (with seeking) unless saved on the server (`downloadPodcastEpisode`, or `podcast_keep` newest
   per show); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
   bookmarks per user. Episode and show ids are the same as music-lookup's.
-- **Songs you don't have** (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
+- **Stagehand**, songs you don't have (from Deezer, marked ⬇ / ⏳ / ✕, `lookupState` for Encore): search also lists songs,
   albums and artists you don't have; an album shows its whole tracklist; an artist also lists the albums you don't
   have; `dz-…` ids work everywhere (a 30-second preview plays until the song is here). Heart a ⬇ song or album, or
   add a ⬇ song to a playlist: it's searched on Soulseek through **slskd** (one search every 12 s; the same album
@@ -75,11 +100,11 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   `Songs/<Artist>/<Artist> - <Title>.<ext>`, scanned, then hearted / added. Also `lookupSongs`, `getDiscoveries`,
   `getSongDiscoveries`. Set `slskd_url`, `slskd_api_key` and `slskd_downloads`; filing needs **write access** to the
   music folder. Apps listed in `catalog_skip_clients` (default: Symfonium) never get ⬇ items.
-- **Better copies** (`upgrades`, on): when there's nothing else to download, a song it filed from another album than
+- **Stagehand**: better copies (`upgrades`, on): when there's nothing else to download, a song it filed from another album than
   the one asked for is looked for once on that album, and a lossy one as FLAC. The new file is checked (it reads, the
   right length) before it replaces the old one; the song keeps its id, hearts, plays and playlists. Only songs in
   `Songs/`, never Lidarr's album folders.
-- **Songs on trial**: play or queue a ⬇ song (any app's "now playing", or Encore's `lookupSongs?fetch=true`) and it's
+- **Audition** (songs on trial): play or queue a ⬇ song (any app's "now playing", or Encore's `lookupSongs?fetch=true`) and it's
   downloaded into `Trial/` and listed in your "On trial" playlist; `stream?hold=true` plays silence until it's here.
   Heart it, add it to another playlist or rate it 4+ to keep it (it moves to `Songs/`, same id); take it out of
   "On trial" to delete it now; the rest go `trial_hours` (24) after they arrive; at most `trial_per_day` (40) a day.
@@ -99,7 +124,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   become playlists here ("Synced from Spotify"), in Spotify's order, Liked Songs hearted; songs you don't have are
   matched on Deezer (ISRC first) and asked for. The login and choices come from spotify.py's folder via
   `import-music-lookup`.
-- **Imports from other services** (`maestro import`, the admin page's Import tab, `encore.import`): your liked songs
+- **Transpose**, imports from other services (`conductor import`, Podium's Transpose tab, `encore.import`): your liked songs
   (→ hearts), saved albums (→ starred), followed artists (→ follows), playlists (in order), listening history (→ plays
   with their times; under 30 s → skips), ratings, play counts and podcasts, from:
   Spotify (account data, extended streaming history, Exportify CSVs, or the signed-in account), Apple Music / iTunes
@@ -112,7 +137,7 @@ A music server for [Encore](https://github.com/d-safro/encore) and for any app t
   once imported. `--to URL --as USER` sends an import to any Subsonic server instead (stars, playlists, past plays
   as scrobbles with their time: checked with Navidrome 0.64); note that such a server passes the plays on to
   ListenBrainz / Last.fm if you linked them there.
-- **Admin page** at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
+- **Podium**, the admin page at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
   users (add, set password, new API key).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
@@ -125,24 +150,24 @@ Needs **ffmpeg** on the PATH for transcoding (playing files as they are works wi
 ```bash
 cargo build --release
 cp config.example.toml config.toml        # set your music folder
-MAESTRO_PASSWORD='…' ./target/release/maestro --config config.toml user add me --admin
-./target/release/maestro --config config.toml          # serves on 127.0.0.1:4533
+CONDUCTOR_PASSWORD='…' ./target/release/conductor --config config.toml user add me --admin
+./target/release/conductor --config config.toml          # serves on 127.0.0.1:4533
 ```
 
-Or with the environment only: `MAESTRO_MUSIC=/path/to/music MAESTRO_ADMIN_USER=me MAESTRO_ADMIN_PASSWORD=… maestro`.
+Or with the environment only: `CONDUCTOR_MUSIC=/path/to/music CONDUCTOR_ADMIN_USER=me CONDUCTOR_ADMIN_PASSWORD=… conductor`.
 
 Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key).
 
 **Moving over from Navidrome:** stop Navidrome, copy its data folder, then
-`maestro import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
+`conductor import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
 their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
 password again with `user passwd NAME`. Running it again replaces what it brought over the last time.
-Then `maestro import-music-lookup <music-lookup DATA folder> [<its state folder with podcasts.json>]` adds
+Then `conductor import-music-lookup <music-lookup DATA folder> [<its state folder with podcasts.json>]` adds
 music-lookup's listening log, Encore's sync values and the podcasts (plays already brought over from Navidrome
 aren't counted twice).
 
-Docker, Windows (`maestro.exe`, cross-built in a container): see `deploy/README.md`.
+Docker, Windows (`conductor.exe`, cross-built in a container): see `deploy/README.md`.
 
 ## Develop
 
@@ -153,4 +178,4 @@ cargo clippy --all-targets
 
 CI (`.github/workflows/ci.yml`) runs both on Linux and Windows.
 
-> Scratch runs against a real music folder: set `MAESTRO_READ_ONLY=1`, or downloads, trial songs and covers write into it.
+> Scratch runs against a real music folder: set `CONDUCTOR_READ_ONLY=1`, or downloads, trial songs and covers write into it.

@@ -6,7 +6,7 @@
 //! Upgrades: when there's nothing else to do, a song it filed from another album than the one it was asked from
 //! is looked for once more on that album, and a lossy one from the right album as FLAC. A better copy replaces the
 //! old file safely (checked first, swapped in while scans wait, old file removed last) and the song keeps its id,
-//! hearts, plays and playlists. Only songs in `Songs/` (filed by Maestro), never Lidarr's album folders.
+//! hearts, plays and playlists. Only songs in `Songs/` (filed by Conductor), never Lidarr's album folders.
 
 use std::{
     collections::HashSet,
@@ -625,7 +625,7 @@ async fn tick(st: &AppState, sl: &Slskd) -> Result<()> {
 
 // ───────────── upgrades ─────────────
 
-/// A song filed by Maestro that may get a better copy, or is getting one.
+/// A song filed by Conductor that may get a better copy, or is getting one.
 #[derive(sqlx::FromRow)]
 struct Upgrade {
     #[sqlx(flatten)]
@@ -744,7 +744,7 @@ async fn upgrade_transfer(st: &AppState, sl: &Slskd, u: &Upgrade, f: &Value) -> 
 async fn swap_in(st: &AppState, u: &Upgrade, src: &Path) -> Result<String> {
     let (lib, root) = import_root(st).ok_or_else(|| anyhow!("no music folder"))?;
     if !u.rel.starts_with("Songs/") || u.rel.contains("..") {
-        bail!("only songs Maestro filed in Songs/ are swapped");
+        bail!("only songs Conductor filed in Songs/ are swapped");
     }
     let old = root.join(&u.rel);
     if !old.is_file() {
@@ -757,7 +757,7 @@ async fn swap_in(st: &AppState, u: &Upgrade, src: &Path) -> Result<String> {
     };
     let new = root.join(&new_rel);
     let dir = old.parent().ok_or_else(|| anyhow!("no folder"))?.to_path_buf();
-    let tmp = dir.join(format!(".maestro-upgrade-{}.{ext}", u.req.key));
+    let tmp = dir.join(format!(".conductor-upgrade-{}.{ext}", u.req.key));
     if tokio::fs::rename(src, &tmp).await.is_err() {
         tokio::fs::copy(src, &tmp).await.with_context(|| format!("copying to {}", tmp.display()))?;
         let _ = tokio::fs::remove_file(src).await;

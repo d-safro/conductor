@@ -30,7 +30,7 @@ fn title_of(kind: &str) -> &'static str {
     }
 }
 
-/// The Maestro user whose plays are sent and who owns the discovery playlists.
+/// The Conductor user whose plays are sent and who owns the discovery playlists.
 pub async fn owner(st: &AppState) -> Option<String> {
     match &st.cfg.listenbrainz_for {
         Some(name) => {
@@ -72,7 +72,7 @@ pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, pla
         .flatten();
     let Some((title, artist, album, ms, mbid)) = row else { return };
     let mut info =
-        json!({ "duration_ms": ms, "submission_client": "Maestro", "submission_client_version": env!("CARGO_PKG_VERSION") });
+        json!({ "duration_ms": ms, "submission_client": "Conductor", "submission_client_version": env!("CARGO_PKG_VERSION") });
     if let Some(m) = mbid {
         info["recording_mbid"] = m.into();
     }
