@@ -4404,3 +4404,198 @@ async fn uploads_sent_at_once_still_wait_their_turn() {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batch").fetch_one(&s.st.db).await.unwrap();
     assert_eq!(n, conductor::import::jobs::MAX_WAITING);
 }
+
+#[tokio::test]
+async fn every_user_scrobbles_to_their_own_accounts() {
+    use axum::{extract::Request, response::IntoResponse};
+    use serde_json::json;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    };
+    if !have_ffmpeg() {
+        return;
+    }
+    #[derive(Default)]
+    struct Fake {
+        listens: Mutex<Vec<(String, Value)>>,      // (authorization, body)
+        lastfm: Mutex<Vec<HashMap<String, String>>>, // track calls' parameters
+        approved: AtomicBool,
+        down: AtomicBool,
+        revoked: AtomicBool,
+    }
+    use std::collections::HashMap;
+    let fake = Arc::new(Fake::default());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let f2 = fake.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let fake = f2.clone();
+        async move {
+            let path = req.uri().path().to_string();
+            let auth = req.headers().get("authorization").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+            let body = axum::body::to_bytes(req.into_body(), 1 << 16).await.unwrap();
+            let body = match path.as_str() {
+                "/1/validate-token" => match auth.as_str() {
+                    "Token samtok" => json!({ "valid": true, "user_name": "sam_lb" }),
+                    _ => json!({ "valid": false }),
+                },
+                "/1/submit-listens" => {
+                    fake.listens.lock().unwrap().push((auth, serde_json::from_slice(&body).unwrap()));
+                    json!({ "status": "ok" })
+                }
+                "/lfm/" => {
+                    let p: HashMap<String, String> = form_urlencoded::parse(&body).into_owned().collect();
+                    // signed as Last.fm wants, with this server's shared secret
+                    let mut v: Vec<(String, String)> =
+                        p.iter().filter(|(k, _)| *k != "format" && *k != "api_sig").map(|(k, v)| (k.clone(), v.clone())).collect();
+                    v.sort();
+                    let sig = format!("{:x}", md5::compute(format!("{}lfmsecret", v.iter().map(|(k, v)| format!("{k}{v}")).collect::<String>())));
+                    assert_eq!(p["api_sig"], sig, "signature");
+                    assert_eq!(p["api_key"], "lfmkey");
+                    assert_eq!(p["format"], "json");
+                    match p["method"].as_str() {
+                        "auth.getToken" => json!({ "token": "lfmtok" }),
+                        "auth.getSession" if !fake.approved.load(SeqCst) => json!({ "error": 14, "message": "Unauthorized Token" }),
+                        "auth.getSession" => json!({ "session": { "name": "samfm", "key": "sk-sam", "subscriber": 0 } }),
+                        _ if fake.down.load(SeqCst) => json!({ "error": 16, "message": "Temporarily unavailable" }),
+                        _ if fake.revoked.load(SeqCst) => json!({ "error": 9, "message": "Invalid session key" }),
+                        _ => {
+                            assert_eq!(p["sk"], "sk-sam");
+                            fake.lastfm.lock().unwrap().push(p);
+                            json!({ "scrobbles": {} })
+                        }
+                    }
+                }
+                _ => return (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let (lb, lfm) = (base.clone(), format!("{base}/lfm"));
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.listenbrainz_url = lb;
+        c.listenbrainz_token = Some("lbtok".into());
+        c.listenbrainz_user = Some("owner_lb".into());
+        c.lastfm_url = lfm;
+        c.lastfm_api_key = Some("lfmkey".into());
+        c.lastfm_secret = Some("lfmsecret".into());
+    })
+    .await;
+    s.ok("createUser", &[("username", "sam"), ("password", "sam pass")]).await;
+    let get = async |u: String| -> Value { s.http.get(u).send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() };
+    let sam = |m: &str, q: &str| format!("{}/rest/{m}.view?u=sam&p=sam%20pass&v=1.16.1&c=test&f=json{q}", s.base);
+    let mut ids = Vec::new();
+    for t in ["One", "Two", "Three"] {
+        ids.push(s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string());
+    }
+    let (one, two, three) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
+
+    // it's offered to apps
+    let ext = s.ok("getOpenSubsonicExtensions", &[]).await;
+    assert!(ext["openSubsonicExtensions"].as_array().unwrap().iter().any(|e| e["name"] == "encore.scrobbling"));
+
+    // the owner has the settings' token; sam has nothing yet, and Last.fm can be linked
+    let me = s.ok("getScrobbling", &[]).await["scrobbling"].clone();
+    assert_eq!((me["listenbrainz"]["linked"].as_bool(), me["listenbrainz"]["fromSettings"].as_bool()), (Some(true), Some(true)));
+    assert_eq!(me["lastfm"]["available"], true);
+    let r = get(sam("getScrobbling", "")).await;
+    assert_eq!((r["scrobbling"]["listenbrainz"]["linked"].as_bool(), r["scrobbling"]["lastfm"]["linked"].as_bool()), (Some(false), Some(false)));
+
+    // sam links ListenBrainz: a token it doesn't accept isn't kept
+    let r = get(sam("setListenBrainz", "&token=wrong")).await;
+    assert_eq!((r["status"].as_str(), r["error"]["code"].as_i64()), (Some("failed"), Some(0)));
+    let r = get(sam("setListenBrainz", "&token=samtok")).await;
+    assert_eq!(r["scrobbling"]["listenbrainz"]["name"], "sam_lb");
+    // kept encrypted, never as it is
+    let stored: Vec<String> = sqlx::query_scalar("SELECT secret FROM scrobble_account").fetch_all(&s.st.db).await.unwrap();
+    assert!(stored.iter().all(|x| !x.contains("samtok")));
+
+    // and Last.fm: the page to approve on, then waiting until it's approved; nobody else can finish sam's link
+    let r = get(sam("lastfmLinkStart", "")).await;
+    let url = r["lastfmLink"]["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with("https://www.last.fm/api/auth/?api_key=lfmkey&token=lfmtok"), "{url}");
+    fake.approved.store(true, SeqCst);
+    assert_eq!(s.ok("lastfmLinkFinish", &[("token", "lfmtok")]).await["lastfmLink"]["status"], "expired");
+    fake.approved.store(false, SeqCst);
+    assert_eq!(get(sam("lastfmLinkFinish", "&token=lfmtok")).await["lastfmLink"]["status"], "waiting");
+    fake.approved.store(true, SeqCst);
+    let r = get(sam("lastfmLinkFinish", "&token=lfmtok")).await;
+    assert_eq!((r["lastfmLink"]["status"].as_str(), r["lastfmLink"]["name"].as_str()), (Some("linked"), Some("samfm")));
+    assert_eq!(get(sam("getScrobbling", "")).await["scrobbling"]["lastfm"]["name"], "samfm");
+
+    // sam's plays go to sam's accounts, the owner's to the settings' token only
+    get(sam("scrobble", &format!("&id={one}&submission=false"))).await;
+    get(sam("scrobble", &format!("&id={one}&time=1700000000000"))).await;
+    s.ok("scrobble", &[("id", &two)]).await;
+    wait_for(async || fake.listens.lock().unwrap().len() >= 3 && fake.lastfm.lock().unwrap().len() >= 2, "the plays").await;
+    {
+        let listens = fake.listens.lock().unwrap();
+        let by = |who: &str, kind: &str| listens.iter().filter(|(a, b)| a == who && b["listen_type"] == kind).count();
+        assert_eq!((by("Token samtok", "playing_now"), by("Token samtok", "single"), by("Token lbtok", "single")), (1, 1, 1));
+        let lfm = fake.lastfm.lock().unwrap();
+        assert_eq!(lfm[0]["method"], "track.updateNowPlaying");
+        assert_eq!((lfm[1]["method"].as_str(), lfm[1]["track"].as_str(), lfm[1]["artist"].as_str()), ("track.scrobble", "One", "Alpha"));
+        assert_eq!((lfm[1]["timestamp"].as_str(), lfm[1]["album"].as_str()), ("1700000000", "First Album"));
+    }
+
+    // Last.fm down: plays are kept, and later ones wait behind them, then all go in order
+    fake.down.store(true, SeqCst);
+    get(sam("scrobble", &format!("&id={two}&time=1700000100000"))).await;
+    wait_for(
+        async || sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM lb_queue WHERE service = 'lastfm'").fetch_one(&s.st.db).await.unwrap() == 1,
+        "the kept play",
+    )
+    .await;
+    fake.down.store(false, SeqCst);
+    get(sam("scrobble", &format!("&id={three}&time=1700000200000"))).await;
+    wait_for(
+        async || sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM lb_queue WHERE service = 'lastfm'").fetch_one(&s.st.db).await.unwrap() == 2,
+        "the later play kept behind it",
+    )
+    .await;
+    conductor::scrobble::resend(&s.st).await;
+    let titles: Vec<String> = fake.lastfm.lock().unwrap()[2..].iter().map(|p| p["track"].clone()).collect();
+    assert_eq!(titles, ["Two", "Three"]);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM lb_queue").fetch_one(&s.st.db).await.unwrap(), 0);
+
+    // a session Last.fm no longer takes: shown as needing a new link
+    fake.revoked.store(true, SeqCst);
+    get(sam("scrobble", &format!("&id={one}"))).await;
+    wait_for(async || get(sam("getScrobbling", "")).await["scrobbling"]["lastfm"]["broken"] == true, "the broken link").await;
+
+    // unlinking
+    let r = get(sam("lastfmUnlink", "")).await;
+    assert_eq!(r["scrobbling"]["lastfm"]["linked"], false);
+    let r = get(sam("setListenBrainz", "&token=")).await;
+    assert_eq!(r["scrobbling"]["listenbrainz"]["linked"], false);
+    // and deleting a user takes their accounts with them
+    get(sam("setListenBrainz", "&token=samtok")).await;
+    s.ok("deleteUser", &[("username", "sam")]).await;
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM scrobble_account").fetch_one(&s.st.db).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn albums_without_a_cover_get_a_picture_except_in_apps_that_draw_their_own() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let album = s.ok("search3", &[("query", "Three")]).await["searchResult3"]["song"][0]["albumId"].as_str().unwrap().to_string();
+    // most apps: a picture, the size asked for
+    let r = s.http.get(s.url("getCoverArt", &[("id", &album), ("size", "200")])).send().await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["content-type"].to_str().unwrap().to_string()), (200, "image/png".into()));
+    let img = image::load_from_memory(&r.bytes().await.unwrap()).unwrap();
+    assert_eq!((img.width(), img.height()), (200, 200));
+    // Encore (phone or desktop) and Recital: "not found", as before
+    for app in ["Encore", "Encore Desktop", "recital"] {
+        let u = s.url("getCoverArt", &[("id", &album)]).replace("c=test", &format!("c={}", app.replace(' ', "+")));
+        assert_eq!(s.http.get(u).send().await.unwrap().status(), 404, "{app}");
+    }
+    // an album with a cover still gets its own
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["albumId"].as_str().unwrap().to_string();
+    let r = s.http.get(s.url("getCoverArt", &[("id", &one)])).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "image/jpeg");
+}

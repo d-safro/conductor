@@ -203,8 +203,61 @@ pub async fn cover_art(c: &Ctx) -> Result<Reply, ApiError> {
     let size = c.p.int("size").filter(|s| *s > 0).map(|s| s.min(2000) as u32);
     match cover_for(&c.st, c.p.req("id")?, size).await? {
         Some(b) => Ok(image_reply(b)),
-        None => Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") }),
+        // Encore and Recital draw their own picture for an album without one; other apps expect a picture (as
+        // Navidrome sends), and some show a broken image or keep asking otherwise
+        None if knows_no_cover(&c.client) => Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") }),
+        None if !exists(c).await? => Err(ApiError { http: StatusCode::NOT_FOUND, ..ApiError::not_found("Cover art") }),
+        None => {
+            let size = size.unwrap_or(600).clamp(16, 1200);
+            let png = tokio::task::spawn_blocking(move || placeholder(size)).await.map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+            Ok(raw(
+                StatusCode::OK,
+                &[(header::CONTENT_TYPE, "image/png".into()), (header::CACHE_CONTROL, "public, max-age=3600".into())],
+                Body::from(png),
+            ))
+        }
     }
+}
+
+/// Whether the id is a song, album, artist or playlist here (an unknown one stays "not found").
+async fn exists(c: &Ctx) -> Result<bool, ApiError> {
+    let id = c.p.req("id")?;
+    if let Some(rest) = id.strip_prefix("pl-") {
+        let pid = rest.split('_').next().unwrap_or(rest);
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE id = ?").bind(pid).fetch_one(&c.st.db).await?;
+        return Ok(n > 0);
+    }
+    let bare = ["mf-", "al-", "ar-"].iter().find_map(|p| id.strip_prefix(p)).map(|r| r.split('_').next().unwrap_or(r)).unwrap_or(id);
+    Ok(super::items::kind_of(c, bare).await?.is_some())
+}
+
+/// Apps that show their own picture when there's no cover (a "not found" is what they want).
+fn knows_no_cover(client: &str) -> bool {
+    let c = client.to_ascii_lowercase();
+    c.starts_with("encore") || c == "recital"
+}
+
+/// The picture for an album without one: a plain record on a dark square, the same for every album.
+pub fn placeholder(size: u32) -> Vec<u8> {
+    let half = size as f32 / 2.0;
+    let img = image::RgbImage::from_fn(size, size, |x, y| {
+        let (dx, dy) = (x as f32 + 0.5 - half, y as f32 + 0.5 - half);
+        let r = (dx * dx + dy * dy).sqrt() / half; // 0 at the centre, 1 at the edge's middle
+        let v = match r {
+            r if r < 0.05 => 0x2a, // the hole
+            r if r < 0.22 => 0x6b, // the label
+            r if r < 0.7 => {
+                // the grooves
+                if ((r * 60.0) as i32) % 3 == 0 { 0x3a } else { 0x33 }
+            }
+            r if r < 0.72 => 0x44,
+            _ => 0x2a,
+        };
+        image::Rgb([v, v, v + 4])
+    });
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Png).expect("png");
+    out.into_inner()
 }
 
 /// A cover picture for any id (song, album, artist, `pl-<playlist>`), at most `size` pixels on a side.

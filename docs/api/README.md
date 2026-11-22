@@ -24,3 +24,4 @@ Each one gets its own spec file here before it's built.
 | `encore.dj` | `getDjLine?next=&prev=&lang=` → `{djLine: {text, id, duration}}`, `djAudio?id=` (WAV) | done (needs `ollama_url` and `dj_voice_url`; "ai-off" otherwise) |
 | `encore.songId` | `POST identifySong` (recording as the body) | done (needs `songid_url`) |
 | `encore.automix` | `getMixInfo?id=&id=…` | done (needs `mixinfo_dir`) |
+| `encore.scrobbling` | `getScrobbling`, `setListenBrainz?token=` (empty unlinks), `lastfmLinkStart` → `{url, token}`, `lastfmLinkFinish?token=` → `waiting \| linked \| expired`, `lastfmUnlink` | done (per user; Last.fm needs `lastfm_api_key` and `lastfm_secret`; see `src/api/scrobbling.rs`) |

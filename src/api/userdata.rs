@@ -64,7 +64,7 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
         if !submission {
             set_now_playing(c, &t.id).await;
             let (st, uid, tid) = (c.st.clone(), c.user.id.clone(), t.id.clone());
-            tokio::spawn(async move { crate::listenbrainz::scrobble(&st, &uid, &tid, now(), true).await });
+            tokio::spawn(async move { crate::scrobble::scrobble(&st, &uid, &tid, now(), true).await });
             continue;
         }
         let at = times.get(i).and_then(|v| v.parse::<i64>().ok()).map(|ms| ms / 1000).unwrap_or_else(now);
@@ -82,7 +82,7 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
             annotate(c, k, item, "play_count = play_count + 1, last_played = MAX(COALESCE(last_played, 0), ?)", Some(at)).await?;
         }
         let (st, uid, tid) = (c.st.clone(), c.user.id.clone(), t.id.clone());
-        tokio::spawn(async move { crate::listenbrainz::scrobble(&st, &uid, &tid, at, false).await });
+        tokio::spawn(async move { crate::scrobble::scrobble(&st, &uid, &tid, at, false).await });
     }
     empty()
 }

@@ -104,13 +104,14 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `listenbrainz_user` | (not set) | ListenBrainz: plays are sent there (as Navidrome did), and its weekly playlists become discovery playlists. |
-| `listenbrainz_token` | (not set) | ListenBrainz: plays are sent there (as Navidrome did), and its weekly playlists become discovery playlists. |
+| `listenbrainz_user` | (not set) | The owner's ListenBrainz name: its weekly playlists made for them become discovery playlists. |
+| `listenbrainz_token` | (not set) | The owner's ListenBrainz token: their plays are sent with it until they link their own in Encore. Everyone else links their own (`setListenBrainz`). |
 | `listenbrainz_for` | (not set) | Whose plays go to ListenBrainz and who owns the discovery playlists (default: the first admin). |
-| `listenbrainz_url` | "https://api.listenbrainz.org" | Whose plays go to ListenBrainz and who owns the discovery playlists (default: the first admin). |
+| `listenbrainz_url` | "https://api.listenbrainz.org" | ListenBrainz's API address (only changed for a self-hosted one). |
 | `discovery` | ["weekly-exploration", "weekly-jams", "daily-jams"] | Which ListenBrainz playlists to turn into discovery playlists ([] = none). |
-| `lastfm_url` | "https://ws.audioscrobbler.com/2.0" | Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create). |
-| `lastfm_api_key` | (not set) | Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create). |
+| `lastfm_url` | "https://ws.audioscrobbler.com/2.0" | Last.fm's API address. |
+| `lastfm_api_key` | (not set) | A Last.fm API key (last.fm/api/account/create): imports from Last.fm need it, and with `lastfm_secret` everyone can link their Last.fm to scrobble there. |
+| `lastfm_secret` | (not set) | The shared secret given with the API key: with it, each user can link their own Last.fm in Encore (`lastfmLinkStart`), and their plays are scrobbled there. Kept in secrets.toml. |
 | `spotify_sync` | true | Spotify sync (spotify.py's "songs" mode): your Liked Songs and chosen playlists become playlists here; songs you don't have are asked for. The login and choices come from `import-music-lookup` (spotify/ folder). |
 | `spotify_interval_hours` | 6 | Spotify sync (spotify.py's "songs" mode): your Liked Songs and chosen playlists become playlists here; songs you don't have are asked for. The login and choices come from `import-music-lookup` (spotify/ folder). |
 | `spotify_api_url` | "https://api.spotify.com/v1" | Spotify sync (spotify.py's "songs" mode): your Liked Songs and chosen playlists become playlists here; songs you don't have are asked for. The login and choices come from `import-music-lookup` (spotify/ folder). |

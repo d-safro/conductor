@@ -44,7 +44,7 @@ pub const SECTIONS: &[&str] = &["music", "server", "admin", "downloads", "vpn", 
 const VALUE_FLAGS: &[&str] = &[
     "music", "sentinel", "data", "listen", "admin", "slskd-url", "slskd-key", "slskd-downloads", "downloads", "docker", "vpn", "vpn-check-url", "vpn-check-key",
     "wg-conf", "vpn-provider", "vpn-key", "vpn-address", "vpn-countries", "slsk-user", "slsk-pass", "downloads-dir", "proxy", "lidarr-url", "lidarr-key",
-    "listenbrainz-token", "lastfm-key", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
+    "listenbrainz-token", "lastfm-key", "lastfm-secret", "audiomuse-url", "audiomuse-token", "songid-url", "mixinfo-dir", "jam-public-url", "ollama-url",
     "dj-voice-url", "import-navidrome", "import-music-lookup", "transpose", "service", "domain", "jam-domain", "domain-email", "tunnel-token", "tunnel-host",
 ];
 const SWITCHES: &[&str] =
@@ -216,7 +216,7 @@ Parts: music, server, admin, downloads, vpn, services, domain, import, service (
   --require-vpn | --no-require-vpn   (pause downloads while the VPN is down)
   --docker lidarr,audiomuse,pitch,metronome,ai   (set those up for you, in Docker; with --start, started;
         --pull-model also fetches the AI model, a few GB)
-  --lidarr-url --lidarr-key  --listenbrainz-token  --lastfm-key  --audiomuse-url --audiomuse-token
+  --lidarr-url --lidarr-key  --listenbrainz-token  --lastfm-key --lastfm-secret  --audiomuse-url --audiomuse-token
   --songid-url  --mixinfo-dir  --jam-public-url  --ai --ollama-url --dj-voice-url
   --domain NAME [--jam-domain NAME] [--domain-email E]   (HTTPS on your domain: Caddy, set up for you)
         or --tunnel-token TOKEN (or CONDUCTOR_TUNNEL_TOKEN) --tunnel-host NAME   (a Cloudflare Tunnel)
@@ -1045,11 +1045,22 @@ impl Wizard<'_> {
             self.say_check("ListenBrainz", ok);
             self.d.set("listenbrainz_token", tok);
         }
-        // Last.fm (Transpose by user name)
+        // Last.fm (Transpose by user name; with the shared secret, everyone can link their Last.fm to scrobble there)
         let on = self.d.str("lastfm_api_key").is_some() || self.f.get("lastfm-key").is_some();
-        if self.ui.yes("A Last.fm API key (to bring in Last.fm scrobbles)?", on) {
+        if self.ui.yes("A Last.fm API key (to bring in Last.fm scrobbles, and scrobble there)?", on) {
             let key = self.secret_or("lastfm-key", "LASTFM_API_KEY", "Last.fm API key (last.fm/api/account/create)", self.d.str("lastfm_api_key"));
             self.d.set("lastfm_api_key", key);
+            let secret = self.secret_or(
+                "lastfm-secret",
+                "LASTFM_SECRET",
+                "Its shared secret (shown with the key; lets everyone link their Last.fm in Encore; empty for none)",
+                self.d.str("lastfm_secret"),
+            );
+            if secret.trim().is_empty() {
+                self.d.unset("lastfm_secret");
+            } else {
+                self.d.set("lastfm_secret", secret.trim().to_string());
+            }
         }
         // AudioMuse
         let c = self.how("AudioMuse-AI (songs that sound alike; it listens to each song once)?", "audiomuse", self.d.str("audiomuse_url").is_some() || self.f.get("audiomuse-url").is_some());

@@ -126,7 +126,12 @@ The detailed list. The [README](../README.md) has the short version.
 - **AudioMuse-AI** (optional; set `audiomuse_url` / `audiomuse_token`): `getSonicSimilarTracks` and `findSonicPath`
   from AudioMuse's analysis, and Encore's read-only recommendation calls at `/rest/audiomuse/<endpoint>` (an
   allow-list, logins never passed on). Without it these say "not available" and apps fall back.
-- **ListenBrainz**: plays are sent there (`listenbrainz_token`; failed ones resent later), and its playlists made
+- **Scrobbling, for everyone** (`encore.scrobbling`): each user links their own **ListenBrainz** (their token,
+  checked with ListenBrainz) and **Last.fm** (approved on Last.fm's own page; the server needs `lastfm_api_key` and
+  `lastfm_secret`), in Encore's settings. Plays and "playing now" go to every service they linked; plays a service
+  couldn't take are kept and sent later, in order. Tokens and session keys are stored encrypted, as passwords are; a
+  link Last.fm stops accepting is shown as needing renewal. The settings' `listenbrainz_token` is the owner's.
+- **ListenBrainz discovery**: its playlists made
   for you (`listenbrainz_user`; Weekly Exploration, Weekly Jams, Daily Jams — `discovery`) become playlists: songs
   you have go straight in, the rest are downloaded into `Discovery/` and join as they arrive; when the next list
   comes, songs you didn't keep (heart, 4+, another playlist) are deleted and kept ones move to `Songs/`. (Explo's job.)

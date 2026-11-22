@@ -7,7 +7,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, bail};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::{
@@ -41,73 +41,6 @@ pub async fn owner(st: &AppState) -> Option<String> {
             .await
             .ok()
             .flatten(),
-    }
-}
-
-async fn submit(st: &AppState, body: &Value) -> Result<()> {
-    let Some(token) = &st.cfg.listenbrainz_token else { return Ok(()) };
-    let r = http()
-        .post(format!("{}/1/submit-listens", st.cfg.listenbrainz_url.trim_end_matches('/')))
-        .header("Authorization", format!("Token {token}"))
-        .json(body)
-        .send()
-        .await?;
-    if !r.status().is_success() {
-        bail!("ListenBrainz answered {}", r.status());
-    }
-    Ok(())
-}
-
-/// A play (or "playing now") for ListenBrainz, if it's the user plays are sent for. Failed plays are kept and sent later.
-pub async fn scrobble(st: &AppState, user_id: &str, track_id: &str, at: i64, playing_now: bool) {
-    if st.cfg.listenbrainz_token.is_none() || owner(st).await.as_deref() != Some(user_id) {
-        return;
-    }
-    type Row = (String, String, String, i64, Option<String>);
-    let row: Option<Row> = sqlx::query_as("SELECT title, artist_name, album_name, duration_ms, mbid FROM track WHERE id = ?")
-        .bind(track_id)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-    let Some((title, artist, album, ms, mbid)) = row else { return };
-    let mut info =
-        json!({ "duration_ms": ms, "submission_client": "Conductor", "submission_client_version": env!("CARGO_PKG_VERSION") });
-    if let Some(m) = mbid {
-        info["recording_mbid"] = m.into();
-    }
-    let meta = json!({ "artist_name": artist, "track_name": title, "release_name": album, "additional_info": info });
-    let body = if playing_now {
-        json!({ "listen_type": "playing_now", "payload": [{ "track_metadata": meta }] })
-    } else {
-        json!({ "listen_type": "single", "payload": [{ "listened_at": at, "track_metadata": meta }] })
-    };
-    if let Err(e) = submit(st, &body).await
-        && !playing_now
-    {
-        warn!("ListenBrainz: {e:#}; the play is kept and sent later");
-        let _ = sqlx::query("INSERT INTO lb_queue (payload, added_at) VALUES (?, ?)")
-            .bind(body.to_string())
-            .bind(now())
-            .execute(&st.db)
-            .await;
-    }
-}
-
-async fn resend(st: &AppState) {
-    let rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, payload FROM lb_queue ORDER BY id LIMIT 200").fetch_all(&st.db).await.unwrap_or_default();
-    for (id, p) in rows {
-        let ok = match serde_json::from_str::<Value>(&p) {
-            Ok(v) => submit(st, &v).await.is_ok(),
-            Err(_) => true,
-        };
-        if ok {
-            let _ = sqlx::query("DELETE FROM lb_queue WHERE id = ?").bind(id).execute(&st.db).await;
-        } else {
-            let _ = sqlx::query("UPDATE lb_queue SET tries = tries + 1 WHERE id = ?").bind(id).execute(&st.db).await;
-            break; // still unreachable: try again later
-        }
     }
 }
 
@@ -292,13 +225,12 @@ async fn clean_up(st: &AppState) -> Result<()> {
     Ok(())
 }
 
-/// Hourly: resend plays ListenBrainz missed, and fill discovery playlists when new lists are out.
+/// Hourly: fill discovery playlists when new lists are out. (Plays are sent by `scrobble`.)
 pub async fn worker(st: Arc<AppState>) {
     if st.cfg.listenbrainz_user.is_none() && st.cfg.listenbrainz_token.is_none() {
         return;
     }
     loop {
-        resend(&st).await;
         if !st.cfg.read_only {
             for kind in st.cfg.discovery.clone() {
                 if let Err(e) = refresh(&st, &kind).await {

@@ -8,6 +8,7 @@ mod encore;
 mod imports;
 mod info;
 mod items;
+mod scrobbling;
 pub(crate) mod media;
 mod native;
 pub mod podcasts;
@@ -67,6 +68,8 @@ pub struct AppState {
     pub setup_token: String,
     /// wrong passwords, per user per address
     pub login_fails: crate::auth::Throttle,
+    /// Last.fm links started and not finished yet
+    pub lastfm_pending: crate::scrobble::Pending,
 }
 
 impl AppState {
@@ -89,6 +92,7 @@ impl AppState {
             vpn: std::sync::RwLock::new(crate::vpn::Status { mode: cfg_vpn, ..Default::default() }),
             setup_token: crate::db::random_id(),
             login_fails: Default::default(),
+            lastfm_pending: Default::default(),
         }
     }
 }
@@ -399,6 +403,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.automix", "versions": [1] },
             { "name": "encore.concerts", "versions": [1] },
             { "name": "encore.mixes", "versions": [1] },
+            { "name": "encore.scrobbling", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -441,6 +446,11 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "unstar" => userdata::star(c, false).await,
         "setRating" => userdata::set_rating(c).await,
         "scrobble" => userdata::scrobble(c).await,
+        "getScrobbling" => scrobbling::get(c).await,
+        "setListenBrainz" => scrobbling::set_listenbrainz(c).await,
+        "lastfmLinkStart" => scrobbling::lastfm_start(c).await,
+        "lastfmLinkFinish" => scrobbling::lastfm_finish(c).await,
+        "lastfmUnlink" => scrobbling::lastfm_unlink(c).await,
         "reportPlayback" => userdata::report_playback(c).await,
         "getNowPlaying" => userdata::now_playing(c).await,
         "getPlaylists" => userdata::playlists(c).await,

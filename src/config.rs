@@ -110,6 +110,7 @@ pub struct Config {
     /// Imports from Last.fm (scrobbles and loved songs by username) need an API key (last.fm/api/account/create).
     pub lastfm_url: String,
     pub lastfm_api_key: Option<String>,
+    pub lastfm_secret: Option<String>,
     /// Look for a better copy of songs it downloaded (the album asked from, FLAC over lossy) when there's nothing
     /// else to do, and swap it in (same song id).
     pub upgrades: bool,
@@ -218,6 +219,7 @@ impl Default for Config {
             info_online: true,
             lastfm_url: "https://ws.audioscrobbler.com/2.0".into(),
             lastfm_api_key: None,
+            lastfm_secret: None,
             upgrades: true,
             info_lang: "en".into(),
             wikidata_url: "https://www.wikidata.org".into(),
@@ -257,7 +259,7 @@ pub fn default_data_dir() -> PathBuf {
 
 /// Settings that are secrets: kept in secrets.toml (mode 600) beside config.toml, not in config.toml itself.
 pub const SECRET_KEYS: &[&str] =
-    &["slskd_api_key", "lidarr_api_key", "listenbrainz_token", "lastfm_api_key", "audiomuse_token", "vpn_check_key", "proxy"];
+    &["slskd_api_key", "lidarr_api_key", "listenbrainz_token", "lastfm_api_key", "lastfm_secret", "audiomuse_token", "vpn_check_key", "proxy"];
 
 /// The config file used when none is given: config.toml in the data folder (CONDUCTOR_DATA_DIR, else the default).
 pub fn default_config_path() -> PathBuf {

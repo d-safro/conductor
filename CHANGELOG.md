@@ -7,6 +7,9 @@ What changed in each release, newest first. The full notes for each are on the
 ## Unreleased (0.4.0)
 
 ### New
+- **Scrobbling for every user**: everyone links their own ListenBrainz and Last.fm in Encore; plays go to each, and
+  ones a service missed are sent later, in order. (Before, only the owner's plays went to ListenBrainz.)
+- **A picture for albums without a cover** for apps other than Encore, as Navidrome sends, instead of "not found".
 - **Prelude sets up the whole music lab for you** in one Docker folder: the downloader (optionally inside a VPN with
   a kill switch), Lidarr, AudioMuse-AI, Pitch and Metronome, and only with AI on, Ollama and Interlude's voice. Each
   one's address and keys go into Conductor's settings by themselves. Works on SELinux systems (Fedora, RHEL).
