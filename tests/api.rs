@@ -3568,3 +3568,100 @@ async fn a_service_account_doesnt_block_the_first_admin() {
     assert!(auth::create_first_admin(&pool, &secrets, "someone", "their pass").await.unwrap().is_none());
     assert_eq!(auth::admin_count(&pool).await.unwrap(), 1);
 }
+
+#[tokio::test]
+async fn users_stay_apart() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    let s = Server::start().await;
+    // two people who aren't admins: Ann and Ben
+    for (n, p) in [("ann", "ann pass 1"), ("ben", "ben pass 1")] {
+        auth::create_user(&s.st.db, &s.st.secrets, n, p, false).await.unwrap();
+    }
+    let call = |who: &'static str, m: &'static str, params: Vec<(&'static str, String)>| {
+        let pass = if who == "ann" { "ann pass 1" } else { "ben pass 1" };
+        let mut q = form_urlencoded::Serializer::new(String::new());
+        q.extend_pairs([("u", who), ("p", pass), ("v", "1.16.1"), ("c", "test"), ("f", "json")]);
+        for (k, v) in &params {
+            q.append_pair(k, v);
+        }
+        let rq = s.http.get(format!("{}/rest/{m}.view?{}", s.base, q.finish()));
+        async move { rq.send().await.unwrap().json::<Value>().await.unwrap()["subsonic-response"].clone() }
+    };
+    let ok = |r: Value| {
+        assert_eq!(r["status"], "ok", "{r}");
+        r
+    };
+    let songs: Vec<String> = ok(call("ann", "search3", vec![("query", String::new())]).await)["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["id"].as_str().unwrap().to_string())
+        .collect();
+    let (a, b) = (songs[0].clone(), songs[1].clone());
+
+    // Ann's stars, rating, plays, queue, bookmark, sync values, device
+    ok(call("ann", "star", vec![("id", a.clone())]).await);
+    ok(call("ann", "setRating", vec![("id", a.clone()), ("rating", "5".into())]).await);
+    ok(call("ann", "scrobble", vec![("id", a.clone()), ("submission", "true".into())]).await);
+    ok(call("ann", "savePlayQueue", vec![("id", a.clone()), ("id", b.clone()), ("current", b.clone())]).await);
+    ok(call("ann", "createBookmark", vec![("id", a.clone()), ("position", "1000".into())]).await);
+    ok(call("ann", "syncSet", vec![("key", "pins".into()), ("value", "[1]".into()), ("at", "1000".into())]).await);
+    ok(call("ann", "deviceHello", vec![("id", "ann-phone".into()), ("name", "Ann's phone".into()), ("kind", "phone".into())]).await);
+    // her private playlist and a public one
+    let private = ok(call("ann", "createPlaylist", vec![("name", "Ann only".into()), ("songId", a.clone())]).await)["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let public = ok(call("ann", "createPlaylist", vec![("name", "For all".into()), ("songId", b.clone())]).await)["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    ok(call("ann", "updatePlaylist", vec![("playlistId", public.clone()), ("public", "true".into())]).await);
+
+    // Ben sees none of it
+    let st = ok(call("ben", "getStarred2", vec![]).await);
+    assert!(st["starred2"]["song"].as_array().is_none_or(|x| x.is_empty()), "stars: {st}");
+    let song = ok(call("ben", "getSong", vec![("id", a.clone())]).await);
+    assert_eq!((song["song"]["userRating"].as_i64(), song["song"]["playCount"].as_i64()), (Some(0), Some(0)), "rating and plays");
+    assert!(song["song"].get("starred").is_none());
+    assert!(ok(call("ben", "getPlayQueue", vec![]).await).get("playQueue").is_none(), "play queue");
+    let bm = ok(call("ben", "getBookmarks", vec![]).await);
+    assert!(bm["bookmarks"]["bookmark"].as_array().is_none_or(|x| x.is_empty()), "bookmarks: {bm}");
+    let sync = ok(call("ben", "syncGet", vec![]).await);
+    assert!(sync["sync"]["values"].get("pins").is_none(), "sync values: {sync}");
+    let dev = ok(call("ben", "deviceList", vec![]).await);
+    assert!(dev["devices"]["device"].as_array().is_none_or(|x| x.is_empty()), "devices: {dev}");
+    let stats = ok(call("ben", "getListeningStats", vec![("period", "all".into())]).await);
+    assert_eq!(stats["listeningStats"]["plays"], 0, "Ben's listening stats: {stats}");
+    let ann_stats = ok(call("ann", "getListeningStats", vec![("period", "all".into())]).await);
+    assert_eq!(ann_stats["listeningStats"]["plays"], 1, "Ann's: {ann_stats}");
+    let alb = ok(call("ben", "getAlbumList2", vec![("type", "frequent".into())]).await);
+    assert!(alb["albumList2"]["album"].as_array().is_none_or(|x| x.is_empty()), "frequent albums: {alb}");
+
+    // playlists: the private one isn't there for Ben, the public one is, and neither is his to change
+    let names: Vec<String> = ok(call("ben", "getPlaylists", vec![]).await)["playlists"]["playlist"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, ["For all"], "{names:?}");
+    assert_ne!(call("ben", "getPlaylist", vec![("id", private.clone())]).await["status"], "ok", "Ann's private playlist");
+    assert_eq!(call("ben", "updatePlaylist", vec![("playlistId", public.clone()), ("name", "Mine now".into())]).await["error"]["code"], 50);
+    assert_eq!(call("ben", "deletePlaylist", vec![("id", public.clone())]).await["error"]["code"], 50);
+    assert_ne!(call("ben", "deletePlaylist", vec![("id", private.clone())]).await["status"], "ok");
+    // nor her bookmark, her account, or the user list
+    ok(call("ben", "deleteBookmark", vec![("id", a.clone())]).await);
+    let still = ok(call("ann", "getBookmarks", vec![]).await);
+    assert_eq!(still["bookmarks"]["bookmark"].as_array().map(|x| x.len()), Some(1), "Ben's delete didn't touch Ann's bookmark");
+    assert_eq!(call("ben", "getUser", vec![("username", "ann".into())]).await["error"]["code"], 50);
+    assert_eq!(call("ben", "changePassword", vec![("username", "ann".into()), ("password", "taken over".into())]).await["error"]["code"], 50);
+    assert_eq!(call("ben", "getUsers", vec![]).await["error"]["code"], 50);
+    // and Ann's own view is intact
+    assert_eq!(ok(call("ann", "getSong", vec![("id", a.clone())]).await)["song"]["userRating"], 5);
+    assert_eq!(ok(call("ann", "getPlayQueue", vec![]).await)["playQueue"]["current"], b.as_str());
+}
