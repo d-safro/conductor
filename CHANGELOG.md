@@ -11,8 +11,10 @@ What changed in each release, newest first. The full notes for each are on the
   setup`) put the database in the conductor user's `~/.local/share/conductor`, while the service reads
   `/var/lib/conductor`: the admin made in setup wasn't there and couldn't sign in. A new settings file given with
   `--config` now keeps its data beside it (an existing one keeps what it has). If you set it up this way with 1.0.0,
-  move the files from `/var/lib/conductor/.local/share/conductor` into `/var/lib/conductor` and take the `data_dir`
-  line out of its config.toml.
+  stop the service, move the files from `/var/lib/conductor/.local/share/conductor` into `/var/lib/conductor`, and
+  set `data_dir = "/var/lib/conductor"` in its config.toml.
+- **A backup from 1.0.0-rc.1** was refused by 1.0.0 as "newer than this one": the prerelease was read as 1.0.0.1.
+  A prerelease now comes before its release when a backup's version is checked.
 
 ## 1.0.0 (2026-11-22)
 

@@ -212,10 +212,45 @@ fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Is version `a` newer than `b` (x.y.z)?
+/// Is version `a` newer than `b` (x.y.z, or a prerelease x.y.z-rc.1, which comes before x.y.z)? Read as plain
+/// dotted numbers, 1.0.0-rc.1 was 1.0.0.1, after 1.0.0: its backups were refused by 1.0.0 itself.
 fn newer(a: &str, b: &str) -> bool {
-    let p = |v: &str| v.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    p(a) > p(b)
+    use std::cmp::Ordering;
+    fn parts(v: &str) -> (Vec<u64>, Option<&str>) {
+        let (core, pre) = v.split_once('-').map_or((v, None), |(c, p)| (c, Some(p)));
+        (core.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect(), pre)
+    }
+    let ((ca, pa), (cb, pb)) = (parts(a), parts(b));
+    let pre = |a: &str, b: &str| -> Ordering {
+        // semver: dot-separated, numbers as numbers, a number before a word, more parts after fewer
+        let (mut x, mut y) = (a.split('.'), b.split('.'));
+        loop {
+            match (x.next(), y.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(p), Some(q)) => {
+                    let o = match (p.parse::<u64>(), q.parse::<u64>()) {
+                        (Ok(m), Ok(n)) => m.cmp(&n),
+                        (Ok(_), Err(_)) => Ordering::Less,
+                        (Err(_), Ok(_)) => Ordering::Greater,
+                        _ => p.cmp(q),
+                    };
+                    if o != Ordering::Equal {
+                        return o;
+                    }
+                }
+            }
+        }
+    };
+    match ca.cmp(&cb) {
+        Ordering::Equal => match (pa, pb) {
+            (Some(_), None) | (None, None) => false,
+            (None, Some(_)) => true,
+            (Some(p), Some(q)) => pre(p, q) == Ordering::Greater,
+        },
+        o => o == Ordering::Greater,
+    }
 }
 
 /// Once a day, a backup in the backups folder; the newest `backup_keep` kept.
@@ -262,5 +297,11 @@ mod tests {
         assert!(super::newer("0.10.0", "0.9.9"));
         assert!(!super::newer("0.2.1", "0.3.0"));
         assert!(!super::newer("0.3.0", "0.3.0"));
+        // a prerelease comes before its release: a backup from 1.0.0-rc.1 restores on 1.0.0
+        assert!(!super::newer("1.0.0-rc.1", "1.0.0"));
+        assert!(super::newer("1.0.0", "1.0.0-rc.1"));
+        assert!(super::newer("1.0.0-rc.2", "1.0.0-rc.1"));
+        assert!(!super::newer("0.1.0-rc1", "0.1.0"));
+        assert!(super::newer("1.0.1-rc.1", "1.0.0"));
     }
 }
