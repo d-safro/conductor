@@ -13,6 +13,9 @@ What changed in each release, newest first. The full notes for each are on the
   the Jam and Chorus guest pages now find Cyrillic, Greek and other names typed in any case.
 - **Recital** showed a broken-image icon (in Chrome, Edge and Encore's desktop app) for every album without a cover: the
   server tells Recital "not found" so it can draw its own square, but the page never did. It now does.
+- **`conductor restore` into another data folder** (a new computer, a moved folder) put the database there but brought
+  back `config.toml` still naming the old folder, so the next start used the old one and the restored library seemed
+  gone. The restored settings now keep the data folder the database went to.
 
 ## 1.0.0 (2026-11-22)
 

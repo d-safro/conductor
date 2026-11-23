@@ -5231,3 +5231,37 @@ async fn search_ignores_case_in_any_alphabet() {
     assert!(titles(&s.ok("search3", &[("query", "on\\")]).await).is_empty());
     assert!(titles(&s.ok("search3", &[("query", "%")]).await).is_empty());
 }
+
+#[tokio::test]
+async fn a_backup_restored_into_another_data_folder_is_used_there() {
+    // made on one computer (its settings name its data folder)...
+    let old = tempfile::tempdir().unwrap();
+    let music = old.path().join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let toml_for = |data: &Path, port: u16| {
+        format!(
+            "data_dir = {:?}\nlisten = \"127.0.0.1:{port}\"\nlyrics_online = false\n\n[[libraries]]\nname = \"Music\"\npath = {:?}\n",
+            data.to_string_lossy(),
+            music.to_string_lossy()
+        )
+    };
+    let old_cfg_path = old.path().join("config.toml");
+    std::fs::write(&old_cfg_path, toml_for(&old.path().join("data"), 1)).unwrap();
+    let cfg = Config::load(Some(old_cfg_path)).unwrap();
+    std::fs::create_dir_all(&cfg.data_dir).unwrap();
+    let pool = db::open(&cfg.data_dir.join("conductor.db")).await.unwrap();
+    let out = old.path().join("backup.zip");
+    conductor::backup::make(&cfg, &pool, &out).await.unwrap();
+    pool.close().await;
+    // ...restored where the data folder is somewhere else: the settings come back, but keep this data folder
+    let new = tempfile::tempdir().unwrap();
+    let new_cfg_path = new.path().join("config.toml");
+    std::fs::write(&new_cfg_path, toml_for(&new.path().join("data"), 0).replace("lyrics_online = false\n", "")).unwrap();
+    let cfg2 = Config::load(Some(new_cfg_path.clone())).unwrap();
+    let r = conductor::backup::restore(&cfg2, &out, false).unwrap();
+    assert!(r.files.contains(&"config.toml".to_string()), "{r:?}");
+    let after = Config::load(Some(new_cfg_path)).unwrap();
+    assert_eq!(after.data_dir, new.path().join("data"), "where the database was restored");
+    assert!(after.data_dir.join("conductor.db").is_file());
+    assert!(!after.lyrics_online, "the rest of the settings came back");
+}
