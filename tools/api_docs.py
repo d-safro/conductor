@@ -123,6 +123,50 @@ EXTENSIONS = {
                       "replaces the older one. A stream that doesn't read what it's sent is closed, not buffered. A "
                       "changed password or a deleted API key ends it within a keep-alive.\n"
                       "- The event fields are below, under each event's name.\n"),
+    "encore.requests": ("The songs asked for (Stagehand: hearted or added ⬇ songs, synced playlists; Audition: songs "
+                        "played on trial; Repertoire's mixes; ListenBrainz discoveries) and the albums Lidarr wants, "
+                        "and how getting each is going, as Podium's admin page shows them. An admin sees all of them "
+                        "and can act on them; anyone else sees only what they asked for (their hearts, playlists, "
+                        "trials and mixes), with only their own name, no Lidarr albums, peers or files, and no actions.",
+                        [("getRequests", "Newest first (songs by when they were asked for, Lidarr albums by their last "
+                          "search or download). `state`: only these (repeat it, or comma-separate): searching, queued, "
+                          "downloading, done, notfound, failed, setAside. `type`: song or album. `username`: only what "
+                          "this user asked for (an admin; anyone else only their own). `offset`, `count` (default 50, "
+                          "at most 500, 0 for the counts alone). `counts` and `onTrial` are of everything the filters "
+                          "but `state` leave, `total` of what `state` leaves too."),
+                         ("retryRequest", "Admins. `id`: look again from the start (any file, any peer; a Lidarr "
+                          "album: any folder). The request as listed."),
+                         ("cancelRequest", "Admins. `id`: stop asking for a song that isn't here yet."),
+                         ("setRequestAside", "Admins. `id`, `aside` (default true): set a song that's being looked "
+                          "for or wasn't found aside (no more automatic searches), or bring it back (false). The "
+                          "request as listed."),
+                         ("searchRequestFiles", "Admins. `id`, `query` (at least 3 letters; by default the request's "
+                          "own `query`): search Soulseek your own way. Every audio file found, the likeliest first (at "
+                          "most 120 of `total`), with what fits: `match` (what the automatic search would take), "
+                          "`titleOk`, `artistOk`, `sameAlbum`. Waits for the search (10–40 s; one at a time)."),
+                         ("pickRequestFile", "Admins. `id`, `user`, `file`, `size` (a search result's `user`, "
+                          "`filename` and `size`): download that file for a song waiting for one (searching, not "
+                          "found, failed or set aside); it's filed, scanned and hearted / added like any download. "
+                          "The request as listed.")],
+                        "- `id` is a song's `dz-t-…` id (the one `lookupSongs` and the ⬇ songs have) or `lidarr-<n>` "
+                        "for a Lidarr album.\n"
+                        "- `state`: `searching` (being looked for), `queued` (a file is chosen; waiting for the peer: "
+                        "`transfer` is slskd's word for it), `downloading` (`progress` 0–100), `done` (filed; `songId` "
+                        "once the scan has it), `notfound` (Soulseek didn't have it), `failed` (it was found, but no "
+                        "one sent it; a Lidarr album that wouldn't import), `setAside` (by an admin). A song that's "
+                        "here and has a better copy on its way (`upgrading`) is `queued` or `downloading` and has its "
+                        "`songId`.\n"
+                        "- `reasons`: why it was asked for: `heart`, `playlist`, `trial` (played, queued or picked by "
+                        "autoplay: on trial, deleted unless kept), `mix` (one of Repertoire's mixes: `mix` says which), "
+                        "`discovery` (a ListenBrainz playlist), `lidarr`; `users`: who asked. `trial` / `kept`: on "
+                        "trial now, or for keeps; `folder`: Songs, Trial or Discovery.\n"
+                        "- `actions`: what the caller may do with it now (`retry`, `cancel`, `setAside`, `bringBack`, "
+                        "`search`, `pick`); always empty for anyone but an admin. `canPick`: Soulseek can be searched "
+                        "(slskd set up, not read-only). Admins also get `from` (the peer), `file` and `path` (where "
+                        "it was filed).\n"
+                        "- Errors: an action by anyone but an admin, or another user's list, is code 50; an unknown "
+                        "`id` or `username` 70; an action that doesn't apply now (it's here, it isn't set aside, it "
+                        "isn't waiting for a file, Soulseek can't be searched) code 0 with why.\n"),
     "encore.smartPlaylists": ("Smart playlists in Navidrome's rule format (all / any, is, contains, gt, lt, "
                               "inTheRange, inTheLast, before / after, inPlaylist…; sort, order, limit). Not Subsonic "
                               "calls: through the Navidrome stand-in Encore uses.", [],

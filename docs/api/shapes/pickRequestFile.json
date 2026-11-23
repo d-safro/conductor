@@ -1,0 +1,95 @@
+{
+  "request": [
+    "object"
+  ],
+  "request.actions": [
+    "array"
+  ],
+  "request.actions[]": [
+    "string"
+  ],
+  "request.album": [
+    "string"
+  ],
+  "request.artist": [
+    "string"
+  ],
+  "request.artists": [
+    "array"
+  ],
+  "request.artists[]": [
+    "string"
+  ],
+  "request.asked": [
+    "string"
+  ],
+  "request.duration": [
+    "number"
+  ],
+  "request.file": [
+    "string"
+  ],
+  "request.folder": [
+    "string"
+  ],
+  "request.found": [
+    "boolean"
+  ],
+  "request.from": [
+    "string"
+  ],
+  "request.id": [
+    "string"
+  ],
+  "request.kept": [
+    "boolean"
+  ],
+  "request.manual": [
+    "boolean"
+  ],
+  "request.note": [
+    "string"
+  ],
+  "request.path": [
+    "string"
+  ],
+  "request.progress": [
+    "number"
+  ],
+  "request.query": [
+    "string"
+  ],
+  "request.reasons": [
+    "array"
+  ],
+  "request.reasons[]": [
+    "string"
+  ],
+  "request.searches": [
+    "number"
+  ],
+  "request.state": [
+    "string"
+  ],
+  "request.title": [
+    "string"
+  ],
+  "request.transfer": [
+    "string"
+  ],
+  "request.trial": [
+    "boolean"
+  ],
+  "request.type": [
+    "string"
+  ],
+  "request.upgrading": [
+    "boolean"
+  ],
+  "request.users": [
+    "array"
+  ],
+  "request.users[]": [
+    "string"
+  ]
+}

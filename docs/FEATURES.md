@@ -87,6 +87,12 @@ The detailed list. The [README](../README.md) has the short version.
   playlists) and what everyone sees (now playing, the library scan), so Encore needn't long-poll or ask on a timer.
   Resumes with `Last-Event-ID` (or says "resync"), a keep-alive every 20 s for proxies, at most 20 streams per
   account, and an app that doesn't read is dropped instead of buffered.
+- **What was asked for, from any app** (`encore.requests`): `getRequests` lists the songs asked for and Lidarr's
+  albums as Podium shows them (who asked and why: a heart, a playlist, a trial, a mix, a ListenBrainz discovery,
+  Lidarr; searching, queued, downloading with its progress, done, not found, failed or set aside; when; on trial or
+  kept), a page at a time and by state; an admin sees everything, anyone else only what they asked for. Admins also
+  retry, cancel, set aside / bring back, search Soulseek their own way and pick a file (`retryRequest`,
+  `cancelRequest`, `setRequestAside`, `searchRequestFiles`, `pickRequestFile`), the same as Podium does.
 - **Chorus** (collaborative playlists): `playlistShareStart/End`, `playlistShares`; friends open the link (on the Jam
   listener, `/jam/pl/<token>`), search your library and add songs to the real playlist; they can take out only
   their own. Links last 30 days.

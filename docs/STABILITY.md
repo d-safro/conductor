@@ -18,9 +18,10 @@ a new **x** adds things, and only a new major version (2.0) may take anything aw
 
 ## Not promised
 
-These may change in any release: the admin page's own API (`/admin/api/…`, used only by Podium), the web pages'
-look and HTML, the Navidrome stand-in beyond what Encore uses, log messages, the layout of the cache folder, and the
-files in Prelude's services folder (run `conductor setup services` again after an upgrade to refresh them).
+These may change in any release: the admin page's own API (`/admin/api/…`, used only by Podium; a tool that lists
+or acts on the songs asked for has `encore.requests` instead), the web pages' look and HTML, the Navidrome stand-in
+beyond what Encore uses, log messages, the layout of the cache folder, and the files in Prelude's services folder
+(run `conductor setup services` again after an upgrade to refresh them).
 
 ## Going back
 
