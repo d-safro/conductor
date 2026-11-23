@@ -5196,3 +5196,35 @@ async fn made_for_you_without_audiomuse() {
     // the same all day
     assert_eq!(s.ok("getForYou", &[("count", "20")]).await["forYou"], mix["forYou"]);
 }
+
+#[tokio::test]
+async fn search_ignores_case_in_any_alphabet() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    tone(&s.music.join("Kino/G/01.mp3"), "Группа крови", "Кино", "Группа крови", 1, 2);
+    tone(&s.music.join("Kino/G/02.mp3"), "Звезда по имени Солнце", "Кино", "Группа крови", 2, 2);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let titles = |r: &Value| -> Vec<String> {
+        let mut t: Vec<String> = r["searchResult3"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap().into()).collect();
+        t.sort();
+        t
+    };
+    // as typed on a phone (lower case), all capitals, or as written
+    for q in ["кино", "КИНО", "Кино"] {
+        let r = s.ok("search3", &[("query", q)]).await;
+        assert_eq!(titles(&r).len(), 2, "{q}: {r}");
+        assert_eq!(r["searchResult3"]["artist"][0]["name"], "Кино", "{q}");
+    }
+    assert_eq!(titles(&s.ok("search3", &[("query", "звезда солнце")]).await), ["Звезда по имени Солнце"]);
+    assert_eq!(titles(&s.ok("search3", &[("query", "СОЛНЦЕ кино")]).await), ["Звезда по имени Солнце"]);
+    assert_eq!(titles(&s.ok("search3", &[("query", "группа КРОВИ")]).await).len(), 2, "the album's name");
+    // the guest pages (Jam, Chorus) search the same way
+    let found = conductor::jam::find_songs(&s.st, "кино звезда", 10).await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    // A-Z as before, and a backslash or % is just a character
+    assert_eq!(titles(&s.ok("search3", &[("query", "alpha ONE")]).await), ["One"]);
+    assert!(titles(&s.ok("search3", &[("query", "on\\")]).await).is_empty());
+    assert!(titles(&s.ok("search3", &[("query", "%")]).await).is_empty());
+}

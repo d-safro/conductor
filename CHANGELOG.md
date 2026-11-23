@@ -9,6 +9,8 @@ What changed in each release, newest first. The full notes for each are on the
 ### Fixed
 - **Podium › Settings** turned down a decimal for the settings that take one (`trial_hours`, `lidarr_match_ratio`:
   "a whole number"); they now take decimals, and a phone shows a keypad with a decimal point for them.
+- **Search ignored case only in A-Z**: "кино" didn't find "Кино" (SQLite's LIKE folds only ASCII). `search2`/`search3` and
+  the Jam and Chorus guest pages now find Cyrillic, Greek and other names typed in any case.
 
 ## 1.0.0 (2026-11-22)
 
