@@ -3966,6 +3966,31 @@ async fn backup_and_restore() {
 }
 
 #[tokio::test]
+async fn restore_keeps_the_settings_a_backup_has_none_of() {
+    // a backup from a server set up only with environment settings (Docker) has no config.toml in it; restored with
+    // --force where there is one, that config.toml stayed moved aside and the server came up with no music folders
+    let tmp = tempfile::tempdir().unwrap();
+    let from = Config { data_dir: tmp.path().join("from"), ..Config::default() };
+    std::fs::create_dir_all(&from.data_dir).unwrap();
+    let pool = db::open(&from.data_dir.join("conductor.db")).await.unwrap();
+    let out = tmp.path().join("b.zip");
+    conductor::backup::make(&from, &pool, &out).await.unwrap();
+    pool.close().await;
+
+    let data = tmp.path().join("here");
+    std::fs::create_dir_all(&data).unwrap();
+    let config = data.join("config.toml");
+    std::fs::write(&config, "[[libraries]]\nname = \"Music\"\npath = \"/music\"\n").unwrap();
+    std::fs::write(data.join("secrets.toml"), "slskd_api_key = \"k\"\n").unwrap();
+    std::fs::write(data.join("conductor.db"), b"old").unwrap();
+    let cfg = Config { data_dir: data.clone(), config_path: Some(config.clone()), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    let r = conductor::backup::restore(&cfg, &out, true).unwrap();
+    assert!(r.moved_aside.as_ref().unwrap().join("conductor.db").is_file(), "{r:?}");
+    assert!(std::fs::read_to_string(&config).unwrap().contains("/music"), "config.toml is still there");
+    assert!(data.join("secrets.toml").is_file(), "and its secrets");
+}
+
+#[tokio::test]
 async fn whole_library_paging_gets_each_song_once() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");

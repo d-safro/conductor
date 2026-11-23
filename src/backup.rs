@@ -137,7 +137,10 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
     if std::net::TcpListener::bind(cfg.listen).is_err() {
         bail!("Conductor seems to be running ({} is in use): stop it first", cfg.listen);
     }
-    let settings: Vec<(String, PathBuf)> = settings_files(cfg);
+    // the settings files in use are replaced only when the backup has settings: one made with environment settings
+    // alone (Docker) has no config.toml, and moving this one aside left the server without its music folders
+    let has_settings = z.by_name("config.toml").is_ok();
+    let settings: Vec<(String, PathBuf)> = if has_settings { settings_files(cfg) } else { vec![] };
     let dest = |name: &str| -> Option<PathBuf> {
         if let Some((_, p)) = settings.iter().find(|(n, _)| n == name) {
             return Some(p.clone());

@@ -15,6 +15,9 @@ What changed in each release, newest first. The full notes for each are on the
   set `data_dir = "/var/lib/conductor"` in its config.toml.
 - **A backup from 1.0.0-rc.1** was refused by 1.0.0 as "newer than this one": the prerelease was read as 1.0.0.1.
   A prerelease now comes before its release when a backup's version is checked.
+- **`conductor restore --force`** of a backup without settings in it (a server set up with environment settings only,
+  as in Docker) moved the config.toml in use aside and put nothing back: the server came up without its music
+  folders. The settings in use are now only replaced by the backup's own.
 
 ## 1.0.0 (2026-11-22)
 
