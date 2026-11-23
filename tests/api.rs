@@ -5860,6 +5860,14 @@ async fn an_album_deezer_lists_as_various_artists_is_completed_only_when_its_son
         tone_tags(&s.music.join(format!("{who}/Guest Night/{title}.flac")), i as u32 + 1, &tags);
     }
     conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    // "nothing on Deezer", as 1.5.1 kept it before it looked for "Various Artists": not trusted any more
+    use conductor::catalog::text::{ak, alk};
+    let old = format!("{}|{}|lead", ak("Omega & Guests"), alk("Guest Night"));
+    sqlx::query("INSERT INTO catalog_cache (kind, key, value, at) VALUES ('album', ?, NULL, strftime('%s', 'now'))")
+        .bind(&old)
+        .execute(&s.st.db)
+        .await
+        .unwrap();
     let albums = s.ok("search3", &[("query", "Guest Night"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
         .as_array()
         .unwrap()

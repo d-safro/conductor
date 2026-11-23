@@ -348,9 +348,11 @@ pub async fn album_tracks(st: &AppState, album_id: &str) -> Vec<Value> {
 /// The Deezer album that is this library album (same name, same artist, most of your songs on it).
 pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[String]) -> Option<String> {
     // artists credited together ("Андрей Макаревич & Папоротник") are often under the first one only: searched
-    // for that too when the whole name finds nothing. (Its own key, so a miss kept from before is asked again.)
+    // for that too when the whole name finds nothing.
     let lead = text::lead_artist(artist);
-    let key = format!("{}|{}{}", ak(artist), alk(name), if lead.is_some() { "|lead" } else { "" });
+    // (`v2`: what's kept is looked for the 1.5.2 way, the first-named artist and "Various Artists" too; a miss kept
+    // by an older version is asked again rather than trusted for a week)
+    let key = format!("{}|{}|v2", ak(artist), alk(name));
     if let Some(hit) = cache_get(st, "album", &key, 7).await {
         return hit;
     }
