@@ -6,6 +6,16 @@ What changed in each release, newest first. The full notes for each are on the
 
 ## Unreleased (0.6.0)
 
+### Security
+- **Every web page runs only its own script** (Content-Security-Policy with the script's hash, instead of allowing any
+  inline script), so markup that got into a page some other way (a tag in a song's title, say) can't run.
+- **Podium and setup** had no such policy at all; they now also refuse to be shown inside another site's frame (so
+  nobody can lay a page over them and have an admin click through) and aren't cached.
+- **Podium's sign-in cookie is Secure** when you sign in over HTTPS through a proxy on the server (Prelude's Caddy, a
+  Cloudflare Tunnel, Tailscale), so a browser never sends it over plain HTTP.
+- Every answer says `nosniff` and `same-origin` referrers; setup also counts requests that came through Cloudflare or
+  Tailscale as from elsewhere by their own headers.
+
 ### New
 - **Conversions are kept** (`<data>/cache/transcode`, `transcode_cache_mb`, 1000 MB): a song converted for an app
   (another format, a lower bitrate) is written to the cache while the app is already sent it, so ffmpeg is done in a

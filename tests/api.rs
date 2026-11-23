@@ -5059,3 +5059,44 @@ async fn conversions_are_cached_and_take_turns() {
     assert_eq!(cache.as_deref(), Some("miss"), "the file changed: converted again");
     assert!(len > before, "the longer song: {len} > {before}");
 }
+
+#[tokio::test]
+async fn pages_and_answers_carry_their_protections() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let get = |p: &'static str| s.http.get(format!("{}{p}", s.base)).send();
+    // Podium and Recital: only their own script (by hash), never framed by another site
+    for (p, framed_by_header) in [("/admin", true), ("/", false)] {
+        let r = get(p).await.unwrap();
+        let csp = r.headers()["content-security-policy"].to_str().unwrap().to_string();
+        let script = csp.split(';').map(str::trim).find(|d| d.starts_with("script-src")).unwrap().to_string();
+        assert!(script.contains("'sha256-") && !script.contains("unsafe-inline"), "{p}: {csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{p}: {csp}");
+        if framed_by_header {
+            assert_eq!(r.headers()["x-frame-options"], "DENY");
+        }
+        assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    }
+    // API answers aren't to be read as anything else
+    let r = s.http.get(s.url("ping", &[])).send().await.unwrap();
+    assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    // Podium's sign-in cookie: Secure when it came over HTTPS through a proxy on this computer, not otherwise
+    let login = |proto: Option<&'static str>| {
+        let mut b = s
+            .http
+            .post(format!("{}/admin/api/login", s.base))
+            .header("X-Conductor", "1")
+            .json(&serde_json::json!({ "username": USER, "password": PASS }));
+        if let Some(p) = proto {
+            b = b.header("X-Forwarded-Proto", p);
+        }
+        b.send()
+    };
+    let plain = login(None).await.unwrap();
+    let cookie = plain.headers()["set-cookie"].to_str().unwrap().to_string();
+    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict") && !cookie.contains("Secure"), "{cookie}");
+    let tls = login(Some("https")).await.unwrap();
+    assert!(tls.headers()["set-cookie"].to_str().unwrap().contains("; Secure"));
+}

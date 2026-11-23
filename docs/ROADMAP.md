@@ -14,9 +14,10 @@ start: your data, settings, the API and Conductor's own extensions keep working 
    with the music on a USB drive (the drive guard). CI covers the tests and the service install, not a real machine.
 4. **A release candidate run.** 1.0-rc on a real home server for a couple of weeks: memory, errors, scans and the
    daily backups looked at along the way.
-5. **A last security pass on what faces the internet**, now that Prelude puts Conductor on a domain: headers, rate
-   limits, `/setup`, Jam and share pages behind Caddy and tunnels. (The dependency vulnerability check is in CI now;
-   its first run found the bundled SQLite's CVE, fixed by moving to sqlx 0.9.)
+5. ~~**A last security pass on what faces the internet.**~~ Done: every page runs only its own script (hashed CSP);
+   Podium and setup can't be framed or cached; Podium's cookie is Secure over HTTPS; proxies (Caddy, Cloudflare,
+   Tailscale) never count as "this computer" for setup; dependencies are checked in CI (which found and fixed the
+   SQLite CVE in 0.5.1).
 6. ~~**A load test.**~~ Done: up to 64 apps streaming and converting at once, with a full rescan; it found ffmpeg
    unbounded (every core, ~50 MB each), fixed by the conversion cache and slots. Still to do on a small machine (a
    Raspberry Pi), with the numbers in the notes.

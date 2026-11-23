@@ -40,7 +40,10 @@ pub fn loopback_host(host: &str) -> bool {
 fn local(req: &Request) -> bool {
     let peer = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>().is_some_and(|c| c.0.ip().is_loopback());
     let h = req.headers();
-    let proxied = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"].iter().any(|k| h.contains_key(*k));
+    // (and the headers Cloudflare's tunnel and Tailscale serve add, in case one ever leaves out X-Forwarded-For)
+    let proxied = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "cf-connecting-ip", "true-client-ip", "tailscale-user-login"]
+        .iter()
+        .any(|k| h.contains_key(*k));
     let host = h.get(header::HOST).and_then(|v| v.to_str().ok()).map(String::from).or_else(|| req.uri().authority().map(|a| a.to_string()));
     peer && !proxied && host.as_deref().is_some_and(loopback_host)
 }
@@ -61,7 +64,9 @@ async fn page(State(st): State<Shared>, req: Request) -> Response {
     if !allowed(no_users(&st).await, local(&req), token_of(&req).as_deref(), &st.setup_token) {
         return closed();
     }
-    Html(PAGE).into_response()
+    static C: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| crate::page::csp(PAGE, crate::page::ADMIN_POLICY));
+    ([(header::CONTENT_SECURITY_POLICY, C.as_str()), (header::X_FRAME_OPTIONS, "DENY"), (header::CACHE_CONTROL, "no-store")], Html(PAGE))
+        .into_response()
 }
 
 async fn status(State(st): State<Shared>, req: Request) -> Response {
@@ -119,6 +124,25 @@ mod tests {
         assert!(!allowed(true, false, Some("x"), "t"));
         assert!(!allowed(true, false, Some(""), ""));
         assert!(!allowed(false, true, Some("t"), "t"), "closed once someone has an account");
+    }
+
+    #[test]
+    fn passed_on_by_a_proxy_is_never_from_this_computer() {
+        use axum::{extract::ConnectInfo, http::Request};
+        let req = |extra: Option<(&str, &str)>| {
+            let mut b = Request::builder().uri("/setup").header("host", "127.0.0.1:4533");
+            if let Some((k, v)) = extra {
+                b = b.header(k, v);
+            }
+            let mut r = b.body(axum::body::Body::empty()).unwrap();
+            r.extensions_mut().insert(ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 50000))));
+            r
+        };
+        assert!(super::local(&req(None)));
+        // Caddy, a Cloudflare Tunnel, Tailscale serve: they all connect from 127.0.0.1 for everyone
+        for h in ["x-forwarded-for", "forwarded", "x-forwarded-proto", "cf-connecting-ip", "true-client-ip", "tailscale-user-login"] {
+            assert!(!super::local(&req(Some((h, "203.0.113.9")))), "{h}");
+        }
     }
 
     #[test]

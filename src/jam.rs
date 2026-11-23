@@ -28,6 +28,12 @@ use crate::{
 
 const PAGE: &str = include_str!("../web/jam/index.html");
 const LIFETIME_MS: i64 = 12 * 3600 * 1000;
+/// (its own script by hash: crate::page)
+fn csp() -> &'static str {
+    static C: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| crate::page::csp(PAGE, CSP));
+    &C
+}
+
 const CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; \
                    img-src 'self' https://*.dzcdn.net data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -160,7 +166,7 @@ async fn page(State(st): State<Shared>, Path(token): Path<String>) -> Response {
     let headers = [
         (header::CONTENT_TYPE, "text/html; charset=utf-8"),
         (header::CACHE_CONTROL, "no-store"),
-        (header::CONTENT_SECURITY_POLICY, CSP),
+        (header::CONTENT_SECURITY_POLICY, csp()),
     ];
     if exists(&st, &token) {
         (StatusCode::OK, headers, PAGE).into_response()

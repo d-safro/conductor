@@ -22,6 +22,7 @@ pub mod online;
 pub mod player;
 pub mod prelude;
 pub mod scrobble;
+pub mod page;
 pub mod similar;
 pub mod transcode;
 pub mod spotify;

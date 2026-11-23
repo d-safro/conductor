@@ -28,10 +28,25 @@ const PAGE: &str = include_str!("../web/admin/index.html");
 const COOKIE: &str = "conductor_admin";
 const HOURS: i64 = 12;
 
+/// Podium itself: only its own script, never inside another site's frame, never cached.
+async fn page() -> Response {
+    static C: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| crate::page::csp(PAGE, crate::page::ADMIN_POLICY));
+    ([(header::CONTENT_SECURITY_POLICY, C.as_str()), (header::X_FRAME_OPTIONS, "DENY"), (header::CACHE_CONTROL, "no-store")], Html(PAGE))
+        .into_response()
+}
+
+/// Whether this request came over HTTPS: its own, or (from a proxy on this computer, as Prelude's Caddy, a Cloudflare
+/// Tunnel or Tailscale serve are) what the proxy says it was.
+fn https(h: &HeaderMap, peer: std::net::SocketAddr) -> bool {
+    peer.ip().is_loopback()
+        && (h.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).is_some_and(|p| p.eq_ignore_ascii_case("https"))
+            || h.get("forwarded").and_then(|v| v.to_str().ok()).is_some_and(|f| f.to_ascii_lowercase().contains("proto=https")))
+}
+
 pub fn routes() -> Router<Shared> {
     Router::new()
-        .route("/admin", get(|| async { Html(PAGE) }))
-        .route("/admin/", get(|| async { Html(PAGE) }))
+        .route("/admin", get(page))
+        .route("/admin/", get(page))
         .route("/admin/api/login", post(login))
         .route("/admin/api/logout", post(logout))
         .route("/admin/api/status", get(status))
@@ -128,7 +143,9 @@ async fn login(
     }
     let tok = format!("{}{}", db::random_id(), db::random_id());
     st.native_tokens.lock().await.insert(format!("admin:{tok}"), (u.id, now() + HOURS * 3600));
-    let c = format!("{COOKIE}={tok}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age={}", HOURS * 3600);
+    // Secure when it came over HTTPS (a domain through Prelude's proxy): the browser then never sends it in the clear
+    let secure = if https(&h, peer) { "; Secure" } else { "" };
+    let c = format!("{COOKIE}={tok}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age={}{secure}", HOURS * 3600);
     let mut r = Json(json!({ "ok": true, "name": u.name })).into_response();
     r.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_str(&c).unwrap());
     r

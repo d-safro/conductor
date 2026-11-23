@@ -17,7 +17,8 @@ const CSP: &str = "default-src 'self'; script-src 'unsafe-inline'; style-src 'un
                    media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 async fn page() -> impl IntoResponse {
-    ([(header::CONTENT_SECURITY_POLICY, CSP), (header::CACHE_CONTROL, "no-cache")], Html(PAGE))
+    static C: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| crate::page::csp(PAGE, CSP));
+    ([(header::CONTENT_SECURITY_POLICY, C.as_str()), (header::CACHE_CONTROL, "no-cache")], Html(PAGE))
 }
 
 pub fn routes() -> Router<Shared> {

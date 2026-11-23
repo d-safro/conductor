@@ -140,6 +140,13 @@ pub fn router(state: Shared) -> Router {
         .merge(crate::brand::routes())
         .merge(crate::prelude::web::routes())
         .merge(crate::player::routes())
+        .layer(axum::middleware::map_response(|mut r: Response| async move {
+            // nothing sent here is to be read as another type than it says, or tells other sites where it came from
+            let h = r.headers_mut();
+            h.entry("x-content-type-options").or_insert(axum::http::HeaderValue::from_static("nosniff"));
+            h.entry("referrer-policy").or_insert(axum::http::HeaderValue::from_static("same-origin"));
+            r
+        }))
         .with_state(state)
 }
 
