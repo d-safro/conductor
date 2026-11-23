@@ -72,9 +72,7 @@ jobs:
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           for pair in x86_64:amd64 aarch64:arm64; do
             install -D -m 755 "art/conductor-linux-${pair%%:*}/conductor" packaging/linux/build/conductor
-            for p in deb rpm archlinux; do
-              VERSION="$v" ARCH="${pair#*:}" ~/go/bin/nfpm package -p "$p" -f packaging/linux/nfpm.yaml -t out/
-            done
+            NFPM=~/go/bin/nfpm packaging/linux/build.sh "$v" "${pair#*:}" out
           done
           (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           install -m 755 art/conductor-linux-x86_64/conductor bin/conductor-amd64
