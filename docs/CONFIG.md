@@ -21,6 +21,8 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | `ffmpeg` | (not set) | ffmpeg for transcoding; found on PATH when not set. |
 | `transcode_slots` | 0 | How many ffmpegs convert at once as a rule (each uses about a core and 50 MB while it works). When they're all busy, a song waits half a second for one, then starts anyway, up to four times as many (at least 8); past that it waits its turn (up to 30 s). ffmpeg runs at a lower priority than everything else. 0: half the cores, at least 2. |
 | `transcode_cache_mb` | 1000 | Converted songs are kept in `<data>/cache/transcode` (played again, and seeking, from there); the least recently used go when it's bigger than this. |
+| `loudness_analysis` | true | Sound levelling: songs whose files have no ReplayGain tags are measured in the background (ffmpeg at the lowest priority, one song at a time, resting between songs), and the apps get the measured gain as their ReplayGain, so every song plays at the same loudness. Tags in the files always win. About half a second to a few seconds a song, once; a changed file is measured again. Podium shows how far it is. |
+| `loudness_threads` | 1 | How many songs are measured at the same time (each uses about a core and 70 MB while it works). |
 | `backup_keep` | 7 | How many daily backups are kept (0: none are made). `conductor backup` makes one any time. |
 | `backup_dir` | (not set) | Where the daily backups go (default: `<data_dir>/backups`). |
 

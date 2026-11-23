@@ -50,6 +50,15 @@ pub struct TrackRow {
     pub rg_track_peak: Option<f64>,
     pub rg_album_gain: Option<f64>,
     pub rg_album_peak: Option<f64>,
+    // sound levelling: measured where the tags have nothing (crate::loudness)
+    #[sqlx(default)]
+    pub lm_loudness: Option<f64>,
+    #[sqlx(default)]
+    pub lm_peak: Option<f64>,
+    #[sqlx(default)]
+    pub lm_album_loudness: Option<f64>,
+    #[sqlx(default)]
+    pub lm_album_peak: Option<f64>,
     pub album_artist_id: String,
     pub album_artist_name: String,
     pub play_count: Option<i64>,
@@ -139,17 +148,17 @@ pub fn song_json(t: &TrackRow) -> Value {
     if let Some(g) = t.genre.as_deref().and_then(|g| crate::library::split_genres(g).into_iter().next()) {
         put(&mut v, "genre", g); // the first; all of them are in "genres"
     }
-    let mut rg = serde_json::Map::new();
-    for (k, x) in [
-        ("trackGain", t.rg_track_gain),
-        ("trackPeak", t.rg_track_peak),
-        ("albumGain", t.rg_album_gain),
-        ("albumPeak", t.rg_album_peak),
-    ] {
-        if let Some(x) = x {
-            rg.insert(k.into(), x.into());
-        }
-    }
+    // the tags', else what Conductor measured (sound levelling)
+    let rg = crate::loudness::replay_gain(&crate::loudness::Levels {
+        track_gain: t.rg_track_gain,
+        track_peak: t.rg_track_peak,
+        album_gain: t.rg_album_gain,
+        album_peak: t.rg_album_peak,
+        loudness: t.lm_loudness,
+        peak: t.lm_peak,
+        album_loudness: t.lm_album_loudness,
+        album_peak_measured: t.lm_album_peak,
+    });
     // OpenSubsonic's fields, always there (empty or 0 when not known), as Navidrome sends them: some apps expect them
     put(&mut v, "replayGain", Value::Object(rg));
     put(&mut v, "isrc", t.isrc.iter().cloned().collect::<Vec<_>>());
