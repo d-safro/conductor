@@ -17,14 +17,16 @@
   <b>Subsonic / OpenSubsonic</b>.<br>One Rust program for Linux (x86-64 and ARM64) and Windows: your library, mixes, lyrics, a web player, and downloads if you want them.
 </p>
 
-> Early development, used daily by its author. Conductor was called Maestro until November 2026: `MAESTRO_*`
-> settings still work, and an older install's data is moved to the new names when it starts.
+> Stable since 1.0 (November 2026): your data, settings, backups and the API keep working across every 1.x release
+> ([STABILITY.md](docs/STABILITY.md)). Conductor was called Maestro before: `MAESTRO_*` settings still work, and an
+> older install's data is moved to the new names when it starts.
 
 ## Highlights
 
 - **Your library, safely:** fast scans that skip unchanged files, ids that survive rescans, and a guard that won't wipe anything when a USB drive drops.
 - **Plays everywhere:**
-  - the Subsonic API for any app;
+  - the Subsonic / OpenSubsonic API for any app (tried with Encore, Tempus, Ultrasonic and Feishin), music folders
+    and whole-album downloads included;
   - **Recital**, a small built-in web player;
   - Encore's extras for phone, desktop and watch.
 - **Gets music you don't have, if you want it** (everything else works without it):
@@ -32,28 +34,41 @@
   - search shows what you don't have, and hearting fetches it from Soulseek through slskd (**Stagehand**);
   - songs you only try out come and go as **Auditions**;
   - Lidarr's wanted albums too.
-- **Made for you:** Discover Weekly, Release Radar, Daily Mixes and the Daylist (**Repertoire**); concerts near you (**Marquee**); your year in review (**Curtain Call**).
+- **Made for you, no AI needed:** a daily mix from what you play; Discover Weekly, Release Radar, Daily Mixes and the
+  Daylist (**Repertoire**); concerts near you (**Marquee**); your year in review (**Curtain Call**).
+- **Sound levelling:** songs play at the same loudness in every app that does ReplayGain, also the ones whose files
+  don't say how loud they are: Conductor measures those itself, quietly in the background.
+- **Converts as apps ask** (any format, any bitrate) with ffmpeg, keeping the result for the next time and never
+  letting conversions swamp the computer.
 - **Brings your history with you** (**Transpose**): Spotify, Apple Music / iTunes, YouTube Music, Last.fm, ListenBrainz and playlist files, matched to your library and undoable.
 - **Optional AI, all local:** lyrics translation (**Libretto**), a DJ between songs (**Interlude**), song ID (**Pitch**).
 - **Easy to set up:** **Prelude** asks a few questions and tests each answer. It can set up everything around Conductor for
   you, in one Docker folder started together: the downloader (inside a VPN with a kill switch, if you like), Lidarr,
   AudioMuse-AI, Pitch, Metronome, and, only if you choose AI, Ollama and Interlude's voice.
 - **Safe to run for years:** a backup every day (database, its key and your settings, in one zip) and `conductor restore` to bring one back.
-- **Share and manage:** share links anyone can play without an account; users managed from any Subsonic app or Podium.
+- **Share and manage:** share links anyone can play without an account; users managed from any Subsonic app or
+  **Podium**, which also changes every setting.
 
 Everything, in detail: [docs/FEATURES.md](docs/FEATURES.md). Installing, connecting apps, upgrading and troubleshooting: [docs/GUIDE.md](docs/GUIDE.md). Every setting: [docs/CONFIG.md](docs/CONFIG.md). What changed: [CHANGELOG.md](CHANGELOG.md); what stays the same from 1.0: [docs/STABILITY.md](docs/STABILITY.md).
 
 ## Get it
 
-Download the program for your system from the [latest release](../../releases/latest) (Linux x86-64 and ARM64,
-Windows), use the Docker image, or build it (below). Then run **`conductor setup`**; Prelude walks you through the
-rest.
+Download it from the [latest release](../../releases/latest): a package for Debian / Ubuntu (`.deb`), Fedora /
+openSUSE (`.rpm`) or Arch, the program on its own (Linux x86-64 and ARM64, Windows), or use the Docker image, or build
+it (below). Then run **`conductor setup`**; Prelude walks you through the rest. With a package, Conductor runs as a
+system service as its own user:
+
+```bash
+sudo -u conductor conductor --config /var/lib/conductor/config.toml setup
+sudo systemctl enable --now conductor
+```
 
 ```bash
 docker run -d --name conductor -p 4533:4533 -v conductor-data:/data -v /path/to/music:/music:ro ghcr.io/d-safro/conductor
 ```
 
-(With Docker, the first admin is made at `http://<server>:4533/setup`.) Coming from Navidrome? Prelude offers to
+(With Docker, the first admin is made at `http://<server>:4533/setup`; `docker exec conductor conductor setup link`
+shows the one-time link for doing it from another computer.) Coming from Navidrome? Prelude offers to
 bring everything over, keeping your songs' ids so your apps carry on where they were.
 
 ## The parts, by name
@@ -110,7 +125,8 @@ By hand instead: `cp config.example.toml config.toml`, set your music folder, th
 Or with the environment only: `CONDUCTOR_MUSIC=/path/to/music CONDUCTOR_ADMIN_USER=me CONDUCTOR_ADMIN_PASSWORD=… conductor`.
 
 Other commands: `scan [--full]`, `user passwd NAME`, `apikey NAME [LABEL]` (prints a new API key),
-`backup [FILE]` and `restore FILE [--force]`.
+`backup [FILE]`, `restore FILE [--force]`, `setup link` (the one-time link for making the first admin) and `health`
+(exits 0 when the server answers; Docker's health check). `conductor --help` lists them all.
 
 **Backups:** every day Conductor saves one zip in `<data>/backups` (the newest 7 kept; `backup_keep`, `backup_dir`)
 with a consistent copy of the database, `secret.key` (the saved passwords need it), your settings and the playlist
@@ -121,8 +137,8 @@ private.
 **Moving over from Navidrome:** stop Navidrome, copy its data folder, then
 `conductor import-navidrome /copy/navidrome.db --artwork /copy/artwork`. Songs, albums and artists keep
 Navidrome's ids (so apps that remember ids keep working), and plays, ratings, stars, play history, playlists (with
-their pictures and smart rules), play queues and radio stations come along. Users come over by name; set each
-password is carried over from Navidrome's encrypted copy (`--nd-key` if Navidrome had its own key). It runs only on
+their pictures and smart rules), play queues and radio stations come along. Users come over by name, each with
+their password, from Navidrome's encrypted copy (`--nd-key` if Navidrome had its own key). It runs only on
 a server with no plays, hearts or playlists yet; to run it again, add `--replace`, which replaces all of them (what
 it brought over and everything since) with Navidrome's (`conductor setup import` asks first, and with `--yes`
 leaves them).
@@ -139,6 +155,8 @@ cargo test          # unit tests + an end-to-end test that makes a tiny music fo
 cargo clippy --all-targets
 ```
 
-CI (`.github/workflows/ci.yml`) runs both on Linux and Windows.
+CI (`.github/workflows/ci.yml`) runs both on Linux and Windows, checks every call's answer against the recorded API
+contract (`docs/api/`), installs the Windows service, installs and removes the Linux packages on Debian, Fedora and
+Arch, and checks the dependencies against the RustSec advisories.
 
 > Scratch runs against a real music folder: set `CONDUCTOR_READ_ONLY=1`, or downloads, trial songs and covers write into it.
