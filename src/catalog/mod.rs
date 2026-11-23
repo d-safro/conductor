@@ -380,6 +380,13 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
             // only in the plain one. (One more request per album; the match is kept for a week.)
         }
     }
+    // nothing by the artist: the album may be one Deezer lists as "Various Artists" (a record with guests on most
+    // songs). Taken only when at least half your songs are on it (below).
+    if cands.is_empty() {
+        // (Deezer didn't answer: nothing is kept)
+        let found = st.catalog.dz.try_list("search/album", &[("q", &clean), ("limit", "15")]).await?;
+        cands.extend(found.into_iter().filter(|a| text::is_various(s(&a["artist"], "name"))));
+    }
     let want = alk(name);
     let mine = edition_tier(name);
     let mut scored: Vec<(f64, Value)> = vec![];
@@ -408,6 +415,9 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
         // Horses (2009 Mix)" and "(Acoustic Version)") isn't a better match for it
         let keys: HashSet<String> = tracks.iter().map(|t| tk(s(t, "title"))).collect();
         let cover = have.iter().filter(|h| keys.contains(*h)).count() as f64 / have.len().max(1) as f64;
+        if text::is_various(s(&a["artist"], "name")) && !same_artist(artist, s(&a["artist"], "name")) && cover < 0.5 {
+            continue; // anyone's compilation with this name
+        }
         // (all else the same: the one with fewer songs, nearer the album as it came out)
         let total = sc + cover * 3.0 - tracks.len() as f64 * 0.001;
         if best.as_ref().is_none_or(|(b, _)| total > *b) {

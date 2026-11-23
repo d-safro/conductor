@@ -4,6 +4,13 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.5.2 (2026-11-23)
+
+### Fixed
+- **Albums Deezer lists as "Various Artists" are completed** (a record with guests on most songs, filed under its
+  own artist in your library): when nothing turns up by the artist, Deezer's "Various Artists" album of that name is
+  taken, but only when at least half your songs are on it, so someone's compilation that shares the name isn't.
+
 ## 1.5.1 (2026-11-23)
 
 ### Fixed

@@ -849,6 +849,13 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                     ed(id, "", 0)
                 }
                 "/search" => json!({ "data": if q.contains("psycho") { vec![pk.clone(), one.clone()] } else { vec![] } }),
+                // a record with guests, listed by Deezer as "Various Artists"; and anyone's compilation with the
+                // same name as one of your albums
+                "/search/album" if q.contains("guest") && !q.contains("artist") && !q.contains("omega") => json!({ "data": [
+                    { "id": 80, "title": "Guest Night", "artist": { "id": 5080, "name": "Various Artists" }, "record_type": "album", "nb_tracks": 3 },
+                ] }),
+                "/album/80/tracks" => side(8000, &["Opening", "Second Song", "Closing"]),
+                "/album/80" => json!({ "id": 80, "title": "Guest Night", "artist": { "id": 5080, "name": "Various Artists" }, "nb_tracks": 3 }),
                 // Deezer has no "Alpha & The Band", only Alpha
                 "/search/album" if q.contains("alpha") && q.contains("band") => json!({ "data": [] }),
                 "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
@@ -5833,6 +5840,36 @@ async fn an_album_by_artists_together_is_completed_from_the_first_ones() {
     let al = s.ok("getAlbum", &[("id", &id)]).await;
     let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
     assert_eq!(titles, ["One", "⬇ Three and a Half"]);
+}
+
+#[tokio::test]
+async fn an_album_deezer_lists_as_various_artists_is_completed_only_when_its_songs_are_yours() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    // the record itself (two of its songs), and another artist's album with the same name and none of its songs
+    for (i, (who, title)) in [("Omega & Guests", "Opening"), ("Omega & Guests", "Closing"), ("Zeta", "Something Else")].into_iter().enumerate() {
+        let tags = [("title", title), ("artist", who), ("album_artist", who), ("album", "Guest Night")];
+        tone_tags(&s.music.join(format!("{who}/Guest Night/{title}.flac")), i as u32 + 1, &tags);
+    }
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let albums = s.ok("search3", &[("query", "Guest Night"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for (who, want) in [("Omega & Guests", vec!["Opening", "⬇ Second Song", "Closing"]), ("Zeta", vec!["Something Else"])] {
+        let id = albums.iter().find(|a| a["artist"] == who).unwrap_or_else(|| panic!("{who}: {albums:?}"))["id"].as_str().unwrap().to_string();
+        let al = s.ok("getAlbum", &[("id", &id)]).await;
+        let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+        assert_eq!(titles, want, "{who}");
+    }
 }
 
 #[tokio::test]

@@ -164,6 +164,11 @@ pub fn lead_artist(name: &str) -> Option<String> {
     (lead.chars().count() >= 2 && lead != name.trim()).then(|| lead.to_string())
 }
 
+/// "Various Artists" (Deezer's name for compilations and records with guests on most songs), in any alphabet.
+pub fn is_various(name: &str) -> bool {
+    matches!(ak(name).as_str(), "variousartists" | "various" | "va" | "raznyeispolniteli" | "sbornik")
+}
+
 pub fn same_artist(a: &str, b: &str) -> bool {
     let (a, b) = (ak(a), ak(b));
     !a.is_empty() && !b.is_empty() && (a == b || (a.len().min(b.len()) >= 4 && (a.contains(&b) || b.contains(&a))))
@@ -215,6 +220,7 @@ mod tests {
         assert_eq!(lead_artist("Аквариум"), None);
         assert_eq!(lead_artist("AC/DC"), None);
         assert!(same_artist("Андрей Макаревич & Папоротник", "Андрей Макаревич"));
+        assert!(is_various("Various Artists") && is_various("Разные исполнители") && !is_various("Various Cruelties"));
         assert!(EDITION.is_match("Remain in Light (Deluxe Version)"));
         for (t, tier) in [
             ("Sticky Fingers", 0),
