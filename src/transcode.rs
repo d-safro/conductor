@@ -101,7 +101,22 @@ fn ffmpeg(cfg: &Config) -> tokio::process::Command {
 
 fn args(cmd: &mut tokio::process::Command, src: &Path, x: Target, kbps: i64) {
     cmd.arg("-i").arg(src);
-    cmd.args(["-map", "0:a:0", "-vn", "-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container]);
+    cmd.args(["-map", "0:a:0", "-vn"]);
+    // Vorbis and Opus take only some bitrates for some channels and sample rates: Vorbis none at all for a 96 kHz
+    // FLAC, nor 320k for a mono song or 32k for a stereo one; Opus at most 256k for mono. ffmpeg then failed and the
+    // song didn't play. Given stereo (Vorbis at 44.1 kHz, between 48k and 480k), every song converts.
+    let kbps = match x.codec {
+        "libvorbis" => {
+            cmd.args(["-ac", "2", "-ar", "44100"]);
+            kbps.clamp(48, 480)
+        }
+        "libopus" => {
+            cmd.args(["-ac", "2"]);
+            kbps
+        }
+        _ => kbps,
+    };
+    cmd.args(["-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container]);
 }
 
 fn dir(cfg: &Config) -> PathBuf {
