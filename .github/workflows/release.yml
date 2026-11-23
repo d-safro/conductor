@@ -71,8 +71,9 @@ jobs:
           # the Linux packages (.deb, .rpm, Arch) of both programs (packaging/linux/nfpm.yaml; tested in ci.yml)
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           for pair in x86_64:amd64 aarch64:arm64; do
+            install -D -m 755 "art/conductor-linux-${pair%%:*}/conductor" packaging/linux/build/conductor
             for p in deb rpm archlinux; do
-              VERSION="$v" ARCH="${pair#*:}" BIN="art/conductor-linux-${pair%%:*}/conductor" ~/go/bin/nfpm package -p "$p" -f packaging/linux/nfpm.yaml -t out/
+              VERSION="$v" ARCH="${pair#*:}" ~/go/bin/nfpm package -p "$p" -f packaging/linux/nfpm.yaml -t out/
             done
           done
           (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)

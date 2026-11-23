@@ -1,5 +1,6 @@
 # Conductor's Linux packages (.deb, .rpm, Arch), made by nfpm from the release's static program:
-#   VERSION=0.6.0 ARCH=amd64 BIN=path/to/conductor nfpm package -p deb -f packaging/linux/nfpm.yaml -t out/
+#   install -D -m 755 path/to/conductor packaging/linux/build/conductor   (nfpm takes no variables in paths)
+#   VERSION=0.6.0 ARCH=amd64 nfpm package -p deb -f packaging/linux/nfpm.yaml -t out/
 name: conductor
 version: ${VERSION}
 arch: ${ARCH}
@@ -16,7 +17,7 @@ license: AGPL-3.0-or-later
 recommends:
   - ffmpeg
 contents:
-  - src: ${BIN}
+  - src: packaging/linux/build/conductor
     dst: /usr/bin/conductor
     file_info: { mode: 0755 }
   - src: packaging/linux/conductor.service

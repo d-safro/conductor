@@ -55,7 +55,8 @@ jobs:
       - run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
       - name: the packages
         run: |
-          export VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1) ARCH=amd64 BIN=target/x86_64-unknown-linux-musl/release/conductor
+          export VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1) ARCH=amd64
+          install -D -m 755 target/x86_64-unknown-linux-musl/release/conductor packaging/linux/build/conductor
           mkdir -p dist
           for p in deb rpm archlinux; do ~/go/bin/nfpm package -p $p -f packaging/linux/nfpm.yaml -t dist/; done
           ls -la dist
