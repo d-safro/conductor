@@ -49,6 +49,7 @@ pub fn routes() -> Router<Shared> {
         .route("/admin/", get(page))
         .route("/admin/api/login", post(login))
         .route("/admin/api/logout", post(logout))
+        .route("/admin/api/settings", get(settings).post(set_setting))
         .route("/admin/api/status", get(status))
         .route("/admin/api/scan", post(scan))
         .route("/admin/api/requests", get(requests))
@@ -608,4 +609,144 @@ async fn new_api_key(State(st): State<Shared>, h: HeaderMap, Path(name): Path<St
         Ok(k) => Json(json!({ "key": k })).into_response(),
         Err(_) => err(StatusCode::NOT_FOUND, "No such user"),
     }
+}
+
+// ── Settings ──
+
+/// The settings reference (docs/CONFIG.md): Podium's Settings tab lists what it lists, as it describes them.
+const REFERENCE: &str = include_str!("../docs/CONFIG.md");
+/// Changed with `conductor setup`, not here: they move data or music.
+const NOT_HERE: &[&str] = &["data_dir", "libraries"];
+
+struct Setting {
+    section: String,
+    name: String,
+    default: String,
+    about: String,
+}
+
+fn reference() -> Vec<Setting> {
+    let mut out = vec![];
+    let mut section = String::new();
+    for line in REFERENCE.lines() {
+        if let Some(t) = line.strip_prefix("## ") {
+            section = t.trim().to_string();
+        } else if let Some(row) = line.strip_prefix("| `") {
+            let cells: Vec<&str> = row.splitn(3, " | ").collect();
+            if let [name, default, about] = cells.as_slice() {
+                let name = name.trim_end_matches('`').to_string();
+                if !NOT_HERE.contains(&name.as_str()) {
+                    out.push(Setting { section: section.clone(), name, default: default.trim().into(), about: about.trim_end_matches(" |").trim().into() });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What kind of value a setting takes, from its default.
+fn kind(s: &Setting) -> &'static str {
+    if crate::config::SECRET_KEYS.contains(&s.name.as_str()) {
+        "secret"
+    } else if s.default == "true" || s.default == "false" {
+        "bool"
+    } else if s.default.parse::<f64>().is_ok() {
+        "number"
+    } else if s.default.starts_with('[') {
+        "list"
+    } else {
+        "text"
+    }
+}
+
+fn config_file(st: &Shared) -> std::path::PathBuf {
+    st.cfg.config_path.clone().unwrap_or_else(|| st.cfg.data_dir.join("config.toml"))
+}
+
+/// Set by the environment (CONDUCTOR_<NAME>, or the old MAESTRO_<NAME>), which wins over the files.
+fn from_env(name: &str) -> bool {
+    ["CONDUCTOR_", "MAESTRO_"].iter().any(|p| std::env::var(format!("{p}{}", name.to_uppercase())).is_ok_and(|v| !v.trim().is_empty()))
+}
+
+async fn settings(State(st): State<Shared>, h: HeaderMap) -> Response {
+    if let Err(r) = admin(&st, &h, false).await {
+        return r;
+    }
+    let path = config_file(&st);
+    let d = match crate::prelude::Draft::load(&path) {
+        Ok(d) => d,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let mut sections: Vec<(String, Vec<Value>)> = vec![];
+    for s in reference() {
+        let k = kind(&s);
+        let set = d.cfg.contains_key(&s.name) || d.secrets.contains_key(&s.name);
+        // a secret's value is never sent, only whether there is one
+        let value = if k == "secret" { Value::Null } else { d.cfg.get(&s.name).and_then(|v| serde_json::to_value(v).ok()).unwrap_or(Value::Null) };
+        let row = json!({ "name": s.name, "default": s.default, "about": s.about, "kind": k, "set": set, "value": value, "env": from_env(&s.name) });
+        match sections.iter_mut().find(|(t, _)| *t == s.section) {
+            Some((_, rows)) => rows.push(row),
+            None => sections.push((s.section, vec![row])),
+        }
+    }
+    let sections: Vec<Value> = sections.into_iter().map(|(title, settings)| json!({ "title": title, "settings": settings })).collect();
+    Json(json!({ "file": path.display().to_string(), "sections": sections })).into_response()
+}
+
+#[derive(Deserialize)]
+struct SetSetting {
+    name: String,
+    /// null (or "") takes it out: the default again
+    value: Option<Value>,
+}
+
+async fn set_setting(State(st): State<Shared>, h: HeaderMap, Json(b): Json<SetSetting>) -> Response {
+    let u = match admin(&st, &h, true).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let Some(s) = reference().into_iter().find(|s| s.name == b.name) else {
+        return err(StatusCode::BAD_REQUEST, "That isn't a setting that can be changed here (music folders and the data folder: conductor setup)");
+    };
+    let path = config_file(&st);
+    let (before, mut d) = match (crate::prelude::Draft::load(&path), crate::prelude::Draft::load(&path)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")),
+    };
+    let bad = |m: &str| err(StatusCode::BAD_REQUEST, m);
+    match b.value.filter(|v| !v.is_null() && v.as_str() != Some("")) {
+        None => d.unset(&s.name),
+        Some(v) => match kind(&s) {
+            "bool" => match v.as_bool().or_else(|| v.as_str().and_then(|t| t.parse().ok())) {
+                Some(x) => d.set(&s.name, x),
+                None => return bad("on or off"),
+            },
+            "number" => match v.as_i64().or_else(|| v.as_str().and_then(|t| t.trim().parse().ok())) {
+                Some(x) => d.set(&s.name, x),
+                None => return bad("a whole number"),
+            },
+            "list" => {
+                let items: Vec<String> = match &v {
+                    Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(|t| t.trim().to_string())).collect(),
+                    Value::String(t) => t.split(',').map(|x| x.trim().to_string()).collect(),
+                    _ => return bad("a list"),
+                };
+                d.set(&s.name, toml::Value::Array(items.into_iter().filter(|x| !x.is_empty()).map(toml::Value::String).collect()));
+            }
+            _ => match v.as_str() {
+                Some(t) => d.set(&s.name, t.trim().to_string()),
+                None => return bad("text"),
+            },
+        },
+    }
+    // saved, then read back as Conductor reads it at start: a value it can't take goes back to what was there
+    if let Err(e) = d.save() {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"));
+    }
+    if let Err(e) = crate::config::Config::load(Some(path.clone())) {
+        let _ = before.save();
+        return bad(&format!("Conductor can't use that: {e:#}"));
+    }
+    tracing::info!(setting = %s.name, by = %u.name, "setting changed (used after a restart)");
+    Json(json!({ "ok": true, "restart": true, "env": from_env(&s.name) })).into_response()
 }

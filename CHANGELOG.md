@@ -17,6 +17,9 @@ What changed in each release, newest first. The full notes for each are on the
   Tailscale as from elsewhere by their own headers.
 
 ### New
+- **Settings in Podium**: every setting in the settings reference can be changed from the admin page (keys and
+  passwords go to secrets.toml and are never shown; a value Conductor can't use isn't saved; a restart uses them).
+  Music folders and the data folder stay with `conductor setup`.
 - **Conversions are kept** (`<data>/cache/transcode`, `transcode_cache_mb`, 1000 MB): a song converted for an app
   (another format, a lower bitrate) is written to the cache while the app is already sent it, so ffmpeg is done in a
   second or two however slowly the app listens; the same song again comes from the cache, with seeking.

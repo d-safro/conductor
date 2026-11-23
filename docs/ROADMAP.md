@@ -23,8 +23,8 @@ start: your data, settings, the API and Conductor's own extensions keep working 
    Raspberry Pi), with the numbers in the notes.
 
 ## Should be in 1.0
-7. **Settings in Podium**, so nothing needs the terminal after setup (the Last.fm key and secret, ListenBrainz,
-   downloads on or off, online lookups…).
+7. ~~**Settings in Podium.**~~ Done: every setting in the reference, changed from Podium › Settings (secrets never
+   shown); music folders and the data folder stay with `conductor setup`.
 8. **Encore's "Made for you" without AudioMuse-AI**, from Conductor's own "sounds like" (0.5.0). Moods need audio
    analysis and stay AudioMuse's.
 9. **Linux packages** for Conductor (.deb, .rpm, Arch), as Encore has.

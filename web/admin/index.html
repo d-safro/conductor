@@ -52,6 +52,12 @@
   .results { margin-top:8px; }
   .results td.file { word-break:break-word; max-width:420px; }
   .yes { color:var(--ok); } .no { color:var(--muted); }
+  .setting { display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 340px); gap:8px 16px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
+  .setting:first-of-type { border-top:0; }
+  .setting p { margin:2px 0 0; font-size:13px; }
+  .setting form.row input, .setting form.row select { flex:1 1 140px; min-width:0; font:inherit; }
+  .setting select { padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  @media (max-width: 640px) { .setting { grid-template-columns:1fr; } }
   .bar { display:inline-block; width:80px; height:6px; background:var(--line); border-radius:3px; vertical-align:middle; overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); }
 </style>
@@ -76,6 +82,7 @@
       <button data-tab="import" title="Bring your music in from other services">Transpose</button>
       <button data-tab="lidarr">Lidarr albums</button>
       <button data-tab="users">Users</button>
+      <button data-tab="settings">Settings</button>
     </nav>
     <span class="who" id="who"></span>
     <button class="act" id="logout">Sign out</button>
@@ -126,6 +133,13 @@
         <form class="row" id="addUser"><input id="nu" placeholder="Name" required><input id="np" type="password" placeholder="Password (6+)" required>
           <label><input type="checkbox" id="na"> admin</label><button>Add</button></form>
         <div class="err" id="userErr" role="alert"></div><div id="keyOut"></div></div>
+    </section>
+    <section id="settings" hidden>
+      <div class="card"><h2>Settings</h2>
+        <p class="muted">Saved to <code id="setFile"></code> (keys and passwords to secrets.toml beside it, which only the server's account can read).
+          <b>Restart Conductor to use a change.</b> Music folders and the data folder: <code>conductor setup</code>.</p>
+        <p class="err" id="setErr" role="alert"></p><p id="setOk" role="status"></p></div>
+      <div id="setList"></div>
     </section>
   </main>
 </div>
@@ -351,7 +365,45 @@ async function loadUsers() {
   $('userList').innerHTML = '<tr><th>Name</th><th>Role</th><th></th></tr>' + rows.map((u) =>
     `<tr><td>${esc(u.name)}</td><td>${u.admin ? 'admin' : 'user'}</td><td><button class="act" data-pw="${esc(u.name)}">Set password</button> <button class="act" data-key="${esc(u.name)}">New API key</button></td></tr>`).join('');
 }
-const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, import: loadImport, lidarr: loadGrabs, users: loadUsers };
+async function loadSettings() {
+  const r = await api('settings');
+  $('setFile').textContent = r.file;
+  $('setList').innerHTML = r.sections.map((sec) => `<div class="card"><h2>${esc(sec.title)}</h2>` + sec.settings.map((x) => {
+    const id = 'set-' + x.name;
+    const now = x.kind === 'secret' ? (x.set ? 'set' : 'not set') : x.set ? JSON.stringify(x.value) : `default (${x.default})`;
+    let control;
+    if (x.env) control = `<p class="muted">Set in the environment (<code>CONDUCTOR_${esc(x.name.toUpperCase())}</code>), which wins: change it there.</p>`;
+    else if (x.kind === 'bool') control = `<form class="row" data-setting="${esc(x.name)}" data-kind="bool"><select id="${id}" aria-label="${esc(x.name)}">
+        <option value="" ${!x.set ? 'selected' : ''}>default (${esc(x.default)})</option><option value="true" ${x.value === true ? 'selected' : ''}>on</option>
+        <option value="false" ${x.value === false ? 'selected' : ''}>off</option></select><button>Save</button></form>`;
+    else {
+      const val = x.kind === 'secret' || !x.set ? '' : Array.isArray(x.value) ? x.value.join(', ') : String(x.value);
+      const ph = x.kind === 'secret' ? (x.set ? 'set: type to replace' : 'not set') : x.kind === 'list' ? 'comma-separated' : String(x.default);
+      control = `<form class="row" data-setting="${esc(x.name)}" data-kind="${x.kind}"><input id="${id}" aria-label="${esc(x.name)}"
+        ${x.kind === 'secret' ? 'type="password" autocomplete="off"' : x.kind === 'number' ? 'inputmode="numeric"' : ''} value="${esc(val)}" placeholder="${esc(ph)}">
+        <button>Save</button>${x.set ? `<button type="button" class="act" data-clear="${esc(x.name)}">${x.kind === 'secret' ? 'Clear' : 'Default'}</button>` : ''}</form>`;
+    }
+    return `<div class="setting"><div><label for="${id}"><code>${esc(x.name)}</code></label> <span class="muted">· ${esc(now)}</span><p class="muted">${esc(x.about)}</p></div><div>${control}</div></div>`;
+  }).join('') + '</div>').join('');
+}
+async function saveSetting(name, value) {
+  $('setErr').textContent = ''; $('setOk').textContent = '';
+  try {
+    await api('settings', { method: 'POST', body: JSON.stringify({ name, value }) });
+    $('setOk').textContent = `Saved ${name}. Restart Conductor to use it.`;
+    await loadSettings();
+  } catch (x) { $('setErr').textContent = `${name}: ${x.message}`; }
+}
+document.addEventListener('submit', (e) => {
+  const f = e.target;
+  if (!f.dataset.setting) return;
+  e.preventDefault();
+  const v = f.querySelector('input, select').value;
+  if (f.dataset.kind === 'secret' && v === '') return; // nothing typed: keep it
+  saveSetting(f.dataset.setting, f.dataset.kind === 'bool' ? (v === '' ? null : v === 'true') : v === '' ? null : v);
+});
+document.addEventListener('click', (e) => { if (e.target.dataset && e.target.dataset.clear) saveSetting(e.target.dataset.clear, null); });
+const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, import: loadImport, lidarr: loadGrabs, users: loadUsers, settings: loadSettings };
 let current = 'status';
 function go(tab) {
   current = tab;
@@ -402,7 +454,7 @@ let searching = 0;
 document.addEventListener('submit', (e) => { if (e.target.dataset.search) { searching++; setTimeout(() => searching--, 20000); } }, true);
 // refresh the open tab, but not while you're typing or a search is running on the pick tab
 setInterval(() => {
-  if ($('app').hidden || current === 'users') return;
+  if ($('app').hidden || current === 'users' || current === 'settings') return;
   if (current === 'pick' && (searching > 0 || $('pickList').contains(document.activeElement))) return;
   if (current === 'import' && $('import').contains(document.activeElement)) return;
   loaders[current]().catch(() => {});

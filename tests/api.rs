@@ -5100,3 +5100,54 @@ async fn pages_and_answers_carry_their_protections() {
     let tls = login(Some("https")).await.unwrap();
     assert!(tls.headers()["set-cookie"].to_str().unwrap().contains("; Secure"));
 }
+
+#[tokio::test]
+async fn settings_from_podium() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
+    let api = |p: &str| format!("{}/admin/api/{p}", s.base);
+    assert_eq!(http.get(api("settings")).send().await.unwrap().status(), 401, "signed-in admins only");
+    http.post(api("login")).header("X-Conductor", "1").json(&serde_json::json!({"username": USER, "password": PASS})).send().await.unwrap();
+    let get = async || http.get(api("settings")).send().await.unwrap().json::<Value>().await.unwrap();
+    let find = |all: &Value, name: &str| {
+        all["sections"].as_array().unwrap().iter().flat_map(|s| s["settings"].as_array().unwrap().iter()).find(|x| x["name"] == name).cloned()
+    };
+    let all = get().await;
+    // every documented setting but the two that move data
+    assert!(find(&all, "data_dir").is_none() && find(&all, "libraries").is_none());
+    let lyr = find(&all, "lyrics_online").unwrap();
+    assert_eq!((lyr["kind"].as_str(), lyr["set"].as_bool()), (Some("bool"), Some(false)));
+    assert_eq!(find(&all, "lastfm_secret").unwrap()["kind"], "secret");
+    let set = |name: &'static str, value: Value| {
+        let http = http.clone();
+        let u = api("settings");
+        async move { http.post(u).header("X-Conductor", "1").json(&serde_json::json!({ "name": name, "value": value })).send().await.unwrap() }
+    };
+    // changes need the header (another site can't send it)
+    let no_header = http.post(api("settings")).json(&serde_json::json!({"name": "scan_interval_min", "value": 5})).send().await.unwrap();
+    assert_eq!(no_header.status(), 403);
+    assert_eq!(set("lyrics_online", Value::Bool(false)).await.status(), 200);
+    assert_eq!(set("scan_interval_min", "30".into()).await.status(), 200);
+    assert_eq!(set("discovery", "weekly-jams, daily-jams".into()).await.status(), 200);
+    assert_eq!(set("lastfm_secret", "s3cr3t-value".into()).await.status(), 200);
+    // a value Conductor can't take, a number that isn't, a setting that isn't one here
+    assert_eq!(set("scan_interval_min", "soon".into()).await.status(), 400);
+    assert_eq!(set("data_dir", "/tmp/x".into()).await.status(), 400);
+    let file = s.st.cfg.data_dir.join("config.toml");
+    let cfg = conductor::config::Config::load(Some(file.clone())).unwrap();
+    assert_eq!((cfg.lyrics_online, cfg.scan_interval_min, cfg.discovery.clone()), (false, 30, vec!["weekly-jams".to_string(), "daily-jams".into()]));
+    assert_eq!(cfg.lastfm_secret.as_deref(), Some("s3cr3t-value"));
+    // the secret is in secrets.toml, not config.toml, and never sent back
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cr3t"));
+    assert!(std::fs::read_to_string(file.with_file_name("secrets.toml")).unwrap().contains("s3cr3t-value"));
+    let all = get().await;
+    let sec = find(&all, "lastfm_secret").unwrap();
+    assert_eq!((sec["set"].as_bool(), sec["value"].is_null()), (Some(true), true));
+    assert!(!all.to_string().contains("s3cr3t"));
+    // back to the default
+    assert_eq!(set("lyrics_online", Value::Null).await.status(), 200);
+    assert!(find(&get().await, "lyrics_online").unwrap()["set"] == false);
+}

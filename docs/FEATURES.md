@@ -166,7 +166,9 @@ The detailed list. The [README](../README.md) has the short version.
   ListenBrainz / Last.fm if you linked them there.
 - **Recital**, the web player at `/` (also `/web`), built in: sign in, browse, search, queue, star, scrobble; phone and desktop, no outside files.
 - **Podium**, the admin page at `/admin` (admins only): status, scan now, songs asked for (retry / cancel), picking a Soulseek file by hand for songs the automatic search couldn't get, Lidarr albums,
-  users (add, set password, new API key).
+  users (add, set password, new API key),
+  and **Settings**: every setting from the settings reference, changed in place (keys and passwords kept in
+  secrets.toml and never shown; a restart uses them).
 - `GET /health` says `ok` or `degraded` (a music folder isn't connected).
 
 See `docs/api/` for the extension list.
