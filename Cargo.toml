@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "1.1.2"
+version = "1.2.0"
 edition = "2024"
 description = "A music server for Encore and any Subsonic / OpenSubsonic app"
 license = "AGPL-3.0-or-later"
