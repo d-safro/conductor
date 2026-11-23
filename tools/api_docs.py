@@ -97,8 +97,9 @@ EXTENSIONS = {
     "encore.forYou": ("\"Made for you\" without AudioMuse-AI: a mix from the artists you play most and the artists "
                       "that go with them (Conductor's own \"sounds like\"), about 60% artists new to you and 40% your "
                       "favourites' songs you haven't played in two weeks; the same artist never twice in a row. The same "
-                      "all day, a new one each day. Empty until something has been played or hearted.",
-                      [("getForYou", "count (default 50, at most 200).")], ""),
+                      "all day (made at the first ask of the day and kept, also as you play its songs), a new one each "
+                      "day. Empty until something has been played or hearted.",
+                      [("getForYou", "count (default 50, at most 200): the start of the day's mix.")], ""),
     "encore.smartPlaylists": ("Smart playlists in Navidrome's rule format (all / any, is, contains, gt, lt, "
                               "inTheRange, inTheLast, before / after, inPlaylist…; sort, order, limit). Not Subsonic "
                               "calls: through the Navidrome stand-in Encore uses.", [],
