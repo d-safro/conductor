@@ -16,6 +16,8 @@ What changed in each release, newest first. The full notes for each are on the
 - **`conductor restore` into another data folder** (a new computer, a moved folder) put the database there but brought
   back `config.toml` still naming the old folder, so the next start used the old one and the restored library seemed
   gone. The restored settings now keep the data folder the database went to.
+- **`conductor --help`**, or a mistyped command, made a database in the default data folder before saying "unknown
+  command; see the top of src/main.rs". Now nothing is opened, and the commands are listed.
 
 ## 1.0.0 (2026-11-22)
 

@@ -749,3 +749,23 @@ async fn a_spotify_playlist_brought_in_while_setting_up_a_new_server() {
     .unwrap();
     assert_eq!(rows, vec![("Learn to play".to_string(), 1)], "the playlist, with the song this library has");
 }
+
+#[test]
+fn a_mistyped_command_opens_nothing_and_help_lists_the_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let config = tmp.path().join("config.toml");
+    std::fs::write(&config, format!("data_dir = {:?}\n", data.to_str().unwrap())).unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_conductor")).arg("--config").arg(&config).args(args).output().unwrap()
+    };
+    for args in [&["--help"][..], &["help"]] {
+        let o = run(args);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(o.status.success() && out.contains("conductor backup [FILE]") && out.contains("conductor setup"), "{o:?}");
+    }
+    let o = run(&["bakcup"]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success() && err.contains("unknown command: bakcup") && err.contains("conductor backup [FILE]"), "{o:?}");
+    assert!(!data.exists(), "no database made for a command that isn't one");
+}
