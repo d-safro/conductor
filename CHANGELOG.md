@@ -51,6 +51,8 @@ What changed in each release, newest first. The full notes for each are on the
   when it failed, so Windows' restart-on-failure never happened. It now reports a failure as one, and the service is
   set to be started again 10 s after a failure, then 30 s, then every minute (`install.ps1` sets this on a service
   installed by 1.0.0 too).
+- **`install.ps1 -OpenFirewall` run again** (an upgrade) added another firewall rule each time. It now replaces the
+  one it made, so there's one rule, for the port given last.
 
 ## 1.0.0 (2026-11-22)
 

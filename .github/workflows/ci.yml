@@ -130,6 +130,13 @@ jobs:
           Copy-Item target/release/conductor.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1 pkg/
           powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -Admin ci
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+          # run again (an upgrade), twice, opening the firewall: one rule, not one per run
+          foreach ($run in 1, 2) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -SkipAdmin -OpenFirewall
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 run again failed" }
+          }
+          $rules = @(Get-NetFirewallRule -DisplayName "Conductor (music server)" -ErrorAction SilentlyContinue).Count
+          if ($rules -ne 1) { throw "$rules firewall rules after three runs" }
       - name: it runs, starts with Windows, answers /health and a ping, scans and streams the song
         shell: pwsh
         run: |

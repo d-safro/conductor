@@ -115,6 +115,8 @@ try {
 }
 if ($LASTEXITCODE -ne 0) { throw "the service didn't start; see $data\conductor.log" }
 if ($OpenFirewall) {
+  # one rule, made again each time (the port may have changed): before, each run added another
+  Get-NetFirewallRule -DisplayName "Conductor (music server)" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   New-NetFirewallRule -DisplayName "Conductor (music server)" -Direction Inbound -Protocol TCP -LocalPort ($Listen.Split(':')[-1]) -Profile Private -Action Allow | Out-Null
   Write-Host "Opened the port for private networks."
 }
