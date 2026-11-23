@@ -32,6 +32,9 @@ What changed in each release, newest first. The full notes for each are on the
   beside the downloads folder instead of in it, and move a file of that name from there into the music folder.
 - **`conductor setup` without a terminal** (`< /dev/null`, a script, a service) asked for the admin's password (or a
   music folder) forever, writing hundreds of MB a second. When its input ends it now stops and points to `--yes`.
+- **The Docker image's health check** always asked port 4533: with `-e CONDUCTOR_LISTEN=0.0.0.0:8080` the container
+  was "unhealthy" for good. It now asks the port in `CONDUCTOR_LISTEN`. The image's license label also says
+  AGPL-3.0-or-later now, as the project does (it said AGPL-3.0-only).
 
 ## 1.0.0 (2026-11-22)
 
