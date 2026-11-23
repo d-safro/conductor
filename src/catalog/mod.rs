@@ -22,7 +22,7 @@ use crate::{
     api::AppState,
     db::{self, now},
 };
-use text::{EDITION, JUNK, ak, alk, mentions, ratio, same_artist, tk};
+use text::{JUNK, ak, alk, edition_tier, mentions, ratio, same_artist, tk};
 
 pub fn dz_id(x: &str, kind: char) -> Option<&str> {
     let (k, n) = x.strip_prefix("dz-")?.split_once('-')?;
@@ -293,10 +293,7 @@ pub async fn lookup(
         match picked.iter_mut().find(|(k, _)| *k == key) {
             None => picked.push((key, a)),
             Some((_, cur)) => {
-                if same_artist(&art, s(&cur["artist"], "name"))
-                    && EDITION.is_match(s(cur, "title"))
-                    && !EDITION.is_match(s(&a, "title"))
-                {
+                if same_artist(&art, s(&cur["artist"], "name")) && edition_tier(s(&a, "title")) < edition_tier(s(cur, "title")) {
                     *cur = a;
                 }
             }
@@ -367,6 +364,7 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
         }
     }
     let want = alk(name);
+    let mine = edition_tier(name);
     let mut scored: Vec<(f64, Value)> = vec![];
     for a in cands {
         let sim = ratio(&want, &alk(s(&a, "title")));
@@ -375,8 +373,12 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
         }
         let mut sc = sim * 2.0 + if s(&a, "title").trim().eq_ignore_ascii_case(name.trim()) { 1.0 } else { 0.0 };
         sc += if s(&a, "record_type") == "album" { 0.5 } else { 0.0 };
-        if EDITION.is_match(s(&a, "title")) && !EDITION.is_match(name) {
-            sc -= 1.0; // prefer the plain album over "Deluxe / Legacy Edition"
+        // the plain album first, then a remaster of it (the same songs), and only then a deluxe edition (unless
+        // yours is one): Deezer often has only "(Remastered)" and "(Super Deluxe)", and lists the deluxe one first
+        match edition_tier(s(&a, "title")) {
+            t if t <= mine => {}
+            1 => sc -= 0.5,
+            _ => sc -= 1.5,
         }
         scored.push((sc, a));
     }
@@ -386,7 +388,8 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     for (sc, a) in scored.into_iter().take(4) {
         let tracks = album_tracks(st, &n(&a, "id").to_string()).await;
         let cover = tracks.iter().filter(|t| have.contains(&tk(s(t, "title")))).count() as f64 / have.len().max(1) as f64;
-        let total = sc + cover * 3.0;
+        // (all else the same: the one with fewer songs, nearer the album as it came out)
+        let total = sc + cover * 3.0 - tracks.len() as f64 * 0.001;
         if best.as_ref().is_none_or(|(b, _)| total > *b) {
             best = Some((total, n(&a, "id").to_string()));
         }
@@ -438,9 +441,9 @@ pub async fn missing_albums_of(st: &AppState, did: &str, have_names: &[String]) 
         if have.contains(k) || (fans(g) as f64) < top as f64 * 0.015 {
             continue; // radio broadcasts, obscure reissues
         }
-        let plain: Vec<&Value> = g.iter().filter(|a| !EDITION.is_match(s(a, "title"))).collect();
-        let pool: Vec<&Value> = if plain.is_empty() { g.iter().collect() } else { plain };
-        if let Some(best) = pool.into_iter().max_by_key(|a| n(a, "fans")) {
+        // the plain edition, else a remaster, else any
+        let low = g.iter().map(|a| edition_tier(s(a, "title"))).min().unwrap_or(0);
+        if let Some(best) = g.iter().filter(|a| edition_tier(s(a, "title")) == low).max_by_key(|a| n(a, "fans")) {
             out.push(best.clone());
         }
     }

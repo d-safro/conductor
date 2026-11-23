@@ -28,6 +28,10 @@ What changed in each release, newest first. The full notes for each are on the
 - **Podcast episodes were never converted**, whatever format or `maxBitRate` the app asked for. A saved episode now
   goes through the same conversion as a song (and the same cache); one that isn't saved still comes straight from
   the podcast's server.
+- **An album completed from the wrong edition**: "Sticky Fingers" (10 songs, two of them yours) was filled out with
+  the 33-song Super Deluxe edition, because Deezer had only that and a remaster, both counted as "editions" alike.
+  The plain album now comes first, then a remaster of it (the same songs), and only then a deluxe edition (unless
+  yours is one); albums matched before are matched again.
 
 ## 1.0.0 (2026-11-22)
 

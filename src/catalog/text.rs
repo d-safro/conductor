@@ -18,6 +18,27 @@ static TAIL_OR_PAREN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+-\s+.*$
 pub static EDITION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(deluxe|legacy|anniversary|expanded|remaster(ed)?|edition|bonus|special|collector|live|mono|stereo|super|version|reissue)\b").unwrap()
 });
+/// Words of an edition with more (or other) songs than the album as it came out.
+static EXPANDED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(deluxe|legacy|anniversary|expanded|bonus|special|collector'?s?|live|super|complete|box)\b").unwrap()
+});
+/// Words of the same album again: remastered (also "Re-Mastered"), reissued, in mono.
+static REMASTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(re-?master(ed)?|reissued?|mono|stereo|version|edition)\b").unwrap());
+
+/// How far an edition is from the album as it first came out: 0 the album itself ("Sticky Fingers"), 1 the same
+/// songs again ("(Remastered)", "(2009 Re-Mastered)"), 2 an edition with more or other songs ("(Super Deluxe)",
+/// "(50th Anniversary Edition)", "(Live)").
+pub fn edition_tier(title: &str) -> u8 {
+    if EXPANDED.is_match(title) {
+        2
+    } else if REMASTER.is_match(title) || EDITION.is_match(title) {
+        1
+    } else {
+        0
+    }
+}
+
 pub static JUNK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(demos?|outtakes?|rarities|karaoke|tribute|interviews?|broadcast|bootleg|remix(es)?|made famous|in the style of|cover versions?)\b").unwrap()
 });
@@ -172,6 +193,18 @@ mod tests {
         assert!(mentions("talking heads", &["Talking Heads", "Remain in Light"]));
         assert!(names_match("krematoriy", "krematorij"));
         assert!(EDITION.is_match("Remain in Light (Deluxe Version)"));
+        for (t, tier) in [
+            ("Sticky Fingers", 0),
+            ("Sticky Fingers (Remastered)", 1),
+            ("Sticky Fingers (2009 Re-Mastered)", 1),
+            ("Let It Bleed (Mono Version)", 1),
+            ("Sticky Fingers (Super Deluxe)", 2),
+            ("Let It Bleed (50th Anniversary Edition)", 2),
+            ("Exile on Main St. (Deluxe Version)", 2),
+            ("Get Yer Ya-Ya's Out! (Live)", 2),
+        ] {
+            assert_eq!(edition_tier(t), tier, "{t}");
+        }
         assert!(JUNK.is_match("Karaoke - Talking Heads"));
     }
 }

@@ -823,7 +823,28 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
             let uh = json!({ "id": 901, "title": "Uh-Oh, Love Comes to Town", "duration": 3, "artist": th, "album": al77, "track_position": 2, "disk_number": 1 });
             let one = json!({ "id": 801, "title": "One", "duration": 3, "artist": alpha, "album": first, "track_position": 1 });
             let half = json!({ "id": 803, "title": "Three and a Half", "duration": 3, "artist": alpha, "album": first, "track_position": 3 });
+            // editions, each listed before the album they're of (Deezer often lists the deluxe one first)
+            let rs = json!({ "id": 20, "name": "The Rolling Stones", "nb_fan": 800 });
+            let ed = |id: i64, title: &str, n: i64| json!({ "id": id, "title": title, "artist": rs, "record_type": "album", "nb_tracks": n, "fans": 100 });
+            let tr = |id: i64, title: &str, pos: i64| json!({ "id": id, "title": title, "duration": 3, "artist": rs, "track_position": pos, "disk_number": 1 });
+            let side = |base: i64, titles: &[&str]| json!({ "data": titles.iter().enumerate().map(|(i, t)| tr(base + i as i64, t, i as i64 + 1)).collect::<Vec<_>>() });
             let body = match path.as_str() {
+                // only a remaster and a super deluxe edition: the remaster
+                "/search/album" if q.contains("sticky") => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5), ed(71, "Sticky Fingers (Remastered)", 3)] }),
+                "/album/70/tracks" => side(7000, &["Brown Sugar", "Sway", "Wild Horses", "Midnight Jam", "Roundhouse Encore"]),
+                "/album/71/tracks" => side(7100, &["Brown Sugar", "Sway", "Wild Horses"]),
+                // the plain album and an anniversary edition: the plain one
+                "/search/album" if q.contains("bleed") => json!({ "data": [ed(73, "Let It Bleed (50th Anniversary Edition)", 4), ed(74, "Let It Bleed", 3)] }),
+                "/album/73/tracks" => side(7300, &["Gimme Shelter", "Love in Vain", "Country Honk", "Studio Outtake Jam"]),
+                "/album/74/tracks" => side(7400, &["Gimme Shelter", "Love in Vain", "Country Honk"]),
+                // a library album named as a remaster ("(2009 Re-Mastered)"): the remaster, not the deluxe version
+                "/search/album" if q.contains("exile") => json!({ "data": [ed(75, "Exile on Main St. (Deluxe Version)", 4), ed(76, "Exile on Main St. (Remastered)", 3)] }),
+                "/album/75/tracks" => side(7500, &["Rocks Off", "Rip This Joint", "Shake Your Hips", "Pass the Wine"]),
+                "/album/76/tracks" => side(7600, &["Rocks Off", "Rip This Joint", "Shake Your Hips"]),
+                "/album/70" | "/album/71" | "/album/73" | "/album/74" | "/album/75" | "/album/76" => {
+                    let id: i64 = path[7..].parse().unwrap();
+                    ed(id, "", 0)
+                }
                 "/search" => json!({ "data": if q.contains("psycho") { vec![pk.clone(), one.clone()] } else { vec![] } }),
                 "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
                 "/search/album" => json!({ "data": if q.contains("talking") || q.contains("psycho") { vec![al77.clone()] } else { vec![] } }),
@@ -5781,4 +5802,46 @@ async fn downloading_an_album_or_artist_sends_a_zip_of_its_files() {
     // an id that's nothing
     let r = s.call("download", &[("id", "nothing-here")]).await;
     assert_eq!(r["error"]["code"], 70, "{r}");
+}
+
+#[tokio::test]
+async fn an_album_is_completed_from_its_own_edition_not_a_deluxe_one() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    // one or two songs of each album
+    let rs = "The Rolling Stones";
+    for (i, (album, title)) in
+        [("Sticky Fingers", "Brown Sugar"), ("Sticky Fingers", "Sway"), ("Let It Bleed", "Gimme Shelter"), ("Exile on Main St. (2009 Re-Mastered)", "Rocks Off")]
+            .into_iter()
+            .enumerate()
+    {
+        let tags = [("title", title), ("artist", rs), ("album_artist", rs), ("album", album)];
+        tone_tags(&s.music.join(format!("Stones/{album}/{title}.flac")), i as u32 + 1, &tags);
+    }
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let albums = s.ok("search3", &[("query", "Rolling Stones"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for (album, want) in [
+        ("Sticky Fingers", vec!["Brown Sugar", "Sway", "⬇ Wild Horses"]),
+        ("Let It Bleed", vec!["Gimme Shelter", "⬇ Love in Vain", "⬇ Country Honk"]),
+        ("Exile on Main St. (2009 Re-Mastered)", vec!["Rocks Off", "⬇ Rip This Joint", "⬇ Shake Your Hips"]),
+    ] {
+        let id = albums.iter().find(|a| a["name"] == album && !a["id"].as_str().unwrap().starts_with("dz-")).unwrap_or_else(|| panic!("{album}: {albums:?}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let al = s.ok("getAlbum", &[("id", &id)]).await;
+        let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+        assert_eq!(titles, want, "{album}");
+    }
 }
