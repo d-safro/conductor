@@ -148,6 +148,22 @@ pub fn alk(name: &str) -> String {
     norm(&clean_album(name))
 }
 
+/// The first-named of artists credited together ("Андрей Макаревич & Папоротник", "A и группа 'B'", "A feat. B",
+/// "A, B", "A x B"), which is often the only name a catalog has the record under; None for one name.
+pub fn lead_artist(name: &str) -> Option<String> {
+    const JOINS: [&str; 17] = [
+        " & ", " and ", " и ", " feat. ", " feat ", " ft. ", " featuring ", " x ", " × ", ", ", " / ", " + ", " with ",
+        " vs. ", " vs ", " при участии ", " при уч. ",
+    ];
+    let lower = name.to_lowercase();
+    if lower.len() != name.len() {
+        return None; // (a name whose lowercase is a different length: not split, rather than split wrongly)
+    }
+    let at = JOINS.iter().filter_map(|j| lower.find(j)).min()?;
+    let lead = name[..at].trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '«' || c == '»').trim();
+    (lead.chars().count() >= 2 && lead != name.trim()).then(|| lead.to_string())
+}
+
 pub fn same_artist(a: &str, b: &str) -> bool {
     let (a, b) = (ak(a), ak(b));
     !a.is_empty() && !b.is_empty() && (a == b || (a.len().min(b.len()) >= 4 && (a.contains(&b) || b.contains(&a))))
@@ -192,6 +208,13 @@ mod tests {
         assert!(same_artist("Abba", "Black Sabbath")); // as in music-lookup: a 4-letter name inside another counts
         assert!(mentions("talking heads", &["Talking Heads", "Remain in Light"]));
         assert!(names_match("krematoriy", "krematorij"));
+        assert_eq!(lead_artist("Андрей Макаревич & Папоротник").as_deref(), Some("Андрей Макаревич"));
+        assert_eq!(lead_artist("Андрей Макаревич и группа 'Папоротник'").as_deref(), Some("Андрей Макаревич"));
+        assert_eq!(lead_artist("Daft Punk feat. Pharrell Williams").as_deref(), Some("Daft Punk"));
+        assert_eq!(lead_artist("Simon & Garfunkel").as_deref(), Some("Simon"));
+        assert_eq!(lead_artist("Аквариум"), None);
+        assert_eq!(lead_artist("AC/DC"), None);
+        assert!(same_artist("Андрей Макаревич & Папоротник", "Андрей Макаревич"));
         assert!(EDITION.is_match("Remain in Light (Deluxe Version)"));
         for (t, tier) in [
             ("Sticky Fingers", 0),
