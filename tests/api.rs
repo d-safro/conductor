@@ -5197,4 +5197,13 @@ async fn made_for_you_without_audiomuse() {
     assert!(artists.windows(2).all(|w| w[0] != w[1]) || artists.iter().collect::<std::collections::HashSet<_>>().len() == 1, "never twice in a row: {artists:?}");
     // the same all day
     assert_eq!(s.ok("getForYou", &[("count", "20")]).await["forYou"], mix["forYou"]);
+    // also once you play songs from it (made again from the plays, the whole list changed)
+    let ids = |v: &Value| v["forYou"]["song"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let before = ids(&mix);
+    for id in before.iter().take(3) {
+        s.ok("scrobble", &[("id", id)]).await;
+    }
+    assert_eq!(ids(&s.ok("getForYou", &[("count", "20")]).await), before);
+    // fewer asked for: the start of the same list
+    assert_eq!(ids(&s.ok("getForYou", &[("count", "2")]).await), before[..2.min(before.len())]);
 }

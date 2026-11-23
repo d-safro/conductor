@@ -1,7 +1,8 @@
 //! `encore.forYou`: "Made for you" without AudioMuse-AI. `getForYou?count=` → `{forYou: {song: […]}}`: from the
 //! artists you play most (the last six months, else ever, else what you've hearted) and the artists that go with
 //! them (crate::similar), about 60% new-to-you artists' songs and 40% your favourites' that you haven't played in
-//! two weeks; the same artist never twice in a row. The same all day, a new one each day.
+//! two weeks; the same artist never twice in a row. The same all day, a new one each day: it's made at the first
+//! ask of the day and kept (made again from the plays then, playing its songs would change the whole list).
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,9 +13,40 @@ use super::{ApiError, Ctx, Reply, items, ok};
 use crate::db::now;
 
 const DAY: i64 = 86_400;
+/// The most songs asked for at once: the day's mix is made this long, and each ask takes its start.
+const MOST: usize = 200;
 
 pub async fn get(c: &Ctx) -> Result<Reply, ApiError> {
-    let count = c.p.int("count").unwrap_or(50).clamp(1, 200) as usize;
+    let count = c.p.int("count").unwrap_or(50).clamp(1, MOST as i64) as usize;
+    let uid = c.user.id.as_str();
+    let day = now() / DAY;
+    let kept = c.st.for_you.lock().unwrap().get(uid).filter(|(d, _)| *d == day).map(|(_, ids)| ids.clone());
+    let ids = match kept {
+        Some(ids) => ids,
+        None => {
+            let ids = make(c, day).await?;
+            // (nothing yet: asked again once something's played)
+            if !ids.is_empty() {
+                c.st.for_you.lock().unwrap().insert(uid.to_string(), (day, ids.clone()));
+            }
+            ids
+        }
+    };
+    // as they are now (hearts, plays), without the ones gone since
+    let ids: Vec<&str> = ids.iter().take(count).map(String::as_str).collect();
+    let mut songs = vec![];
+    if !ids.is_empty() {
+        let marks = vec!["?"; ids.len()].join(",");
+        let rows = items::tracks_where(c, &format!("t.id IN ({marks})"), &ids, "").await?;
+        let mut by: HashMap<&str, &items::TrackRow> = rows.iter().map(|t| (t.id.as_str(), t)).collect();
+        songs = ids.iter().filter_map(|id| by.remove(id)).map(items::song_json).collect();
+    }
+    ok(json!({ "forYou": { "song": songs } }))
+}
+
+/// The day's mix, as song ids.
+async fn make(c: &Ctx, day: i64) -> Result<Vec<String>, ApiError> {
+    let count = MOST;
     let uid = c.user.id.as_str();
     // the artists you play most
     let top_since = |since: i64| {
@@ -40,7 +72,7 @@ pub async fn get(c: &Ctx) -> Result<Reply, ApiError> {
         .await?;
     }
     if top.is_empty() {
-        return ok(json!({ "forYou": { "song": [] } })); // nothing played or hearted yet
+        return Ok(vec![]); // nothing played or hearted yet
     }
     let total: f32 = top.iter().map(|(_, n)| *n as f32).sum();
     let mine: HashSet<&str> = top.iter().map(|(a, _)| a.as_str()).collect();
@@ -57,7 +89,6 @@ pub async fn get(c: &Ctx) -> Result<Reply, ApiError> {
         }
     }
     // the day's mix: the same all day
-    let day = now() / DAY;
     let mut rng = rand::rngs::StdRng::seed_from_u64(day as u64 ^ uid.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64)));
     let recent: HashSet<String> = sqlx::query_scalar("SELECT DISTINCT track_id FROM play WHERE user_id = ? AND played_at >= ?")
         .bind(uid)
@@ -113,5 +144,5 @@ pub async fn get(c: &Ctx) -> Result<Reply, ApiError> {
             out.push(t);
         }
     }
-    ok(json!({ "forYou": { "song": out.iter().map(items::song_json).collect::<Vec<_>>() } }))
+    Ok(out.into_iter().map(|t| t.id).collect())
 }

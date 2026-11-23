@@ -128,6 +128,9 @@
   "forYou.song[].playCount": [
     "number"
   ],
+  "forYou.song[].played": [
+    "string"
+  ],
   "forYou.song[].replayGain": [
     "object"
   ],
