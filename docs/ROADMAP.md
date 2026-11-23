@@ -1,7 +1,8 @@
-# To 1.0
+# Roadmap
 
-What's left before Conductor 1.0, and what comes after. 1.0 means the promises in [STABILITY.md](STABILITY.md)
-start: your data, settings, the API and Conductor's own extensions keep working across every 1.x release.
+Conductor 1.0 is out (2026-11-22): from here on the promises in [STABILITY.md](STABILITY.md) hold, and your data,
+settings, the API and Conductor's own extensions keep working across every 1.x release. Below: what 1.0 needed, how
+each ended, and what comes next.
 
 ## Needed for 1.0
 1. ~~**Specs for Conductor's own API extensions.**~~ Done: a spec per `encore.*` extension in [api/](api/) (calls,
@@ -11,10 +12,12 @@ start: your data, settings, the API and Conductor's own extensions keep working 
    Tempus and Ultrasonic (Android: browse, search, stream with seeking, star, rate, scrobble, lyrics, podcasts,
    radio, shares, bookmarks; no errors), Encore, Feishin's web version. Still to try: Symfonium, Substreamer;
    Feishin and Supersonic (desktop); Airsonic-refix (web); Amperfy and play:Sub (iPhone).
-3. **Windows on a real PC.** Installed with `install.ps1` as a service, reached from a phone through the firewall,
-   with the music on a USB drive (the drive guard). CI covers the tests and the service install, not a real machine.
-4. **A release candidate run.** 1.0-rc on a real home server for a couple of weeks: memory, errors, scans and the
-   daily backups looked at along the way.
+3. **Windows on a real PC.** Not done for 1.0: CI runs the tests and installs, restarts and removes the service on
+   Windows on every change, but no real PC has run it yet (`install.ps1` as a service, a phone through the firewall,
+   music on a USB drive). Still wanted; reports welcome.
+4. **A release candidate run.** Cut short: 1.0.0-rc.1 ran on the home server (the Docker image, the full library, a
+   phone) only briefly before 1.0 was released. The weeks-long watch (memory, errors, scans, daily backups) carries on
+   with 1.0.x.
 5. ~~**A last security pass on what faces the internet.**~~ Done: every page runs only its own script (hashed CSP);
    Podium and setup can't be framed or cached; Podium's cookie is Secure over HTTPS; proxies (Caddy, Cloudflare,
    Tailscale) never count as "this computer" for setup; dependencies are checked in CI (which found and fixed the

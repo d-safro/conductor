@@ -4,6 +4,20 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.0.0 (2026-11-22)
+
+1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with these fixes:
+
+### Fixed
+- **The Arch package's version** left out the prerelease (1.0.0-rc.1 was 1.0.0-1), so pacman would not have replaced
+  it with 1.0.0. A prerelease is now spelled the way pacman sorts it (1.0.0rc.1), and CI checks that every installed
+  package's version sorts before its release on Debian, Fedora and Arch.
+- **SHA256SUMS.txt** named the .deb and .rpm files with the `~` that GitHub turns into `.`; the files are now named as
+  published, so `sha256sum -c` finds them.
+
+### New
+- `RUST_LOG=conductor::api=debug` logs every Subsonic error the server answers with, and the app that got it.
+
 ## 1.0.0-rc.1 (2026-11-22)
 
 ### Fixed
