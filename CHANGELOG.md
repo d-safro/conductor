@@ -4,7 +4,7 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased (0.6.0)
+## 1.0.0-rc.1 (2026-11-22)
 
 ### Fixed
 - **Podium on a phone**: the username box no longer capitalises the first letter (so signing in failed); a wrong
