@@ -17,6 +17,9 @@ What changed in each release, newest first. The full notes for each are on the
   Tailscale as from elsewhere by their own headers.
 
 ### New
+- **"Made for you" without AudioMuse-AI** (`encore.forYou`, `getForYou`): a mix from the artists you play most and
+  those that go with them, about 60% new to you, the same all day and new each day. Encore uses it when the server has
+  no AudioMuse-AI.
 - **Settings in Podium**: every setting in the settings reference can be changed from the admin page (keys and
   passwords go to secrets.toml and are never shown; a value Conductor can't use isn't saved; a restart uses them).
   Music folders and the data folder stay with `conductor setup`.

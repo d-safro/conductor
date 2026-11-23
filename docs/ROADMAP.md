@@ -25,8 +25,8 @@ start: your data, settings, the API and Conductor's own extensions keep working 
 ## Should be in 1.0
 7. ~~**Settings in Podium.**~~ Done: every setting in the reference, changed from Podium › Settings (secrets never
    shown); music folders and the data folder stay with `conductor setup`.
-8. **Encore's "Made for you" without AudioMuse-AI**, from Conductor's own "sounds like" (0.5.0). Moods need audio
-   analysis and stay AudioMuse's.
+8. ~~**Encore's "Made for you" without AudioMuse-AI.**~~ Done: `encore.forYou` (Conductor) and Encore's Discover and
+   Home use it when there's no AudioMuse-AI. Moods need audio analysis and stay AudioMuse's.
 9. **Linux packages** for Conductor (.deb, .rpm, Arch), as Encore has.
 10. **Accessibility and phone layout** of Recital and Podium, checked.
 

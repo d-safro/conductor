@@ -5151,3 +5151,43 @@ async fn settings_from_podium() {
     assert_eq!(set("lyrics_online", Value::Null).await.status(), 200);
     assert!(find(&get().await, "lyrics_online").unwrap()["set"] == false);
 }
+
+#[tokio::test]
+async fn made_for_you_without_audiomuse() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| c.catalog = false).await;
+    let m = &s.music;
+    tone_genre(&m.join("Kino/G/01.mp3"), "Группа крови", "Кино", "Группа крови", 1, 2, "Russian Rock");
+    tone_genre(&m.join("Kino/G/02.mp3"), "Кукушка", "Кино", "Группа крови", 2, 2, "Russian Rock");
+    tone_genre(&m.join("Kino/G/03.mp3"), "Звезда", "Кино", "Группа крови", 3, 2, "Russian Rock");
+    tone_genre(&m.join("DDT/O/01.mp3"), "Осень", "ДДТ", "Актриса Весна", 1, 2, "Rock; Russian Rock");
+    tone_genre(&m.join("DDT/O/02.mp3"), "Родина", "ДДТ", "Актриса Весна", 2, 2, "Rock; Russian Rock");
+    tone_genre(&m.join("Chaif/A/01.mp3"), "Аргентина", "Чайф", "Шекогали", 1, 2, "Russian Rock");
+    tone_genre(&m.join("Rimsky/S/01.mp3"), "Scheherazade", "Rimsky-Korsakov", "Scheherazade", 1, 2, "Classical");
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let ext = s.ok("getOpenSubsonicExtensions", &[]).await;
+    assert!(ext["openSubsonicExtensions"].as_array().unwrap().iter().any(|e| e["name"] == "encore.forYou"));
+    // nothing played or hearted yet: nothing to make it from
+    assert_eq!(s.ok("getForYou", &[]).await["forYou"]["song"].as_array().map(|a| a.len()).unwrap_or(0), 0);
+    let id = |t: &'static str| {
+        let s = &s;
+        async move { s.ok("search3", &[("query", t)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string() }
+    };
+    let blood = id("Группа крови").await;
+    for i in 0..5i64 {
+        s.ok("scrobble", &[("id", &blood), ("time", &((conductor::db::now() - 3600 * (i + 1)) * 1000).to_string())]).await;
+    }
+    let mix = s.ok("getForYou", &[("count", "20")]).await;
+    let songs = mix["forYou"]["song"].as_array().unwrap().clone();
+    let artists: Vec<&str> = songs.iter().map(|x| x["artist"].as_str().unwrap()).collect();
+    let titles: Vec<&str> = songs.iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert!(!titles.contains(&"Группа крови"), "played in the last two weeks: {titles:?}");
+    assert!(artists.contains(&"ДДТ") || artists.contains(&"Чайф"), "the artists that go with yours: {artists:?}");
+    assert!(artists.contains(&"Кино"), "and yours, the songs not played lately: {artists:?}");
+    assert!(!artists.contains(&"Rimsky-Korsakov"), "{artists:?}");
+    assert!(artists.windows(2).all(|w| w[0] != w[1]) || artists.iter().collect::<std::collections::HashSet<_>>().len() == 1, "never twice in a row: {artists:?}");
+    // the same all day
+    assert_eq!(s.ok("getForYou", &[("count", "20")]).await["forYou"], mix["forYou"]);
+}

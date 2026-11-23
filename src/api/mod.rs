@@ -7,6 +7,7 @@ mod dj;
 mod encore;
 mod imports;
 mod info;
+mod for_you;
 mod items;
 mod scrobbling;
 pub(crate) mod media;
@@ -418,6 +419,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.concerts", "versions": [1] },
             { "name": "encore.mixes", "versions": [1] },
             { "name": "encore.scrobbling", "versions": [1] },
+            { "name": "encore.forYou", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -507,6 +509,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "identifySong" => bridges::identify_song(c).await,
         "getMixInfo" => bridges::mix_info(c).await,
         "getMixes" => crate::mixes::get_mixes(c).await,
+        "getForYou" => for_you::get(c).await,
         "setMix" => crate::mixes::set_mix(c, false).await,
         "refreshMix" => crate::mixes::set_mix(c, true).await,
         "getConcerts" => crate::concerts::get_concerts(c, false).await,

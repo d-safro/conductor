@@ -29,4 +29,5 @@ from 1.0 a field can be added but never dropped or changed ([STABILITY.md](../ST
 | [`encore.dj`](encore.dj.md) | `getDjLine?next=&prev=&lang=` → `{djLine: {text, id, duration}}`, `djAudio?id=` (WAV) | done (needs `ollama_url` and `dj_voice_url`; "ai-off" otherwise) |
 | [`encore.songId`](encore.songId.md) | `POST identifySong` (recording as the body) | done (needs `songid_url`) |
 | [`encore.automix`](encore.automix.md) | `getMixInfo?id=&id=…` | done (needs `mixinfo_dir`) |
+| [`encore.forYou`](encore.forYou.md) | `getForYou?count=` | done (Conductor's own "sounds like"; no AudioMuse needed) |
 | [`encore.scrobbling`](encore.scrobbling.md) | `getScrobbling`, `setListenBrainz?token=` (empty unlinks), `lastfmLinkStart` → `{url, token}`, `lastfmLinkFinish?token=` → `waiting \| linked \| expired`, `lastfmUnlink` | done (per user; Last.fm needs `lastfm_api_key` and `lastfm_secret`; see `src/api/scrobbling.rs`) |
