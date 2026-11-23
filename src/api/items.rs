@@ -99,6 +99,22 @@ pub struct ArtistRow {
     pub cover_album: Option<String>,
 }
 
+impl TrackRow {
+    /// Its levels: the tags', and what Conductor measured (sound levelling).
+    pub fn levels(&self) -> crate::loudness::Levels {
+        crate::loudness::Levels {
+            track_gain: self.rg_track_gain,
+            track_peak: self.rg_track_peak,
+            album_gain: self.rg_album_gain,
+            album_peak: self.rg_album_peak,
+            loudness: self.lm_loudness,
+            peak: self.lm_peak,
+            album_loudness: self.lm_album_loudness,
+            album_peak_measured: self.lm_album_peak,
+        }
+    }
+}
+
 fn put(v: &mut Value, k: &str, x: impl Into<Value>) {
     v.as_object_mut().unwrap().insert(k.into(), x.into());
 }
@@ -149,16 +165,7 @@ pub fn song_json(t: &TrackRow) -> Value {
         put(&mut v, "genre", g); // the first; all of them are in "genres"
     }
     // the tags', else what Conductor measured (sound levelling)
-    let rg = crate::loudness::replay_gain(&crate::loudness::Levels {
-        track_gain: t.rg_track_gain,
-        track_peak: t.rg_track_peak,
-        album_gain: t.rg_album_gain,
-        album_peak: t.rg_album_peak,
-        loudness: t.lm_loudness,
-        peak: t.lm_peak,
-        album_loudness: t.lm_album_loudness,
-        album_peak_measured: t.lm_album_peak,
-    });
+    let rg = crate::loudness::replay_gain(&t.levels());
     // OpenSubsonic's fields, always there (empty or 0 when not known), as Navidrome sends them: some apps expect them
     put(&mut v, "replayGain", Value::Object(rg));
     put(&mut v, "isrc", t.isrc.iter().cloned().collect::<Vec<_>>());

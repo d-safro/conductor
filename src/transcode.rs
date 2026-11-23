@@ -18,6 +18,11 @@
 //! file is gone once it's done.
 //!
 //! A stream from the middle of a song (`timeOffset`) is converted straight to the app, not cached.
+//!
+//! Levelled (`level_conversions`, for apps that don't level songs themselves): the gain is applied with ffmpeg's
+//! `volume` filter (already capped by the song's peak, see `loudness::conversion_gain`), the copy's own ReplayGain
+//! tags are left out (it's levelled already), and the gain is part of the cache file's name: a levelled and an
+//! unlevelled copy of a song are different files, and an unlevelled one keeps the name it always had.
 
 use std::{
     collections::HashMap,
@@ -130,9 +135,20 @@ fn ffmpeg(cfg: &Config) -> tokio::process::Command {
     cmd
 }
 
-fn args(cmd: &mut tokio::process::Command, src: &Path, x: Target, kbps: i64) {
+/// ReplayGain tags, left out of a levelled copy (an app or a car stereo reading them would level it again).
+const GAIN_TAGS: &[&str] =
+    &["REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "R128_TRACK_GAIN", "R128_ALBUM_GAIN"];
+
+fn args(cmd: &mut tokio::process::Command, src: &Path, x: Target, kbps: i64, gain: Option<f64>) {
     cmd.arg("-i").arg(src);
     cmd.args(["-map", "0:a:0", "-vn"]);
+    if let Some(g) = gain {
+        cmd.args(["-af", &format!("volume={g:.2}dB")]);
+        for t in GAIN_TAGS {
+            // (the file's tags, and an Ogg file's, which are the stream's)
+            cmd.args(["-metadata", &format!("{t}="), "-metadata:s:a:0", &format!("{t}=")]);
+        }
+    }
     // Vorbis and Opus take only some bitrates for some channels and sample rates: Vorbis none at all for a 96 kHz
     // FLAC, nor 320k for a mono song or 32k for a stereo one; Opus at most 256k for mono. ffmpeg then failed and the
     // song didn't play. Given stereo (Vorbis at 44.1 kHz, between 48k and 480k), every song converts.
@@ -154,23 +170,26 @@ fn dir(cfg: &Config) -> PathBuf {
     cfg.cache_dir().join("transcode")
 }
 
-/// The cache file for this song (as its file is now), format and bitrate.
-fn cache_file(cfg: &Config, src: &Path, x: Target, kbps: i64) -> PathBuf {
+/// The cache file for this song (as its file is now), format, bitrate and gain (levelled).
+fn cache_file(cfg: &Config, src: &Path, x: Target, kbps: i64, gain: Option<f64>) -> PathBuf {
     let meta = std::fs::metadata(src).ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let mtime = meta.and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
     let mut h = Sha1::new();
     h.update(src.to_string_lossy().as_bytes());
     h.update(format!("|{size}|{mtime}|{}|{kbps}", x.suffix).as_bytes());
+    if let Some(g) = gain {
+        h.update(format!("|level {g:.2}").as_bytes());
+    }
     dir(cfg).join(format!("{}.{}", hex::encode(&h.finalize()[..12]), x.suffix))
 }
 
-/// A converted copy of `src`: from the cache, being written to it now, or (from `offset` seconds) straight from
-/// ffmpeg. An error when ffmpeg can't read the file (damaged, not audio, an offset past the end): the app gets that,
-/// not an empty song that "plays" as silence.
-pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i64, offset: i64) -> Result<Converted> {
+/// A converted copy of `src` (levelled by `gain` dB when given): from the cache, being written to it now, or (from
+/// `offset` seconds) straight from ffmpeg. An error when ffmpeg can't read the file (damaged, not audio, an offset
+/// past the end): the app gets that, not an empty song that "plays" as silence.
+pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i64, gain: Option<f64>, offset: i64) -> Result<Converted> {
     if offset == 0 {
-        let file = cache_file(cfg, src, x, kbps);
+        let file = cache_file(cfg, src, x, kbps, gain);
         if let Some(hit) = cached(&file) {
             return Ok(hit);
         }
@@ -187,7 +206,7 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
                 drop(permit); // (not needed: following takes none)
                 None
             } else {
-                Some(start(cfg, &mut running, slots, permit, src, x, kbps, &file)?)
+                Some(start(cfg, &mut running, slots, permit, src, x, kbps, gain, &file)?)
             }
         };
         return match started {
@@ -204,7 +223,7 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
     let permit = slots.take().await?;
     let mut cmd = ffmpeg(cfg);
     cmd.args(["-ss", &offset.to_string()]);
-    args(&mut cmd, src, x, kbps);
+    args(&mut cmd, src, x, kbps, gain);
     cmd.arg("pipe:1").stdout(Stdio::piped()).kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| anyhow!("ffmpeg can't start ({e}); is it installed?"))?;
     let mut out = child.stdout.take().ok_or_else(|| anyhow!("ffmpeg gave no output"))?;
@@ -232,6 +251,7 @@ fn start(
     src: &Path,
     x: Target,
     kbps: i64,
+    gain: Option<f64>,
     file: &Path,
 ) -> Result<(tokio::fs::File, Arc<AtomicU8>)> {
     let part = file.with_extension(format!("{}.{}.part", x.suffix, crate::db::random_id()));
@@ -239,7 +259,7 @@ fn start(
     // which stays readable when the part is moved into the cache or (transcode_cache_mb = 0) removed
     let reader = std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&part)?;
     let mut cmd = ffmpeg(cfg);
-    args(&mut cmd, src, x, kbps);
+    args(&mut cmd, src, x, kbps, gain);
     cmd.arg("-y").arg(&part).stdout(Stdio::null()).kill_on_drop(false);
     let mut child = match cmd.spawn() {
         Ok(c) => c,

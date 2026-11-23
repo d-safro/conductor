@@ -124,6 +124,46 @@ pub async fn replay_gain_of(db: &Db, id: &str) -> Value {
     }))
 }
 
+// ───────────── levelled conversions ─────────────
+
+/// The loudest a levelled conversion may peak: −1 dBTP (EBU R128's ceiling, which leaves room for a lossy encoder's
+/// overshoot and for peaks from tags that are sample peaks, not true peaks).
+pub const CEILING: f64 = 0.891_250_938_133_745_5; // 10^(−1/20)
+
+/// What a levelled conversion (`level_conversions`) applies to a song.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Applied {
+    /// dB, rounded as tags are (0.01 dB)
+    pub gain: f64,
+    /// the album's gain (else the song's own)
+    pub album: bool,
+    /// turned up less than its gain says, so its peak stays under the ceiling
+    pub capped: bool,
+}
+
+/// The gain a levelled conversion applies: the same gain the apps get in `replayGain` (tags first, else measured),
+/// the album's when `album` and the song has one, else its own; None when nothing is known (it's converted as it is).
+/// Capped by the peak so nothing clips: turned up at most until the peak reaches the ceiling, and never turned up
+/// when the peak isn't known (a gain tag without a peak tag). The album's gain is capped by the album's peak (every
+/// song of the album the same, as a player does), else the song's.
+pub fn conversion_gain(l: &Levels, album: bool) -> Option<Applied> {
+    let rg = replay_gain(l);
+    let num = |k: &str| rg.get(k).and_then(Value::as_f64);
+    let (gain, peak, album) = match (album, num("albumGain")) {
+        (true, Some(g)) => (g, num("albumPeak").or(num("trackPeak")), true),
+        _ => (num("trackGain")?, num("trackPeak"), false),
+    };
+    if !gain.is_finite() {
+        return None;
+    }
+    let most = match peak {
+        Some(p) if p > 0.0 => 20.0 * (CEILING / p).log10(),
+        _ => 0.0,
+    };
+    let applied = (gain.min(most) * 100.0).round() / 100.0;
+    Some(Applied { gain: applied, album, capped: applied < gain - 0.005 })
+}
+
 // ───────────── how far it is ─────────────
 
 /// Songs that need measuring (no track or album gain tag), present. (Only the track table has these columns.)
@@ -525,6 +565,33 @@ mod tests {
         assert!((l + 10.0).abs() < 1e-9);
         assert_eq!(album_level(&[(1000, -70.0, 0.0)]), None);
         assert_eq!(album_level(&[]), None);
+    }
+
+    #[test]
+    fn a_levelled_conversion_never_clips() {
+        // measured: a loud song turned down, its own gain (track) or its album's
+        let loud = Levels { loudness: Some(-8.0), peak: Some(0.9), album_loudness: Some(-10.0), album_peak_measured: Some(0.95), ..Default::default() };
+        assert_eq!(conversion_gain(&loud, false), Some(Applied { gain: -10.0, album: false, capped: false }));
+        assert_eq!(conversion_gain(&loud, true), Some(Applied { gain: -8.0, album: true, capped: false }));
+        // album, but the song has no album gain: its own
+        let alone = Levels { loudness: Some(-8.0), peak: Some(0.9), ..Default::default() };
+        assert_eq!(conversion_gain(&alone, true), Some(Applied { gain: -10.0, album: false, capped: false }));
+        // a quiet song with a high peak: turned up only until its peak is at −1 dB
+        let quiet = Levels { loudness: Some(-26.0), peak: Some(0.5), ..Default::default() };
+        let a = conversion_gain(&quiet, false).unwrap();
+        assert!(a.capped && (a.gain - 5.02).abs() < 0.01, "{a:?}");
+        assert!(0.5 * 10f64.powf(a.gain / 20.0) <= CEILING + 1e-3);
+        // a gain tag without a peak: turned down as it says, never up
+        let tagged_down = Levels { track_gain: Some(-4.5), ..Default::default() };
+        assert_eq!(conversion_gain(&tagged_down, false), Some(Applied { gain: -4.5, album: false, capped: false }));
+        let tagged_up = Levels { track_gain: Some(3.0), ..Default::default() };
+        assert_eq!(conversion_gain(&tagged_up, false), Some(Applied { gain: 0.0, album: false, capped: true }));
+        // tags win over measurements, as in replayGain
+        let both = Levels { track_gain: Some(-2.0), track_peak: Some(0.5), ..loud };
+        assert_eq!(conversion_gain(&both, false).unwrap().gain, -2.0);
+        // nothing known: not levelled
+        assert_eq!(conversion_gain(&Levels::default(), false), None);
+        assert_eq!(conversion_gain(&Levels::default(), true), None);
     }
 
     #[test]

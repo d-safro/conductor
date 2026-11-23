@@ -4,6 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **Levelling in conversions** (`level_conversions`: off, track or album; off by default), for apps that don't level
+  songs themselves (some Subsonic apps, a car stereo): a song converted for one is turned up or down by its
+  ReplayGain (the tags', else measured), never so far that its peak passes −1 dB, and sent without ReplayGain tags
+  of its own; the answer says so (`X-Levelled: track -6.20 dB`). Levelled and unlevelled copies are cached apart. Apps
+  that level themselves (Encore, Symfonium, Feishin, Recital) are left alone unless listed in
+  `level_conversions_clients`; a stream of the file itself, and the song's `replayGain`, never change.
+
 ## 1.1.2 (2026-11-23)
 
 ### Fixed
