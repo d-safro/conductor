@@ -221,3 +221,26 @@ async fn settings_saved_at_once_are_all_kept() {
     let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).filter(|n| n.to_string_lossy().ends_with(".tmp")).collect();
     assert!(left.is_empty(), "no temporary files left: {left:?}");
 }
+
+#[test]
+fn the_health_check_asks_the_address_the_settings_give() {
+    // Docker's health check asked port 4533 (or CONDUCTOR_LISTEN's): with the address only in config.toml (Prelude's
+    // compose file clears CONDUCTOR_LISTEN) it asked the wrong port. `conductor health` reads the settings as serve does
+    let mut s = Server::new();
+    let cfg = s.config.to_str().unwrap().to_string();
+    let o = conductor(&["--config", &cfg, "health"]).output().unwrap();
+    assert!(!o.status.success(), "nothing running there: unhealthy");
+    assert!(!s.data.exists(), "the check opens nothing (no data folder or database made)");
+    s.start();
+    let o = conductor(&["--config", &cfg, "health"]).output().unwrap();
+    assert!(o.status.success(), "{o:?}");
+    // as in Prelude's compose file: the settings from CONDUCTOR_CONFIG, the image's CONDUCTOR_LISTEN cleared
+    let o = conductor(&["health"]).env("CONDUCTOR_CONFIG", &cfg).env("CONDUCTOR_LISTEN", "").env("CONDUCTOR_DATA_DIR", "").output().unwrap();
+    assert!(o.status.success(), "{o:?}");
+    // CONDUCTOR_LISTEN wins over the file, for the check as for the server
+    let o = conductor(&["health"]).env("CONDUCTOR_CONFIG", &cfg).env("CONDUCTOR_LISTEN", format!("127.0.0.1:{}", free_port())).output().unwrap();
+    assert!(!o.status.success(), "{o:?}");
+    s.stop();
+    let o = conductor(&["--config", &cfg, "health"]).output().unwrap();
+    assert!(!o.status.success(), "stopped: unhealthy");
+}

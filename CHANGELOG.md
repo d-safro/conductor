@@ -57,6 +57,9 @@ What changed in each release, newest first. The full notes for each are on the
   secrets.toml (both saves wrote the same temporary file). Saves now take turns, and config.toml is written whole
   under another name and then put in place, as secrets.toml already was (which stays readable only by Conductor), so
   nothing ever reads half a file.
+- **Docker's health check with the address only in config.toml** (Prelude's compose file) asked port 4533, so a
+  server listening elsewhere was "unhealthy" for good. The image now checks with `conductor health`, which reads the
+  settings as the server does and asks its own address (exit 0 or 1; it opens nothing else).
 
 ## 1.0.0 (2026-11-22)
 

@@ -3,6 +3,7 @@
 //!   conductor [--config FILE] [serve]          run the server (default; the first time in a terminal: Prelude first)
 //!   conductor [--config FILE] setup [PART] [--yes …]  Prelude, the setup wizard (also `prelude`; see src/prelude)
 //!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
+//!   conductor [--config FILE] health            is the server answering? (exit 0 / 1; Docker's health check)
 //!   conductor [--config FILE] user add NAME [--admin] [--if-missing]   password from CONDUCTOR_PASSWORD or stdin
 //!                                                         (--if-missing: a user that's there is left as it is)
 //!   conductor [--config FILE] user passwd NAME
@@ -41,6 +42,7 @@ const USAGE: &str = "\
 conductor [--config FILE] [serve]           run the server (the first time in a terminal, Prelude first)
 conductor setup [PART] [--yes ...]          Prelude, the setup wizard (conductor setup --help)
 conductor scan [--full]                     scan the music folders once
+conductor health                            is the server answering? (exit 0 / 1, for health checks)
 conductor user add NAME [--admin] [--if-missing]   (password from CONDUCTOR_PASSWORD or typed)
 conductor user passwd NAME
 conductor apikey NAME [LABEL]               print a new API key
@@ -109,6 +111,10 @@ const STOP_GRACE: Duration = Duration::from_secs(4);
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Docker's health check, every minute: only the settings are read (nothing opened, made or moved)
+    if a.as_slice() == ["health"] {
+        return health(&Config::load(config_path)?).await;
+    }
     // an older install's default folder (and its config.toml) gets the new name before anything looks for them
     if config_path.is_none() && conductor::config::var_os("CONFIG").is_none() {
         conductor::config::move_old_data_dir();
@@ -251,6 +257,24 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
         }
         _ => bail!("unknown command\n\n{USAGE}"),
     }
+}
+
+/// Asks the server at the address its settings give (the same settings and environment as `serve`: config.toml,
+/// CONDUCTOR_CONFIG, CONDUCTOR_LISTEN). Before, Docker's health check assumed 4533, or CONDUCTOR_LISTEN's port, and a
+/// server whose address was only in config.toml was "unhealthy" for good.
+async fn health(cfg: &Config) -> Result<()> {
+    let mut addr = cfg.listen;
+    if addr.ip().is_unspecified() {
+        addr.set_ip(if addr.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() });
+    }
+    let url = format!("http://{addr}/health");
+    let http = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(4)).build()?;
+    let r = http.get(&url).send().await.with_context(|| format!("nothing answers at {url}"))?;
+    if !r.status().is_success() {
+        bail!("{url}: {}", r.status());
+    }
+    println!("{}", r.text().await.unwrap_or_default());
+    Ok(())
 }
 
 fn read_password() -> Result<String> {

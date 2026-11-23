@@ -14,7 +14,8 @@ Without the two admin settings, the first admin is made at `/setup` (from the se
 link in `docker logs conductor`). To build the image from the source instead:
 `docker build -f deploy/Dockerfile -t conductor:dev .`
 
-The image is small (Alpine + ffmpeg + one static binary) and has a health check on `/health`. Keep `/data` on a disk
+The image is small (Alpine + ffmpeg + one static binary) and has a health check: `conductor health`, which asks
+`/health` at the address Conductor listens on (`CONDUCTOR_LISTEN`, else `listen` in config.toml; exit 0 or 1). Keep `/data` on a disk
 that doesn't go away (the database, the password key, caches and the daily backups live there). The music folder
 needs to be writable only if Conductor should file downloads, keep trial songs or save covers
 (`CONDUCTOR_READ_ONLY=1` otherwise).
