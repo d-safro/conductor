@@ -95,7 +95,7 @@ the first admin, downloads (optional: the downloader set up for you as one Docke
 again to change one part (`conductor setup vpn`); `--yes` with flags answers everything for scripts
 (`conductor setup --help`). Keys and passwords go to `secrets.toml` (mode 600) beside `config.toml`.
 Before anyone has an account, `/setup` in a browser makes the first admin: only from the server itself, or with the
-one-time link Conductor prints when it starts.
+one-time link `conductor setup link` shows (and Conductor prints when it starts in a terminal; never in its logs).
 
 **Downloads through a VPN** (Prelude's VPN step): slskd already behind one (checked: the address downloads use
 differs from this computer's); or set one up (Linux with Docker: gluetun with slskd inside, from a WireGuard .conf

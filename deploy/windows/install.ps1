@@ -5,8 +5,8 @@
 # Puts conductor.exe (and ffmpeg.exe, if it's in this folder) into C:\Program Files\Conductor, writes
 # C:\ProgramData\conductor\config.toml (kept if it exists), installs and starts the service, and opens port 4533
 # for the local network only if you pass -OpenFirewall. The data folder is readable only by SYSTEM (the service) and
-# administrators: it holds secrets.toml, secret.key and conductor.log (with the one-time /setup link), so run
-# `conductor setup` and `conductor user …` in an administrator window. An older install from when Conductor was
+# administrators: it holds secrets.toml, secret.key and conductor.log, so run `conductor setup`, `conductor setup link`
+# (the one-time /setup link) and `conductor user …` in an administrator window. An older install from when Conductor was
 # called Maestro is moved over: its service removed, its data folder (C:\ProgramData\maestro) and settings kept
 # under the new name.
 param(

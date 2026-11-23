@@ -2,6 +2,7 @@
 //!
 //!   conductor [--config FILE] [serve]          run the server (default; the first time in a terminal: Prelude first)
 //!   conductor [--config FILE] setup [PART] [--yes …]  Prelude, the setup wizard (also `prelude`; see src/prelude)
+//!   conductor [--config FILE] setup link        the one-time /setup link of the server running without an admin
 //!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
 //!   conductor [--config FILE] health            is the server answering? (exit 0 / 1; Docker's health check)
 //!   conductor [--config FILE] user add NAME [--admin] [--if-missing]   password from CONDUCTOR_PASSWORD or stdin
@@ -41,6 +42,7 @@ mod winsvc;
 const USAGE: &str = "\
 conductor [--config FILE] [serve]           run the server (the first time in a terminal, Prelude first)
 conductor setup [PART] [--yes ...]          Prelude, the setup wizard (conductor setup --help)
+conductor setup link                        the one-time link to make the first admin in a browser
 conductor scan [--full]                     scan the music folders once
 conductor health                            is the server answering? (exit 0 / 1, for health checks)
 conductor user add NAME [--admin] [--if-missing]   (password from CONDUCTOR_PASSWORD or typed)
@@ -111,9 +113,12 @@ const STOP_GRACE: Duration = Duration::from_secs(4);
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
-    // Docker's health check, every minute: only the settings are read (nothing opened, made or moved)
+    // Docker's health check, every minute: only the settings are read (no database opened, nothing made)
     if a.as_slice() == ["health"] {
         return health(&Config::load(config_path)?).await;
+    }
+    if matches!(a.as_slice(), ["setup" | "prelude", "link"]) {
+        return setup_link(&Config::load(config_path)?);
     }
     // an older install's default folder (and its config.toml) gets the new name before anything looks for them
     if config_path.is_none() && conductor::config::var_os("CONFIG").is_none() {
@@ -338,16 +343,27 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         }));
     }
 
+    let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     let admins: i64 = auth::admin_count(&state.db).await.unwrap_or(1);
+    let token_file = state.cfg.data_dir.join(conductor::prelude::web::SETUP_TOKEN);
+    let _ = std::fs::remove_file(&token_file); // the last start's
     if admins == 0 {
-        let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
-        let link = format!("http://{host}:{}/setup?token={}", addr.port(), state.setup_token);
-        info!("No admin yet. Make the first admin at {link} (or run `conductor setup` here)");
-        println!("No admin yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
+        // The link's token lets whoever has it make the first admin: shown on a terminal, never written to a log (the
+        // journal, docker logs, conductor.log). It's kept, readable only by Conductor, for `conductor setup link`.
+        if let Err(e) = conductor::config::write_private(&token_file, state.setup_token.as_bytes()) {
+            warn!("couldn't keep the setup link for `conductor setup link`: {e}");
+        }
+        info!(
+            "No admin yet. Make the first admin at http://127.0.0.1:{}/setup from this computer, from elsewhere with the \
+             one-time link `conductor setup link` shows, or with `conductor setup`",
+            addr.port()
+        );
+        if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            println!("No admin yet. Make the first admin at {}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", setup_url(addr, &state.setup_token), addr.port());
+        }
     }
     let db = state.db.clone();
     let app = api::router(state).layer(api::trace_layer());
-    let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     info!(%addr, "Conductor listening");
     // asked to stop: no new connections; the requests under way get STOP_GRACE to finish
     let (stopping_tx, mut stopping) = tokio::sync::watch::channel(false);
@@ -380,8 +396,29 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     if tokio::time::timeout(Duration::from_secs(3), close).await.is_err() {
         warn!("the database took too long to close (it's checked when Conductor starts again)");
     }
+    let _ = std::fs::remove_file(&token_file); // its link works only while this server runs
     info!("Conductor stopped");
     res
+}
+
+fn setup_url(addr: std::net::SocketAddr, token: &str) -> String {
+    let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
+    format!("http://{host}:{}/setup?token={token}", addr.port())
+}
+
+/// `conductor setup link`: the link to make the first admin in a browser on another computer, of the server running
+/// now with these settings (in Docker: `docker exec conductor conductor setup link`).
+fn setup_link(cfg: &Config) -> Result<()> {
+    let token = std::fs::read_to_string(cfg.data_dir.join(conductor::prelude::web::SETUP_TOKEN)).map(|t| t.trim().to_string()).unwrap_or_default();
+    if token.is_empty() {
+        bail!(
+            "no setup link: Conductor isn't running with these settings, or it has an admin already (sign in at /admin; \
+             `conductor user add NAME --admin` makes another)"
+        );
+    }
+    println!("Make the first admin at {}", setup_url(cfg.listen, &token));
+    println!("(from this computer: http://127.0.0.1:{}/setup; it works until there's an admin)", cfg.listen.port());
+    Ok(())
 }
 
 /// Scan at start, then on a timer. A music folder that comes back (drive reconnected) is scanned at once.

@@ -244,3 +244,28 @@ fn the_health_check_asks_the_address_the_settings_give() {
     let o = conductor(&["--config", &cfg, "health"]).output().unwrap();
     assert!(!o.status.success(), "stopped: unhealthy");
 }
+
+#[test]
+fn the_setup_link_is_shown_but_not_written_to_logs() {
+    // the one-time /setup link (its token lets whoever has it make the first admin) went to the journal, docker logs
+    // and conductor.log. Not on a terminal (as here, and under systemd, Docker or the Windows service) only where to
+    // find it is written; `conductor setup link` shows it
+    let mut s = Server::new();
+    let cfg = s.config.to_str().unwrap().to_string();
+    s.start();
+    let o = conductor(&["--config", &cfg, "setup", "link"]).output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(o.status.success(), "{o:?}");
+    let token = out.split("token=").nth(1).map(|t| t.chars().take_while(char::is_ascii_alphanumeric).collect::<String>()).unwrap_or_default();
+    assert!(token.len() >= 16, "{out}");
+    // the link opens /setup from elsewhere (here through a proxy: not "this computer"); another token doesn't
+    let away = [("X-Forwarded-For", "192.0.2.9")];
+    assert_eq!(get(s.port, &format!("/setup?token={token}"), &away).map(|r| r.0), Some(200));
+    assert_eq!(get(s.port, "/setup?token=0123456789abcdef0123456789abcdef", &away).map(|r| r.0), Some(404));
+    let (_, log) = s.stop();
+    assert!(log.contains("conductor setup link"), "it says where the link is: {log}");
+    assert!(!log.contains(&token), "the token isn't in the log: {log}");
+    // stopped: there's no link to show
+    let o = conductor(&["--config", &cfg, "setup", "link"]).output().unwrap();
+    assert!(!o.status.success(), "{o:?}");
+}

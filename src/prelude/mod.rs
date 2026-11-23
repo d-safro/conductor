@@ -200,6 +200,7 @@ struct Downloader {
 pub const HELP: &str = "conductor setup [PART] [--yes] [settings]   (also: conductor prelude)
 
 Parts: music, server, admin, downloads, vpn, services, domain, import, service (default: all).
+`conductor setup link` shows the one-time link to make the first admin in a browser (Conductor running, no admin yet).
 --yes asks nothing: the settings below, then the current ones, are the answers.
 
   --music PATH (again for more; auto: the one the drives suggest)  --sentinel NAME  --data DIR  --listen ADDR:PORT

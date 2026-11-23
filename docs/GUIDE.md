@@ -39,8 +39,8 @@ docker run -d --name conductor -p 4533:4533 \
   ghcr.io/d-safro/conductor
 ```
 
-Then open `http://<server>:4533/setup` from the server itself (or with the one-time link in `docker logs conductor`)
-to make the first admin, or start it with `-e CONDUCTOR_ADMIN_USER=me -e CONDUCTOR_ADMIN_PASSWORD=…`. Any setting can
+Then open `http://<server>:4533/setup` from the server itself (or with the one-time link
+`docker exec conductor conductor setup link` shows) to make the first admin, or start it with `-e CONDUCTOR_ADMIN_USER=me -e CONDUCTOR_ADMIN_PASSWORD=…`. Any setting can
 be given the same way (`CONDUCTOR_<NAME>`, see [CONFIG.md](CONFIG.md)). Add `:ro` to the music folder if Conductor
 should never write there (then also `-e CONDUCTOR_READ_ONLY=1`).
 
@@ -107,7 +107,8 @@ music.example.com {
 ```
 
 and set `listen = "127.0.0.1:4533"` so only the proxy reaches it. Behind a proxy, `/setup` (before there's an admin)
-needs the one-time link Conductor prints when it starts.
+needs the one-time link: `conductor setup link` shows it (Conductor prints it too when it runs in a terminal; it's
+never written to the logs).
 
 **Jam guests and share links** use a separate listener (`jam_listen`, 127.0.0.1:4535) that serves nothing but those
 pages; that is the only thing to put on the internet for them (e.g. Tailscale Funnel), with its public address in

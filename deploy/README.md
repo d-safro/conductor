@@ -11,7 +11,7 @@ docker run -d --name conductor -p 127.0.0.1:4533:4533 \
 ```
 
 Without the two admin settings, the first admin is made at `/setup` (from the server itself, or with the one-time
-link in `docker logs conductor`). To build the image from the source instead:
+link `docker exec conductor conductor setup link` shows). To build the image from the source instead:
 `docker build -f deploy/Dockerfile -t conductor:dev .`
 
 The image is small (Alpine + ffmpeg + one static binary) and has a health check: `conductor health`, which asks
