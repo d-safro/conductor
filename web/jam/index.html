@@ -66,7 +66,7 @@
   </div>
 
   <h2>Add a song</h2>
-  <input id="q" type="search" placeholder="Search songs or artists" autocomplete="off" enterkeyhint="search">
+  <input id="q" type="search" aria-label="Search songs or artists" placeholder="Search songs or artists" autocomplete="off" enterkeyhint="search">
   <div id="results"></div>
 
   <div id="pending-wrap" class="hide">
@@ -81,7 +81,7 @@
 <dialog id="namebox">
   <h1 style="font-size:19px">What's your name?</h1>
   <p class="sub">So everyone sees who added what.</p>
-  <input id="name" maxlength="30" placeholder="Your name" autocomplete="nickname">
+  <input id="name" maxlength="30" aria-label="Your name" placeholder="Your name" autocomplete="nickname">
   <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="primary" id="name-ok">Join</button></div>
 </dialog>
 <div class="toast" id="toast"></div>

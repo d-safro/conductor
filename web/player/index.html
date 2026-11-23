@@ -123,8 +123,8 @@
 <form id="login" class="hide">
   <h1>Recital</h1>
   <div class="sub">Sign in with your Conductor account</div>
-  <input type="text" id="lu" placeholder="Username" autocomplete="username" autocapitalize="none" required>
-  <input type="password" id="lp" placeholder="Password" autocomplete="current-password" required>
+  <input type="text" id="lu" aria-label="Username" placeholder="Username" autocomplete="username" autocapitalize="none" required>
+  <input type="password" id="lp" aria-label="Password" placeholder="Password" autocomplete="current-password" required>
   <button class="primary" type="submit">Sign in</button>
   <div class="err" id="lerr"></div>
 </form>
@@ -133,7 +133,7 @@
   <header>
     <div class="top">
       <a class="brand" href="#/">Recital</a>
-      <input type="search" id="q" placeholder="Search songs, albums, artists" autocomplete="off">
+      <input type="search" id="q" aria-label="Search songs, albums, artists" placeholder="Search songs, albums, artists" autocomplete="off">
       <button id="out" type="button" title="Sign out">Sign out</button>
     </div>
     <nav id="nav">

@@ -6,6 +6,13 @@ What changed in each release, newest first. The full notes for each are on the
 
 ## Unreleased (0.6.0)
 
+### Fixed
+- **Podium on a phone**: the username box no longer capitalises the first letter (so signing in failed); a wrong
+  password says so instead of "sign in"; the open tab is marked again after switching (it lost its highlight, and
+  screen readers which tab was open); labels sit above their boxes.
+- **Readable buttons in dark mode** in Podium and setup (white on light blue was 2.3:1, now dark ink at ~8:1); boxes
+  named only by their placeholder have that name for screen readers too; the share page has a main landmark.
+
 ### Security
 - **Every web page runs only its own script** (Content-Security-Policy with the script's hash, instead of allowing any
   inline script), so markup that got into a page some other way (a tag in a song's title, say) can't run.

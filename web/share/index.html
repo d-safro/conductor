@@ -34,6 +34,7 @@
 </style>
 </head>
 <body>
+<main>
 <h1 id="title">Shared songs</h1>
 <div class="sub" id="by"></div>
 <div class="banner hide" id="ended">This link has run out or was stopped.</div>
@@ -42,6 +43,7 @@
   <audio id="audio" controls preload="none"></audio>
 </div>
 <div class="card hide" id="list"></div>
+</main>
 <script>
 const $ = id => document.getElementById(id);
 const base = location.pathname.replace(/\/$/, '');

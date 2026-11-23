@@ -6,16 +6,16 @@
 <title>Prelude · Conductor</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="apple-touch-icon" href="/icon-192.png">
 <style>
-  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --ok:#1d7a46; --bad:#b3261e;
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --accent-ink:#fff; --ok:#1d7a46; --bad:#b3261e;
           font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --ok:#5fc98a; --bad:#ff8a80; color-scheme: dark; } }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --accent-ink:#0d1220; --ok:#5fc98a; --bad:#ff8a80; color-scheme: dark; } }
   body { margin:0; background:var(--bg); color:var(--fg); }
   main { max-width:520px; margin:8vh auto; padding:0 16px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:16px; }
   h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 10px; }
   .muted { color:var(--muted); } .ok { color:var(--ok); } .err { color:var(--bad); min-height:1.5em; }
   label { display:block; margin:8px 0; } input { font:inherit; width:100%; box-sizing:border-box; padding:8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
-  button { font:inherit; padding:8px 16px; border-radius:6px; border:0; background:var(--accent); color:#fff; cursor:pointer; margin-top:8px; }
+  button { font:inherit; padding:8px 16px; border-radius:6px; border:0; background:var(--accent); color:var(--accent-ink); cursor:pointer; margin-top:8px; }
   img { width:56px; height:56px; } code { font-size:13px; }
 </style>
 </head>
@@ -25,7 +25,7 @@
     The rest (music folders, downloads, the VPN, other services) is set up with <code>conductor setup</code> on the server.</p></div>
   <div class="card"><h2>Music folders</h2><div id="libs" class="muted">…</div></div>
   <form class="card" id="f"><h2>Your admin account</h2>
-    <label>Name <input id="n" autocomplete="username" required></label>
+    <label>Name <input id="n" autocomplete="username" required autocapitalize="none" autocorrect="off" spellcheck="false"></label>
     <label>Password <input id="p" type="password" autocomplete="new-password" minlength="6" required></label>
     <label>Once more <input id="p2" type="password" autocomplete="new-password" minlength="6" required></label>
     <button>Make it</button><p class="err" id="e" role="alert"></p></form>

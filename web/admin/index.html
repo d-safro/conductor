@@ -6,10 +6,10 @@
 <title>Podium · Conductor</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="apple-touch-icon" href="/icon-192.png">
 <style>
-  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --ok:#1d7a46; --warn:#a85b00; --bad:#b3261e;
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#1b1f24; --muted:#5d6570; --line:#dde1e6; --accent:#3a5bd9; --accent-ink:#fff; --ok:#1d7a46; --warn:#a85b00; --bad:#b3261e;
           font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --ok:#5fc98a; --warn:#f0a85a; --bad:#ff8a80; color-scheme: dark; }
+    :root { --bg:#111418; --panel:#191d22; --fg:#e6e9ed; --muted:#9aa3ad; --line:#2c323a; --accent:#8aa2ff; --accent-ink:#0d1220; --ok:#5fc98a; --warn:#f0a85a; --bad:#ff8a80; color-scheme: dark; }
   }
   body { margin:0; background:var(--bg); color:var(--fg); }
   header { display:flex; align-items:center; gap:16px; padding:12px max(16px, env(safe-area-inset-left)); border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
@@ -35,12 +35,13 @@
   .pill::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
   .pill.ok { color:var(--ok); } .pill.warn { color:var(--warn); } .pill.bad { color:var(--bad); }
   button.act, form button { font:inherit; font-size:13px; padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--fg); cursor:pointer; }
-  button.act.primary, form button { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.act.primary, form button { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
   button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   input { font:inherit; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
   form.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #login { max-width:320px; margin:12vh auto; }
   #login .card { display:flex; flex-direction:column; gap:10px; }
+  #login label { display:flex; flex-direction:column; gap:4px; }
   .muted { color:var(--muted); } .err { color:var(--bad); min-height:1.5em; }
   code { font-size:13px; word-break:break-all; }
   .song { border-top:1px solid var(--line); padding:12px 0; }
@@ -66,7 +67,7 @@
 <div id="login" hidden>
   <form class="card" id="loginForm">
     <h2>Podium</h2><p class="muted">Conductor's admin page</p>
-    <label>Username <input id="u" autocomplete="username" required></label>
+    <label>Username <input id="u" autocomplete="username" required autocapitalize="none" autocorrect="off" spellcheck="false"></label>
     <label>Password <input id="p" type="password" autocomplete="current-password" required></label>
     <button>Sign in</button>
     <div class="err" id="loginErr" role="alert"></div>
@@ -130,7 +131,7 @@
     <section id="users" hidden>
       <div class="card"><h2>Users</h2><table id="userList"></table></div>
       <div class="card"><h2>Add a user</h2>
-        <form class="row" id="addUser"><input id="nu" placeholder="Name" required><input id="np" type="password" placeholder="Password (6+)" required>
+        <form class="row" id="addUser"><input id="nu" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Name" placeholder="Name" required><input id="np" type="password" aria-label="Password (6+)" placeholder="Password (6+)" required>
           <label><input type="checkbox" id="na"> admin</label><button>Add</button></form>
         <div class="err" id="userErr" role="alert"></div><div id="keyOut"></div></div>
     </section>
@@ -149,8 +150,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 async function api(path, opts = {}) {
   const r = await fetch('/admin/api/' + path, { credentials: 'same-origin', ...opts,
     headers: { 'X-Conductor': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
-  if (r.status === 401) { show(false); throw new Error('sign in'); }
   const j = await r.json().catch(() => ({}));
+  // signed out (the session ended): back to sign-in; a wrong password says so
+  if (r.status === 401 && path !== 'login') { show(false); throw new Error('sign in'); }
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
@@ -407,7 +409,7 @@ const loaders = { status: loadStatus, downloads: loadReqs, pick: loadPick, impor
 let current = 'status';
 function go(tab) {
   current = tab;
-  document.querySelectorAll('#tabs button').forEach((b) => b.toggleAttribute('aria-current', b.dataset.tab === tab) || (b.dataset.tab === tab && b.setAttribute('aria-current', 'page')));
+  document.querySelectorAll('#tabs button').forEach((b) => (b.dataset.tab === tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   document.querySelectorAll('main section').forEach((s) => (s.hidden = s.id !== tab));
   loaders[tab]().catch(() => {});
 }
@@ -433,7 +435,7 @@ document.addEventListener('click', async (e) => {
   const name = e.target.dataset && e.target.dataset.pw;
   if (!name) return;
   const row = e.target.closest('td');
-  row.innerHTML = `<form class="row" data-for="${esc(name)}"><input type="password" placeholder="New password" required minlength="6"><button>Save</button></form>`;
+  row.innerHTML = `<form class="row" data-for="${esc(name)}"><input type="password" aria-label="New password" placeholder="New password" required minlength="6"><button>Save</button></form>`;
   row.querySelector('input').focus();
 });
 document.addEventListener('submit', async (e) => {

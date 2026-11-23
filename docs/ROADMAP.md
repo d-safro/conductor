@@ -29,7 +29,8 @@ start: your data, settings, the API and Conductor's own extensions keep working 
    Home use it when there's no AudioMuse-AI. Moods need audio analysis and stay AudioMuse's.
 9. ~~**Linux packages.**~~ Done: .deb, .rpm and Arch for x86-64 and ARM64, each installed and removed in its system's
    container by CI.
-10. **Accessibility and phone layout** of Recital and Podium, checked.
+10. ~~**Accessibility and phone layout.**~~ Done: checked on a phone (Firefox, dark mode); fixed contrast, Podium's
+    sign-in on phones and its tab marking, names for screen readers, a landmark on the share page.
 
 ## After 1.0
 - Live updates (an event stream) instead of long-polls; Discord presence from it.

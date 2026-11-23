@@ -52,14 +52,14 @@
   <h1 id="title">Playlist</h1>
   <div class="sub" id="who">Add songs to this playlist</div>
   <div class="card">
-    <input id="q" type="search" placeholder="Search for a song to add" autocomplete="off" enterkeyhint="search">
+    <input id="q" type="search" aria-label="Search for a song to add" placeholder="Search for a song to add" autocomplete="off" enterkeyhint="search">
     <div id="results"></div>
   </div>
   <h2 id="count">Songs</h2>
   <div id="songs"></div>
 </main>
 <dialog id="name"><h1 style="font-size:18px">Your name</h1><p class="sub">So the others see who added what.</p>
-  <input id="name-in" maxlength="30" placeholder="Your name"><p style="text-align:right;margin:14px 0 0">
+  <input id="name-in" maxlength="30" aria-label="Your name" placeholder="Your name"><p style="text-align:right;margin:14px 0 0">
   <button class="primary" id="name-ok">OK</button></p></dialog>
 <div class="toast" id="toast"></div>
 <script>
