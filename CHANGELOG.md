@@ -28,6 +28,8 @@ What changed in each release, newest first. The full notes for each are on the
   slower to stop kept the file locked, the copy failed, and the service was left stopped. It now waits for the
   service to stop (only if it runs), tries the copy again for a while, and starts the old version again if it
   still can't.
+- **A Soulseek file name with `..` in it** (the name is the peer's) made Conductor look for the finished download
+  beside the downloads folder instead of in it, and move a file of that name from there into the music folder.
 
 ## 1.0.0 (2026-11-22)
 
