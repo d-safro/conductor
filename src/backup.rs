@@ -291,6 +291,7 @@ pub async fn worker(cfg: Config, db: Db) {
         return;
     }
     tokio::time::sleep(Duration::from_secs(10 * 60)).await;
+    leftovers(&cfg);
     loop {
         let d = dir(&cfg);
         let out = d.join(format!("conductor-{}.zip", stamp()));
@@ -300,6 +301,23 @@ pub async fn worker(cfg: Config, db: Db) {
         }
         prune(&d, cfg.backup_keep);
         tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+    }
+}
+
+/// What a backup stopped halfway (Conductor stopped or the computer went off during one) left: the database's copy
+/// in `<data>/.backup-…` and the unfinished `….zip.part`. Never cleared before, each was a whole database's size,
+/// for good. Only ones over an hour old: one being made now (`conductor backup`) is left alone.
+pub fn leftovers(cfg: &Config) {
+    let old = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|e| e > Duration::from_secs(3600)));
+    for (d, dirs) in [(cfg.data_dir.clone(), true), (dir(cfg), false)] {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let (p, n) = (e.path(), e.file_name().to_string_lossy().to_string());
+            if dirs && n.starts_with(".backup-") && p.is_dir() && old(&p) {
+                let _ = std::fs::remove_dir_all(&p);
+            } else if !dirs && n.ends_with(".zip.part") && p.is_file() && old(&p) {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
     }
 }
 
@@ -324,6 +342,28 @@ pub fn prune(d: &Path, keep: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(unix)] // (a folder's time can't be set this way on Windows)
+    fn what_a_stopped_backup_left_is_cleared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config { data_dir: tmp.path().to_path_buf(), ..Default::default() };
+        let (copy, part, now) = (tmp.path().join(".backup-abc"), super::dir(&cfg).join("conductor-1.zip.part"), tmp.path().join(".backup-now"));
+        for d in [&copy, &now, &super::dir(&cfg)] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(copy.join("conductor.db"), b"x").unwrap();
+        std::fs::write(&part, b"x").unwrap();
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        for p in [&copy, &part] {
+            std::fs::File::open(p).unwrap().set_modified(day_ago).unwrap();
+        }
+        std::fs::write(super::dir(&cfg).join("conductor-2.zip"), b"x").unwrap();
+        super::leftovers(&cfg);
+        assert!(!copy.exists() && !part.exists(), "a day old: gone");
+        assert!(now.exists(), "one being made now stays");
+        assert!(super::dir(&cfg).join("conductor-2.zip").exists(), "backups stay");
+    }
+
     #[test]
     fn versions() {
         assert!(super::newer("0.10.0", "0.9.9"));

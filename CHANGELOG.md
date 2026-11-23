@@ -42,6 +42,9 @@ What changed in each release, newest first. The full notes for each are on the
   unused. The restored config.toml now names the folder it was restored into.
 - **The Windows service with settings it can't read** (a typo in config.toml) stopped without writing why anywhere,
   while install.ps1 says to look in conductor.log. The error is now written to conductor.log beside config.toml.
+- **A backup stopped halfway** (Conductor stopped or the computer went off during one) left a whole copy of the
+  database in `<data>/.backup-…` and an unfinished `.zip.part`, for good. The daily backup now clears ones over an
+  hour old.
 
 ## 1.0.0 (2026-11-22)
 
