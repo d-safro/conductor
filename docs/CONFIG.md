@@ -46,7 +46,7 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 |---|---|---|
 | `catalog` | true | Songs you don't have (⬇) in searches, albums and artists (from Deezer). When it isn't set, it's on only if something can get those songs (slskd or Lidarr): without downloads, nothing shows that can't be played. |
 | `catalog_skip_clients` | ["symfonium", "audiomuse"] | Apps that never get ⬇ items (part of the client name, any case). |
-| `deezer_url` | "https://api.deezer.com" | Apps that never get ⬇ items (part of the client name, any case). |
+| `deezer_url` | "https://api.deezer.com" | Deezer's API address, for the ⬇ catalog, related artists and covers (only changed for a stand-in). |
 | `slskd_url` | (not set) | slskd (Soulseek) for downloading songs asked for: its address and API key. |
 | `slskd_api_key` | (not set) | slskd (Soulseek) for downloading songs asked for: its address and API key. |
 | `slskd_downloads` | (not set) | slskd's finished-downloads folder, as Conductor sees it (path mapping when they run on different systems). |
@@ -89,11 +89,11 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | `covers_fetch` | true | Save a cover.jpg (from iTunes, then Deezer) into album folders that have no picture. Environment: `CONDUCTOR_COVERS`. |
 | `itunes_url` | "https://itunes.apple.com" | Save a cover.jpg (from iTunes, then Deezer) into album folders that have no picture. |
 | `info_online` | true | Artist biographies and album notes (MusicBrainz → Wikidata → Wikipedia, pictures from the Cover Art Archive): looked up when an app first asks, then kept. `info_lang` is Wikipedia's language code. |
-| `info_lang` | "en" | Look for a better copy of songs it downloaded (the album asked from, FLAC over lossy) when there's nothing else to do, and swap it in (same song id). |
-| `wikidata_url` | "https://www.wikidata.org" | Look for a better copy of songs it downloaded (the album asked from, FLAC over lossy) when there's nothing else to do, and swap it in (same song id). |
-| `wikipedia_url` | "https://{lang}.wikipedia.org" | "{lang}" is replaced with the language |
-| `musicbrainz_url` | "https://musicbrainz.org/ws/2" | Concerts near you: Ticketmaster's Discovery API (with the key set in Encore), else MusicBrainz events. |
-| `coverart_url` | "https://coverartarchive.org" | "{lang}" is replaced with the language |
+| `info_lang` | "en" | Wikipedia's language code for artist biographies and album notes ("en", "ru", "de"…). |
+| `wikidata_url` | "https://www.wikidata.org" | Wikidata's address, for artist biographies and album notes (only changed for a stand-in). |
+| `wikipedia_url` | "https://{lang}.wikipedia.org" | Wikipedia's address for biographies and notes; "{lang}" is replaced with `info_lang`. |
+| `musicbrainz_url` | "https://musicbrainz.org/ws/2" | MusicBrainz's API address, for artist biographies, album notes and concerts (only changed for a stand-in). |
+| `coverart_url` | "https://coverartarchive.org" | The Cover Art Archive's address, for pictures with biographies and notes (only changed for a stand-in). |
 
 ## Concerts (Marquee)
 
