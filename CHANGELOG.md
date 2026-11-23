@@ -4,6 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **What was asked for, from any app** (`encore.requests`): the songs asked for (hearted, added to a playlist, played
+  on trial, in a mix, from ListenBrainz) and Lidarr's albums, as Podium lists them: who asked and why, how it's going
+  (searching, queued, downloading with its progress, done, not found, failed, set aside), when, on trial or kept; a
+  page at a time, by state. An admin sees all of them and can retry, cancel, set one aside or bring it back, search
+  Soulseek in their own words and pick a file; anyone else sees only what they asked for. Tools that read Podium's
+  private API for this can use these public calls instead (they won't change under them).
+
 ## 1.2.0 (2026-11-23)
 
 ### New

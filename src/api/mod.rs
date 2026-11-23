@@ -11,6 +11,7 @@ mod imports;
 mod info;
 mod for_you;
 mod items;
+mod requests_api;
 mod scrobbling;
 pub(crate) mod media;
 mod native;
@@ -430,6 +431,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.scrobbling", "versions": [1] },
             { "name": "encore.forYou", "versions": [1] },
             { "name": "encore.events", "versions": [1] },
+            { "name": "encore.requests", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -530,6 +532,12 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "jamPoll" => encore::jam_poll(c).await,
         "jamEnd" => encore::jam_end(c).await,
         "eventStream" => events::stream(c).await,
+        "getRequests" => requests_api::get_requests(c).await,
+        "retryRequest" => requests_api::retry_request(c).await,
+        "cancelRequest" => requests_api::cancel_request(c).await,
+        "setRequestAside" => requests_api::set_request_aside(c).await,
+        "searchRequestFiles" => requests_api::search_request_files(c).await,
+        "pickRequestFile" => requests_api::pick_request_file(c).await,
         "getPodcasts" => podcasts::get_podcasts(c).await,
         "getNewestPodcasts" => podcasts::newest(c).await,
         "getPodcastEpisode" => podcasts::get_episode(c).await,

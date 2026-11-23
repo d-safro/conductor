@@ -1,0 +1,65 @@
+{
+  "requestFiles": [
+    "object"
+  ],
+  "requestFiles.file": [
+    "array"
+  ],
+  "requestFiles.file[]": [
+    "object"
+  ],
+  "requestFiles.file[].artistOk": [
+    "boolean"
+  ],
+  "requestFiles.file[].bitrate": [
+    "number"
+  ],
+  "requestFiles.file[].ext": [
+    "string"
+  ],
+  "requestFiles.file[].filename": [
+    "string"
+  ],
+  "requestFiles.file[].folder": [
+    "string"
+  ],
+  "requestFiles.file[].free": [
+    "boolean"
+  ],
+  "requestFiles.file[].length": [
+    "number"
+  ],
+  "requestFiles.file[].match": [
+    "boolean"
+  ],
+  "requestFiles.file[].name": [
+    "string"
+  ],
+  "requestFiles.file[].queue": [
+    "number"
+  ],
+  "requestFiles.file[].sameAlbum": [
+    "boolean"
+  ],
+  "requestFiles.file[].score": [
+    "number"
+  ],
+  "requestFiles.file[].size": [
+    "number"
+  ],
+  "requestFiles.file[].speed": [
+    "number"
+  ],
+  "requestFiles.file[].titleOk": [
+    "boolean"
+  ],
+  "requestFiles.file[].user": [
+    "string"
+  ],
+  "requestFiles.query": [
+    "string"
+  ],
+  "requestFiles.total": [
+    "number"
+  ]
+}

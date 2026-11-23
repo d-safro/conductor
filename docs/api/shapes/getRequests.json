@@ -1,0 +1,149 @@
+{
+  "requests": [
+    "object"
+  ],
+  "requests.canPick": [
+    "boolean"
+  ],
+  "requests.counts": [
+    "object"
+  ],
+  "requests.counts.done": [
+    "number"
+  ],
+  "requests.counts.downloading": [
+    "number"
+  ],
+  "requests.counts.failed": [
+    "number"
+  ],
+  "requests.counts.notfound": [
+    "number"
+  ],
+  "requests.counts.queued": [
+    "number"
+  ],
+  "requests.counts.searching": [
+    "number"
+  ],
+  "requests.counts.setAside": [
+    "number"
+  ],
+  "requests.downloadsPaused": [
+    "boolean"
+  ],
+  "requests.offset": [
+    "number"
+  ],
+  "requests.onTrial": [
+    "number"
+  ],
+  "requests.request": [
+    "array"
+  ],
+  "requests.request[]": [
+    "object"
+  ],
+  "requests.request[].actions": [
+    "array"
+  ],
+  "requests.request[].actions[]": [
+    "string"
+  ],
+  "requests.request[].album": [
+    "string"
+  ],
+  "requests.request[].arrived": [
+    "string"
+  ],
+  "requests.request[].artist": [
+    "string"
+  ],
+  "requests.request[].artists": [
+    "array"
+  ],
+  "requests.request[].artists[]": [
+    "string"
+  ],
+  "requests.request[].asked": [
+    "string"
+  ],
+  "requests.request[].duration": [
+    "number"
+  ],
+  "requests.request[].file": [
+    "string"
+  ],
+  "requests.request[].folder": [
+    "string"
+  ],
+  "requests.request[].found": [
+    "boolean"
+  ],
+  "requests.request[].from": [
+    "string"
+  ],
+  "requests.request[].id": [
+    "string"
+  ],
+  "requests.request[].kept": [
+    "boolean"
+  ],
+  "requests.request[].manual": [
+    "boolean"
+  ],
+  "requests.request[].mix": [
+    "string"
+  ],
+  "requests.request[].note": [
+    "string"
+  ],
+  "requests.request[].path": [
+    "string"
+  ],
+  "requests.request[].progress": [
+    "number"
+  ],
+  "requests.request[].query": [
+    "string"
+  ],
+  "requests.request[].reasons": [
+    "array"
+  ],
+  "requests.request[].reasons[]": [
+    "string"
+  ],
+  "requests.request[].searches": [
+    "number"
+  ],
+  "requests.request[].songId": [
+    "string"
+  ],
+  "requests.request[].state": [
+    "string"
+  ],
+  "requests.request[].title": [
+    "string"
+  ],
+  "requests.request[].transfer": [
+    "string"
+  ],
+  "requests.request[].trial": [
+    "boolean"
+  ],
+  "requests.request[].type": [
+    "string"
+  ],
+  "requests.request[].upgrading": [
+    "boolean"
+  ],
+  "requests.request[].users": [
+    "array"
+  ],
+  "requests.request[].users[]": [
+    "string"
+  ],
+  "requests.total": [
+    "number"
+  ]
+}
