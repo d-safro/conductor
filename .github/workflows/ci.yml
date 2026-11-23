@@ -179,7 +179,8 @@ jobs:
           $cfg = "C:\ProgramData\conductor\config.toml"
           Stop-Service Conductor
           Copy-Item $cfg "$cfg.ok"
-          Add-Content $cfg "`nlisten = 1"
+          # settings it can't read (appended at the end it would land in the [[libraries]] table and be ignored)
+          Set-Content $cfg ("this is not toml [[[`n" + (Get-Content "$cfg.ok" -Raw))
           Start-Service Conductor -ErrorAction SilentlyContinue
           $failed = $false
           for ($i = 0; $i -lt 40 -and -not $failed; $i++) {
