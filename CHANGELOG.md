@@ -4,7 +4,7 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased
+## 1.3.0 (2026-11-23)
 
 ### New
 - **What was asked for, from any app** (`encore.requests`): the songs asked for (hearted, added to a playlist, played
