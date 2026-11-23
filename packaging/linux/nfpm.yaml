@@ -37,3 +37,7 @@ contents:
 scripts:
   postinstall: packaging/linux/postinstall.sh
   preremove: packaging/linux/preremove.sh
+archlinux:
+  scripts:
+    # pacman runs post_install only on a first install: an upgrade restarts the running service too, as .deb and .rpm do
+    postupgrade: packaging/linux/postinstall.sh

@@ -35,6 +35,8 @@ What changed in each release, newest first. The full notes for each are on the
 - **The Docker image's health check** always asked port 4533: with `-e CONDUCTOR_LISTEN=0.0.0.0:8080` the container
   was "unhealthy" for good. It now asks the port in `CONDUCTOR_LISTEN`. The image's license label also says
   AGPL-3.0-or-later now, as the project does (it said AGPL-3.0-only).
+- **Upgrading the Arch package** left the old version running: pacman runs the install script only on a first
+  install. An upgrade now restarts a running service, as the .deb and .rpm do.
 
 ## 1.0.0 (2026-11-22)
 
