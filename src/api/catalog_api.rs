@@ -153,7 +153,20 @@ async fn complete_album(c: &Ctx, v: &mut Value) {
     let Some(mine) = al["song"].as_array().cloned() else { return };
     let (artist, name) = (sv(al, "artist").to_string(), sv(al, "name").to_string());
     let titles: Vec<String> = mine.iter().map(|s| sv(s, "title").into()).collect();
-    let Some(did) = catalog::match_album(&c.st, &artist, &name, &titles).await else { return };
+    // the album's artist tag can be wrong (a downloaded file's, from whoever shared it: "Sticky Fingers" by
+    // "Champagne Parker"), so when it finds nothing, also by the artist all its songs have
+    let by_songs = mine
+        .first()
+        .map(|x| sv(x, "artist").to_string())
+        .filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case(&artist) && mine.iter().all(|x| sv(x, "artist") == a));
+    let did = match catalog::match_album(&c.st, &artist, &name, &titles).await {
+        Some(d) => Some(d),
+        None => match by_songs {
+            Some(a) => catalog::match_album(&c.st, &a, &name, &titles).await,
+            None => None,
+        },
+    };
+    let Some(did) = did else { return };
     let local: Vec<(String, String)> = mine.iter().map(|s| (sv(s, "id").into(), sv(s, "title").into())).collect();
     let (plan, extra) = catalog::full_album(&c.st, &did, &local).await;
     if plan.iter().all(|(_, m)| m.is_some()) {

@@ -898,6 +898,39 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
 }
 
 #[tokio::test]
+async fn an_album_with_a_wrong_album_artist_still_shows_the_songs_you_dont_have() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    // one song of the album, downloaded with someone else's tags: the right artist, a made-up album artist
+    tone_tags(
+        &s.music.join("Songs/uh-oh.flac"),
+        2,
+        &[("title", "Uh-Oh, Love Comes to Town"), ("artist", "Talking Heads"), ("album_artist", "Champagne Parker"), ("album", "Talking Heads: 77")],
+    );
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let id = s.ok("search3", &[("query", "uh-oh"), ("artistCount", "0"), ("albumCount", "0")]).await["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| !x["id"].as_str().unwrap().starts_with("dz-"))
+        .unwrap()["albumId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let al = s.ok("getAlbum", &[("id", &id)]).await;
+    let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["⬇ Psycho Killer", "Uh-Oh, Love Comes to Town"], "{al}");
+}
+
+#[tokio::test]
 async fn songs_you_dont_have() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");

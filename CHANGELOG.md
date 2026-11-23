@@ -7,6 +7,9 @@ What changed in each release, newest first. The full notes for each are on the
 ## Unreleased
 
 ### Fixed
+- **An album downloaded with someone else's tags** (a song from Soulseek whose album artist is made up: "Sticky
+  Fingers" by "Champagne Parker") showed only the songs you have, without the ⬇ ones to play or fetch. When the album
+  artist finds nothing, the album is now also looked up by the artist all its songs have.
 - **Web pages built on Windows**: each page may run only its own script, named by its hash, but a Windows checkout
   gives the pages CRLF line ends and browsers hash scripts with LF, so nothing matched and Podium, setup, Recital and
   the Jam, Chorus and share pages did nothing. Scripts are now hashed as browsers read them, and the pages are checked
