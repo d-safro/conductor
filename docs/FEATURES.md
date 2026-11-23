@@ -39,6 +39,13 @@ The detailed list. The [README](../README.md) has the short version.
   the cache (`transcode_cache_mb`, least recently used out first; a changed file is converted again). `transcode_slots`
   at once as a rule, a short wait, then up to four times as many; ffmpeg at a lower priority than everything else.
   Ogg Vorbis and Opus are made in stereo (Vorbis at 44.1 kHz, 48-480 kbps), so every song converts at any bitrate.
+- **Sound levelling**: every song plays at the same loudness, also the ones without ReplayGain tags (most from
+  Soulseek). Those are measured in the background (ffmpeg's EBU R128 loudness and true peak, at the lowest priority,
+  one song at a time, about half a second to a few seconds a song, once) and the apps get the result in OpenSubsonic's
+  `replayGain` (track gain against −18 LUFS, album gain from the album's songs weighted by length, peaks); tags in
+  the file always win. Encore, Symfonium, Feishin and Recital level with it; so does a share link's page. A changed
+  file is measured again, a rescan keeps what was measured. Progress in Podium (`loudness_analysis`,
+  `loudness_threads`).
 - **Big libraries**: measured with 100,000 songs (`cargo run --release --example bench_library -- DIR 100000` makes
   one in seconds): first scan ~10 s, a rescan ~1 s, ~75 MB of memory; lists and albums in ~1-25 ms; an app fetching
   the whole library 500 songs at a time ~10 s in all (stable paging, nothing skipped or repeated).
