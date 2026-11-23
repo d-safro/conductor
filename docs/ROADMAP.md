@@ -9,9 +9,9 @@ each ended, and what comes next.
    parameters, every field of the answer), and the recorded shape of every call's answer (117 calls), checked by the
    tests and by CI, so a change can add fields but never drop or change one.
 2. **Other apps, for real.** Used against a real server, one by one, and fixed for what they trip over. Done so far:
-   Tempus and Ultrasonic (Android: browse, search, stream with seeking, star, rate, scrobble, lyrics, podcasts,
-   radio, shares, bookmarks; no errors), Encore, Feishin's web version. Still to try: Symfonium, Substreamer;
-   Feishin and Supersonic (desktop); Airsonic-refix (web); Amperfy and play:Sub (iPhone).
+   Tempus, Ultrasonic, Symfonium and Substreamer (Android: a full library sync, browse, search, stream with
+   seeking, star, rate, scrobble, lyrics, podcasts, radio, shares, bookmarks; no errors), Encore, Feishin's web
+   version. Still to try: Feishin and Supersonic (desktop); Airsonic-refix (web); Amperfy and play:Sub (iPhone).
 3. **Windows on a real PC.** Not done for 1.0: CI runs the tests and installs, restarts and removes the service on
    Windows on every change, but no real PC has run it yet (`install.ps1` as a service, a phone through the firewall,
    music on a USB drive). Still wanted; reports welcome.
