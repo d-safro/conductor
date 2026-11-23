@@ -32,6 +32,9 @@ What changed in each release, newest first. The full notes for each are on the
   the 33-song Super Deluxe edition, because Deezer had only that and a remaster, both counted as "editions" alike.
   The plain album now comes first, then a remaster of it (the same songs), and only then a deluxe edition (unless
   yours is one); albums matched before are matched again.
+- **Recording the API contract** (`CONDUCTOR_BLESS=1`) with only some tests running wrote each answer's shape from
+  just those tests, so `search3.json` lost fields. Recording now only adds fields; one a whole run never sees is
+  listed in `target/tmp/contract-unseen/`, and CI fails on it.
 
 ## 1.0.0 (2026-11-22)
 
