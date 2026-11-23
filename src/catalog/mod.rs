@@ -352,19 +352,28 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     }
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
+    let mine = edition_tier(name);
     for q in [format!(r#"artist:"{artist}" album:"{clean}""#), format!("{artist} {clean}")] {
-        // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later)
-        for a in st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await? {
+        let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
+            // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless the
+            // first search already found something to go on
+            if cands.is_empty() {
+                return None;
+            }
+            break;
+        };
+        for a in found {
             if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
                 cands.push(a);
             }
         }
-        if !cands.is_empty() {
+        // the exact search can find only a bigger edition ("Sticky Fingers (Super Deluxe)") while the album itself
+        // ("Sticky Fingers (Remastered)") comes up only in the plain one: look there too unless it's here already
+        if cands.iter().any(|c| edition_tier(s(c, "title")) <= mine.max(1)) {
             break;
         }
     }
     let want = alk(name);
-    let mine = edition_tier(name);
     let mut scored: Vec<(f64, Value)> = vec![];
     for a in cands {
         let sim = ratio(&want, &alk(s(&a, "title")));

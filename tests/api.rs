@@ -830,6 +830,9 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
             let side = |base: i64, titles: &[&str]| json!({ "data": titles.iter().enumerate().map(|(i, t)| tr(base + i as i64, t, i as i64 + 1)).collect::<Vec<_>>() });
             let body = match path.as_str() {
                 // only a remaster and a super deluxe edition: the remaster
+                // as Deezer does: its exact search (artist:"…" album:"…") finds only the Super Deluxe; the remaster
+                // comes up only in the plain one
+                "/search/album" if q.contains("sticky") && (q.contains("artist:") || q.contains("artist%3a")) => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5)] }),
                 "/search/album" if q.contains("sticky") => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5), ed(71, "Sticky Fingers (Remastered)", 3)] }),
                 "/album/70/tracks" => side(7000, &["Brown Sugar", "Sway", "Wild Horses", "Midnight Jam", "Roundhouse Encore"]),
                 "/album/71/tracks" => side(7100, &["Brown Sugar", "Sway", "Wild Horses"]),

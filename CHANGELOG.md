@@ -4,6 +4,13 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.1.1 (2026-11-22)
+
+### Fixed
+- **Albums still completed from a bigger edition**: when Deezer's exact search finds only a deluxe edition ("Sticky
+  Fingers (Super Deluxe)", 33 songs) and the album itself ("Sticky Fingers (Remastered)", 10) comes up only in its
+  plain search, the plain search is now looked at too. Albums matched since 1.1.0 are matched again.
+
 ## 1.1.0 (2026-11-22)
 
 ### New
