@@ -382,7 +382,7 @@ async function loadSettings() {
       const val = x.kind === 'secret' || !x.set ? '' : Array.isArray(x.value) ? x.value.join(', ') : String(x.value);
       const ph = x.kind === 'secret' ? (x.set ? 'set: type to replace' : 'not set') : x.kind === 'list' ? 'comma-separated' : String(x.default);
       control = `<form class="row" data-setting="${esc(x.name)}" data-kind="${x.kind}"><input id="${id}" aria-label="${esc(x.name)}"
-        ${x.kind === 'secret' ? 'type="password" autocomplete="off"' : x.kind === 'number' ? 'inputmode="numeric"' : ''} value="${esc(val)}" placeholder="${esc(ph)}">
+        ${x.kind === 'secret' ? 'type="password" autocomplete="off"' : x.kind === 'number' ? `inputmode="${x.default.includes('.') ? 'decimal' : 'numeric'}"` : ''} value="${esc(val)}" placeholder="${esc(ph)}">
         <button>Save</button>${x.set ? `<button type="button" class="act" data-clear="${esc(x.name)}">${x.kind === 'secret' ? 'Clear' : 'Default'}</button>` : ''}</form>`;
     }
     return `<div class="setting"><div><label for="${id}"><code>${esc(x.name)}</code></label> <span class="muted">· ${esc(now)}</span><p class="muted">${esc(x.about)}</p></div><div>${control}</div></div>`;

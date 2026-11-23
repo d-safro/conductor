@@ -22,7 +22,7 @@ What's stored, with when each part changed.
 
 Store a part.
 
-Parameters: `key`, `at`, `id`.
+Parameters: `key`, `at`, `id`, `value`.
 
 | Field | Type |
 |---|---|

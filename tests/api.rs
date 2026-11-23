@@ -4682,6 +4682,13 @@ async fn albums_without_a_cover_get_a_picture_except_in_apps_that_draw_their_own
         let u = s.url("getCoverArt", &[("id", &album)]).replace("c=test", &format!("c={}", app.replace(' ', "+")));
         assert_eq!(s.http.get(u).send().await.unwrap().status(), 404, "{app}");
     }
+    // ...and Recital does draw its own: a picture that fails becomes a clear one (else browsers show a broken image)
+    let page = s.http.get(format!("{}/", s.base)).send().await.unwrap().text().await.unwrap();
+    assert!(page.contains("document.addEventListener('error'") && page.contains("e.target.src = NO_COVER"));
+    // the guest pages (Jam, Chorus, shares) get "not found" too: the same clear picture (a whole GIF, which browsers draw)
+    for guest in [include_str!("../web/jam/index.html"), include_str!("../web/collab/index.html"), include_str!("../web/share/index.html")] {
+        assert!(guest.contains("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") && !guest.contains("R0lGODlhAQABAAAAACw="));
+    }
     // an album with a cover still gets its own
     let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["albumId"].as_str().unwrap().to_string();
     let r = s.http.get(s.url("getCoverArt", &[("id", &one)])).send().await.unwrap();
@@ -5164,6 +5171,10 @@ async fn settings_from_podium() {
     assert_eq!(set("scan_interval_min", "30".into()).await.status(), 200);
     assert_eq!(set("discovery", "weekly-jams, daily-jams".into()).await.status(), 200);
     assert_eq!(set("lastfm_secret", "s3cr3t-value".into()).await.status(), 200);
+    // settings with a decimal default take decimals (as JSON numbers or as typed)
+    assert_eq!(set("lidarr_match_ratio", "0.9".into()).await.status(), 200);
+    assert_eq!(set("trial_hours", serde_json::json!(12.5)).await.status(), 200);
+    assert_eq!(set("trial_per_day", "2.5".into()).await.status(), 400, "a whole number");
     // a value Conductor can't take, a number that isn't, a setting that isn't one here
     assert_eq!(set("scan_interval_min", "soon".into()).await.status(), 400);
     assert_eq!(set("data_dir", "/tmp/x".into()).await.status(), 400);
@@ -5177,7 +5188,8 @@ async fn settings_from_podium() {
     let cfg = conductor::config::Config::load(Some(file.clone())).unwrap();
     assert_eq!((cfg.lyrics_online, cfg.scan_interval_min, cfg.discovery.clone()), (false, 30, vec!["weekly-jams".to_string(), "daily-jams".into()]));
     assert_eq!(cfg.lastfm_secret.as_deref(), Some("s3cr3t-value"));
-    assert_eq!((cfg.jam_listen.as_str(), cfg.trial_hours), ("127.0.0.1:4599", 1.5));
+    // trial_hours: the later 1.5 replaced 12.5
+    assert_eq!((cfg.jam_listen.as_str(), cfg.lidarr_match_ratio, cfg.trial_hours), ("127.0.0.1:4599", 0.9, 1.5));
     // the secret is in secrets.toml, not config.toml, and never sent back
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cr3t"));
     assert!(std::fs::read_to_string(file.with_file_name("secrets.toml")).unwrap().contains("s3cr3t-value"));
@@ -5237,4 +5249,70 @@ async fn made_for_you_without_audiomuse() {
     assert_eq!(ids(&s.ok("getForYou", &[("count", "20")]).await), before);
     // fewer asked for: the start of the same list
     assert_eq!(ids(&s.ok("getForYou", &[("count", "2")]).await), before[..2.min(before.len())]);
+}
+
+#[tokio::test]
+async fn search_ignores_case_in_any_alphabet() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    tone(&s.music.join("Kino/G/01.mp3"), "Группа крови", "Кино", "Группа крови", 1, 2);
+    tone(&s.music.join("Kino/G/02.mp3"), "Звезда по имени Солнце", "Кино", "Группа крови", 2, 2);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let titles = |r: &Value| -> Vec<String> {
+        let mut t: Vec<String> = r["searchResult3"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap().into()).collect();
+        t.sort();
+        t
+    };
+    // as typed on a phone (lower case), all capitals, or as written
+    for q in ["кино", "КИНО", "Кино"] {
+        let r = s.ok("search3", &[("query", q)]).await;
+        assert_eq!(titles(&r).len(), 2, "{q}: {r}");
+        assert_eq!(r["searchResult3"]["artist"][0]["name"], "Кино", "{q}");
+    }
+    assert_eq!(titles(&s.ok("search3", &[("query", "звезда солнце")]).await), ["Звезда по имени Солнце"]);
+    assert_eq!(titles(&s.ok("search3", &[("query", "СОЛНЦЕ кино")]).await), ["Звезда по имени Солнце"]);
+    assert_eq!(titles(&s.ok("search3", &[("query", "группа КРОВИ")]).await).len(), 2, "the album's name");
+    // the guest pages (Jam, Chorus) search the same way
+    let found = conductor::jam::find_songs(&s.st, "кино звезда", 10).await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    // A-Z as before, and a backslash or % is just a character
+    assert_eq!(titles(&s.ok("search3", &[("query", "alpha ONE")]).await), ["One"]);
+    assert!(titles(&s.ok("search3", &[("query", "on\\")]).await).is_empty());
+    assert!(titles(&s.ok("search3", &[("query", "%")]).await).is_empty());
+}
+
+#[tokio::test]
+async fn a_backup_restored_into_another_data_folder_is_used_there() {
+    // made on one computer (its settings name its data folder)...
+    let old = tempfile::tempdir().unwrap();
+    let music = old.path().join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let toml_for = |data: &Path, port: u16| {
+        format!(
+            "data_dir = {:?}\nlisten = \"127.0.0.1:{port}\"\nlyrics_online = false\n\n[[libraries]]\nname = \"Music\"\npath = {:?}\n",
+            data.to_string_lossy(),
+            music.to_string_lossy()
+        )
+    };
+    let old_cfg_path = old.path().join("config.toml");
+    std::fs::write(&old_cfg_path, toml_for(&old.path().join("data"), 1)).unwrap();
+    let cfg = Config::load(Some(old_cfg_path)).unwrap();
+    std::fs::create_dir_all(&cfg.data_dir).unwrap();
+    let pool = db::open(&cfg.data_dir.join("conductor.db")).await.unwrap();
+    let out = old.path().join("backup.zip");
+    conductor::backup::make(&cfg, &pool, &out).await.unwrap();
+    pool.close().await;
+    // ...restored where the data folder is somewhere else: the settings come back, but keep this data folder
+    let new = tempfile::tempdir().unwrap();
+    let new_cfg_path = new.path().join("config.toml");
+    std::fs::write(&new_cfg_path, toml_for(&new.path().join("data"), 0).replace("lyrics_online = false\n", "")).unwrap();
+    let cfg2 = Config::load(Some(new_cfg_path.clone())).unwrap();
+    let r = conductor::backup::restore(&cfg2, &out, false).unwrap();
+    assert!(r.files.contains(&"config.toml".to_string()), "{r:?}");
+    let after = Config::load(Some(new_cfg_path)).unwrap();
+    assert_eq!(after.data_dir, new.path().join("data"), "where the database was restored");
+    assert!(after.data_dir.join("conductor.db").is_file());
+    assert!(!after.lyrics_online, "the rest of the settings came back");
 }

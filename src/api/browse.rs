@@ -201,15 +201,28 @@ pub async fn genres(c: &Ctx) -> Result<Reply, ApiError> {
     ok(json!({ "genres": { "genre": g } }))
 }
 
-/// Every word must appear somewhere in the item's name fields. An empty query (or `""`) lists everything.
-fn word_conditions(q: &str, fields: &str) -> (String, Vec<String>) {
+/// Every word must appear somewhere in the item's name fields, in any case. An empty query (or `""`) lists everything.
+/// SQLite's LIKE ignores case only for A-Z, so a word with other letters (Cyrillic, Greek…) is also looked for in
+/// lower case, upper case and capitalised: "кино" finds "Кино" and "КИНО".
+pub(crate) fn word_conditions(q: &str, fields: &str) -> (String, Vec<String>) {
     let q = q.trim().trim_matches('"').trim();
-    let words: Vec<String> = q.split_whitespace().map(|w| format!("%{}%", w.replace('%', "\\%").replace('_', "\\_"))).collect();
-    if words.is_empty() {
+    let (mut conds, mut binds) = (vec![], vec![]);
+    for w in q.split_whitespace() {
+        let mut forms = vec![w.to_string()];
+        if !w.is_ascii() {
+            let mut c = w.chars();
+            let cap = c.next().map(|f| f.to_uppercase().chain(c.flat_map(char::to_lowercase)).collect()).unwrap_or_default();
+            forms.extend([w.to_lowercase(), w.to_uppercase(), cap]);
+            forms.sort();
+            forms.dedup();
+        }
+        conds.push(format!("({})", forms.iter().map(|_| format!("({fields}) LIKE ? ESCAPE '\\'")).collect::<Vec<_>>().join(" OR ")));
+        binds.extend(forms.iter().map(|f| format!("%{}%", f.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"))));
+    }
+    if conds.is_empty() {
         return ("1".into(), vec![]);
     }
-    let cond = words.iter().map(|_| format!("({fields}) LIKE ? ESCAPE '\\'")).collect::<Vec<_>>().join(" AND ");
-    (cond, words)
+    (conds.join(" AND "), binds)
 }
 
 pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {

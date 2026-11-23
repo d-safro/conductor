@@ -244,18 +244,10 @@ async fn search(
 
 /// Library songs whose title / artist / album hold every word (for the guest pages).
 pub async fn find_songs(st: &AppState, text: &str, limit: i64) -> Vec<Value> {
-    let words: Vec<String> = text
-        .split_whitespace()
-        .map(|w| format!("%{}%", w.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")))
-        .collect();
+    let (cond, words) = crate::api::word_conditions(text, "t.title || ' ' || t.artist_name || ' ' || t.album_name");
     if words.is_empty() {
         return vec![];
     }
-    let cond = words
-        .iter()
-        .map(|_| "(t.title || ' ' || t.artist_name || ' ' || t.album_name) LIKE ? ESCAPE '\\'")
-        .collect::<Vec<_>>()
-        .join(" AND ");
     let sql = format!(
         "SELECT t.id, t.title, t.artist_name, t.album_name, t.album_id, t.duration_ms FROM track t
          WHERE t.missing_since IS NULL AND {cond} ORDER BY t.sort_title LIMIT {limit}"

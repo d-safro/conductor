@@ -13,7 +13,8 @@ The detailed list. The [README](../README.md) has the short version.
   with "the music drive isn't connected". A scan that would suddenly lose more than half the songs leaves them alone.
   The server rescans as soon as the folder is back.
 - **Subsonic API** (`/rest/<method>`, JSON and XML, GET and form POST): `ping`, `getLicense`,
-  `getOpenSubsonicExtensions`, `getMusicFolders`, `getArtists`, `getIndexes`, `getArtist`, `getAlbum`, `getSong`,
+  `getOpenSubsonicExtensions`, `getMusicFolders` (each music folder; lists and searches always cover them all, `musicFolderId`
+  isn't used yet), `getArtists`, `getIndexes`, `getArtist`, `getAlbum`, `getSong`,
   `getMusicDirectory`, `getAlbumList(2)` (all list types), `getRandomSongs`, `getSongsByGenre`, `getGenres`,
   `search2/3`, `getStarred(2)`, `star`, `unstar`, `setRating`, `scrobble`, `reportPlayback`, `getNowPlaying`,
   `getTopSongs`, `getSimilarSongs(2)` (AudioMuse's sound-alikes, then the artist's songs in turns with those of the

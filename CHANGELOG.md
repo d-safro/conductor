@@ -21,6 +21,19 @@ What changed in each release, newest first. The full notes for each are on the
   start; it's refused now. A huge `transcode_slots` made the server panic at start (now taken as 1024).
   `trial_hours` and `lidarr_match_ratio` take decimals. Six online-info addresses showed other settings'
   descriptions.
+- **Search ignored case only in A-Z**: "кино" didn't find "Кино" (SQLite's LIKE folds only ASCII). `search2`/`search3` and
+  the Jam and Chorus guest pages now find Cyrillic, Greek and other names typed in any case.
+- **Recital, and the Jam, Chorus and share pages**, showed a broken-image icon (in Chrome, Edge and other Chromium
+  browsers) for every song or album without a cover: the server answers "not found" so the page can draw its own
+  square, but the pages never did (Jam's fallback picture was itself a broken GIF). They now show a plain square.
+- **`conductor restore` into another data folder** (a new computer, a moved folder) put the database there but brought
+  back `config.toml` still naming the old folder, so the next start used the old one and the restored library seemed
+  gone. The restored settings now keep the data folder the database went to.
+- **`conductor --help`**, or a mistyped command, made a database in the default data folder before saying "unknown
+  command; see the top of src/main.rs". Now nothing is opened, and the commands are listed.
+- **Docs**: the settings reference (also Podium's Settings help) described `deezer_url`, `info_lang`, `wikidata_url`,
+  `musicbrainz_url` and `coverart_url` with another setting's text; the `encore.*` specs left out the JSON parameters
+  (`state`, `command`, `value`, `login`); FEATURES.md now says `musicFolderId` isn't used (every call covers all folders).
 
 ## 1.0.0 (2026-11-22)
 

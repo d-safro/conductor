@@ -193,6 +193,16 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
         std::io::copy(&mut e, &mut f).with_context(|| format!("writing {}", to.display()))?;
         out.files.push(name);
     }
+    // settings from another data folder (another computer, or a folder that moved) keep this one, where the database
+    // just went: else the next start would use the old folder and not find what was restored
+    if let Some((_, p)) = settings.iter().find(|(n, _)| n == "config.toml")
+        && out.files.iter().any(|f| f == "config.toml")
+        && Config::load(Some(p.clone())).is_ok_and(|c| c.data_dir != cfg.data_dir)
+    {
+        let mut d = crate::prelude::Draft::load(p)?;
+        d.set("data_dir", cfg.data_dir.to_string_lossy().to_string());
+        d.save()?;
+    }
     Ok(out)
 }
 

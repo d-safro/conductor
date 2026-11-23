@@ -2,6 +2,7 @@
 
 mod bridges;
 mod browse;
+pub(crate) use browse::word_conditions;
 mod catalog_api;
 mod dj;
 mod encore;

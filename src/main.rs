@@ -37,6 +37,21 @@ use conductor::{
 #[cfg(windows)]
 mod winsvc;
 
+const USAGE: &str = "\
+conductor [--config FILE] [serve]           run the server (the first time in a terminal, Prelude first)
+conductor setup [PART] [--yes ...]          Prelude, the setup wizard (conductor setup --help)
+conductor scan [--full]                     scan the music folders once
+conductor user add NAME [--admin] [--if-missing]   (password from CONDUCTOR_PASSWORD or typed)
+conductor user passwd NAME
+conductor apikey NAME [LABEL]               print a new API key
+conductor backup [FILE]                     everything needed to come back, in one zip
+conductor restore FILE [--force]            put a backup back (Conductor stopped)
+conductor import-navidrome NAVIDROME.DB [--artwork DIR] [--nd-key KEY] [--replace]
+conductor import-music-lookup DATA [STATE]
+conductor import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to URL --as USER]
+conductor service install|uninstall|start|stop   (Windows)
+";
+
 /// Stops the server when it completes (Ctrl+C, or the Windows service being stopped).
 pub type Shutdown = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
@@ -84,6 +99,26 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     if let ["setup" | "prelude", rest @ ..] = a.as_slice() {
         conductor::prelude::cli(config_path, rest).await?;
         return Ok(());
+    }
+    // a mistyped command says so before anything is opened or made (no database in the default folder)
+    if matches!(a.as_slice(), ["help" | "--help" | "-h", ..]) {
+        print!("{USAGE}");
+        return Ok(());
+    }
+    if !matches!(
+        a.as_slice(),
+        [] | ["serve"]
+            | ["scan", ..]
+            | ["user", "add", _, ..]
+            | ["user", "passwd", _]
+            | ["backup", ..]
+            | ["restore", _, ..]
+            | ["apikey", _, ..]
+            | ["import-navidrome", _, ..]
+            | ["import-music-lookup", _, ..]
+            | ["import", ..]
+    ) {
+        bail!("unknown command: {}\n\n{USAGE}", a.join(" "));
     }
     let first_start = matches!(a.as_slice(), [] | ["serve"])
         && config_path.is_none()
@@ -189,7 +224,7 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
             let st = Arc::new(conductor::api::AppState::new(pool, secrets, cfg, libs));
             conductor::import::cli::run(st, rest).await
         }
-        _ => bail!("unknown command; see the top of src/main.rs"),
+        _ => bail!("unknown command\n\n{USAGE}"),
     }
 }
 

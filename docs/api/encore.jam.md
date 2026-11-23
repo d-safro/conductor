@@ -20,7 +20,7 @@ Parameters: `name`.
 
 The host's queue and position, sent for the guests.
 
-Parameters: `token`.
+Parameters: `token`, `state`.
 
 | Field | Type |
 |---|---|
