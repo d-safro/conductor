@@ -4,6 +4,12 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### Fixed
+- **Podium › Settings** turned down a decimal for the settings that take one (`trial_hours`, `lidarr_match_ratio`:
+  "a whole number"); they now take decimals, and a phone shows a keypad with a decimal point for them.
+
 ## 1.0.0 (2026-11-22)
 
 1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with these fixes:

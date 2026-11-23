@@ -5133,6 +5133,10 @@ async fn settings_from_podium() {
     assert_eq!(set("scan_interval_min", "30".into()).await.status(), 200);
     assert_eq!(set("discovery", "weekly-jams, daily-jams".into()).await.status(), 200);
     assert_eq!(set("lastfm_secret", "s3cr3t-value".into()).await.status(), 200);
+    // settings with a decimal default take decimals (as JSON numbers or as typed)
+    assert_eq!(set("lidarr_match_ratio", "0.9".into()).await.status(), 200);
+    assert_eq!(set("trial_hours", serde_json::json!(12.5)).await.status(), 200);
+    assert_eq!(set("trial_per_day", "2.5".into()).await.status(), 400, "a whole number");
     // a value Conductor can't take, a number that isn't, a setting that isn't one here
     assert_eq!(set("scan_interval_min", "soon".into()).await.status(), 400);
     assert_eq!(set("data_dir", "/tmp/x".into()).await.status(), 400);
@@ -5140,6 +5144,7 @@ async fn settings_from_podium() {
     let cfg = conductor::config::Config::load(Some(file.clone())).unwrap();
     assert_eq!((cfg.lyrics_online, cfg.scan_interval_min, cfg.discovery.clone()), (false, 30, vec!["weekly-jams".to_string(), "daily-jams".into()]));
     assert_eq!(cfg.lastfm_secret.as_deref(), Some("s3cr3t-value"));
+    assert_eq!((cfg.lidarr_match_ratio, cfg.trial_hours), (0.9, 12.5));
     // the secret is in secrets.toml, not config.toml, and never sent back
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cr3t"));
     assert!(std::fs::read_to_string(file.with_file_name("secrets.toml")).unwrap().contains("s3cr3t-value"));
