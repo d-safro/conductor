@@ -183,6 +183,19 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
             moved.push((p, to));
         }
         out.moved_aside = Some(aside);
+    } else {
+        // no database, but its journal left from one (deleted by hand, or lost): SQLite would play that journal into
+        // the database restored here, which it doesn't belong to. Moved aside too.
+        let stale: Vec<PathBuf> = ["conductor.db-wal", "conductor.db-shm"].iter().map(|n| cfg.data_dir.join(n)).filter(|p| p.exists()).collect();
+        if !stale.is_empty() {
+            let aside = cfg.data_dir.join(format!("before-restore-{}", stamp()));
+            std::fs::create_dir_all(&aside)?;
+            for p in stale {
+                let to = aside.join(p.file_name().map(|n| n.to_owned()).unwrap_or_default());
+                rename_patiently(&p, &to).with_context(|| format!("moving {} aside", p.display()))?;
+            }
+            out.moved_aside = Some(aside);
+        }
     }
     std::fs::create_dir_all(&cfg.data_dir)?;
     for i in 0..z.len() {

@@ -4045,6 +4045,14 @@ async fn a_restore_on_another_computer_uses_the_data_it_restored() {
     assert!(back.data_dir.join("conductor.db").is_file());
     assert_eq!(back.libraries.len(), 1, "the rest of the settings came back as they were");
     assert!(std::fs::read_to_string(&config).unwrap().starts_with("# mine"));
+
+    // a journal left without its database (deleted by hand) isn't played into the one restored
+    let third = tmp.path().join("third");
+    std::fs::create_dir_all(&third).unwrap();
+    std::fs::write(third.join("conductor.db-wal"), b"someone else's").unwrap();
+    let cfg = Config { data_dir: third.clone(), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    let r = conductor::backup::restore(&cfg, &out, false).unwrap();
+    assert!(!third.join("conductor.db-wal").exists() && r.moved_aside.unwrap().join("conductor.db-wal").is_file());
 }
 
 #[tokio::test]

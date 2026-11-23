@@ -42,6 +42,9 @@ What changed in each release, newest first. The full notes for each are on the
 - **A backup restored on another computer** brought back the old computer's `data_dir` in config.toml (another
   user's home, or `C:\ProgramData\conductor`): the next start looked there and the database just restored went
   unused. The restored config.toml now names the folder it was restored into.
+- **A restore where only the database's journal was left** (`conductor.db-wal` without `conductor.db`, deleted by
+  hand) kept that journal, which SQLite would play into the restored database it doesn't belong to. It's moved aside
+  with the rest now.
 - **The Windows service with settings it can't read** (a typo in config.toml) stopped without writing why anywhere,
   while install.ps1 says to look in conductor.log. The error is now written to conductor.log beside config.toml.
 - **A backup stopped halfway** (Conductor stopped or the computer went off during one) left a whole copy of the
