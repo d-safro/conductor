@@ -24,6 +24,8 @@ What changed in each release, newest first. The full notes for each are on the
   folder that belongs to someone else is now given to that folder's owner.
 - **A podcast feed or cover of any size** was read into memory whole, and feeds are read again every 2 hours: a broken
   or hostile feed could run the server out of memory. Feeds stop at 64 MB and covers at 16 MB.
+  An episode saved on the server stops at 8 GB (a live stream as an episode filled the disk for an hour), and a
+  download that fails no longer leaves its `.part` file behind.
 - **Upgrading on Windows with install.ps1** gave the service two seconds to stop before replacing conductor.exe; one
   slower to stop kept the file locked, the copy failed, and the service was left stopped. It now waits for the
   service to stop (only if it runs), tries the copy again for a while, and starts the old version again if it
