@@ -20,7 +20,8 @@ jobs:
       - run: cargo test
   api-contract:
     # The shape of every answer (docs/api/shapes/, see the contract module in tests/api.rs) recorded again: a field
-    # added, dropped or changed shows as a change here, which fails until the files (and the docs) are updated.
+    # added or changed shows as a change here, which fails until the files (and the docs) are updated. Recording only
+    # adds fields; one no test sees any more (dropped) is listed in target/tmp/contract-unseen/, which fails too.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +33,10 @@ jobs:
           git status --porcelain docs/api/shapes
           git diff --stat --exit-code docs/api/shapes
           test -z "$(git status --porcelain docs/api/shapes)"
+      - name: no recorded field went unseen (dropped)
+        run: |
+          for f in target/tmp/contract-unseen/*.txt; do [ -e "$f" ] && { echo "$f:"; cat "$f"; }; done
+          test -z "$(ls -A target/tmp/contract-unseen 2>/dev/null)"
       - name: the extension specs are up to date with the shapes
         run: python3 tools/api_docs.py --check
   audit:

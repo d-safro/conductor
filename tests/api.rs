@@ -4997,7 +4997,12 @@ async fn song_radio_without_audiomuse_stays_close() {
 /// The API's contract: the shape of every answer (its fields and their types) is recorded in docs/api/shapes/, one
 /// file per call. Every call a test makes is checked against it: a field that isn't recorded, or has another type,
 /// fails the test. `CONDUCTOR_BLESS=1 cargo test --test api` records them again; CI does that and fails if the files
-/// change, so a dropped or changed field is seen (STABILITY.md: fields may be added, never taken away).
+/// change, so a new or changed field is seen (STABILITY.md: fields may be added, never taken away).
+///
+/// Recording only ever adds: a field (or a type) already in a file stays there, so blessing while only some tests
+/// run (`CONDUCTOR_BLESS=1 cargo test --test api search`) can't shrink the contract. The fields a recording run never
+/// saw are listed in `<target>/tmp/contract-unseen/<call>.txt`; after a whole run (as in CI) that folder is empty, or
+/// a field was dropped. (A field that really goes, in a new major version, is taken out of its file by hand.)
 mod contract {
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -5009,9 +5014,8 @@ mod contract {
 
     type Shape = BTreeMap<String, BTreeSet<String>>;
     static SEEN: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
-    /// What was committed, read before this run writes over it: a field's types are kept (a field that's sometimes
-    /// null, a list that's sometimes empty, seen one way in one run and the other way in another), while the fields
-    /// themselves come from this run alone (so one that's gone shows).
+    /// What was committed, read before this run writes over it: every field and type in it is kept (a field that's
+    /// sometimes null, a list that's sometimes empty, a field only some tests see), and this run's are added.
     static COMMITTED: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
     /// The envelope every answer has (checked by Subsonic apps themselves, and the same for every call).
     const ENVELOPE: &[&str] = &["status", "version", "type", "serverVersion", "openSubsonic", "error"];
@@ -5060,6 +5064,15 @@ mod contract {
         }
     }
 
+    /// The recorded shape and what this run saw, together: nothing recorded is ever dropped.
+    pub fn merge(recorded: &Shape, seen: &Shape) -> Shape {
+        let mut out = recorded.clone();
+        for (p, t) in seen {
+            out.entry(p.clone()).or_default().extend(t.iter().cloned());
+        }
+        out
+    }
+
     pub fn observe(method: &str, r: &Value) {
         let method = method.trim_end_matches(".view");
         if method.contains('/') || r["status"] != "ok" {
@@ -5080,14 +5093,21 @@ mod contract {
                 .or_insert_with(|| std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
             let all = seen.entry(method.to_string()).or_default();
             for (p, t) in shape {
-                let e = all.entry(p.clone()).or_default();
-                e.extend(t);
-                if let Some(k) = before.get(&p) {
-                    e.extend(k.iter().cloned());
-                }
+                all.entry(p).or_default().extend(t);
             }
+            let merged = merge(before, all);
             std::fs::create_dir_all(dir()).unwrap();
-            std::fs::write(&file, serde_json::to_string_pretty(all).unwrap() + "\n").unwrap();
+            std::fs::write(&file, serde_json::to_string_pretty(&merged).unwrap() + "\n").unwrap();
+            // what's recorded and this run hasn't seen (yet): empty after a whole run
+            let unseen_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("contract-unseen");
+            let unseen: Vec<&String> = before.keys().filter(|p| !all.contains_key(*p)).collect();
+            let unseen_file = unseen_dir.join(format!("{method}.txt"));
+            if unseen.is_empty() {
+                let _ = std::fs::remove_file(&unseen_file);
+            } else {
+                std::fs::create_dir_all(&unseen_dir).unwrap();
+                std::fs::write(&unseen_file, unseen.iter().map(|p| format!("{p}\n")).collect::<String>()).unwrap();
+            }
             return;
         }
         let Ok(text) = std::fs::read_to_string(&file) else {
@@ -5101,6 +5121,18 @@ mod contract {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn recording_only_adds_fields() {
+        // a run that saw only some of a call's fields (one test run alone) keeps the rest
+        let set = |t: &[&str]| t.iter().map(|x| x.to_string()).collect::<BTreeSet<_>>();
+        let recorded: Shape = [("a".to_string(), set(&["string"])), ("b".to_string(), set(&["number", "null"]))].into();
+        let seen: Shape = [("b".to_string(), set(&["number"])), ("c".to_string(), set(&["array"]))].into();
+        let m = merge(&recorded, &seen);
+        assert_eq!(m.keys().collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(m["b"], set(&["null", "number"]));
+        assert_eq!(merge(&recorded, &Shape::new()), recorded, "nothing seen: nothing dropped");
     }
 }
 
