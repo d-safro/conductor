@@ -4,6 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### Fixed
+- **Setting up the Linux package's service** (`sudo -u conductor conductor --config /var/lib/conductor/config.toml
+  setup`) put the database in the conductor user's `~/.local/share/conductor`, while the service reads
+  `/var/lib/conductor`: the admin made in setup wasn't there and couldn't sign in. A new settings file given with
+  `--config` now keeps its data beside it (an existing one keeps what it has). If you set it up this way with 1.0.0,
+  move the files from `/var/lib/conductor/.local/share/conductor` into `/var/lib/conductor` and take the `data_dir`
+  line out of its config.toml.
+
 ## 1.0.0 (2026-11-22)
 
 1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with these fixes:

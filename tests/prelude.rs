@@ -749,3 +749,21 @@ async fn a_spotify_playlist_brought_in_while_setting_up_a_new_server() {
     .unwrap();
     assert_eq!(rows, vec![("Learn to play".to_string(), 1)], "the playlist, with the song this library has");
 }
+
+#[tokio::test]
+async fn a_new_settings_file_given_keeps_its_data_beside_it() {
+    // the Linux package's service: `sudo -u conductor conductor --config /var/lib/conductor/config.toml setup`. The
+    // service reads its data from /var/lib/conductor, so that's where setup puts it, not in that user's home folder
+    // (~/.local/share/conductor), where the admin made here was never seen by the service
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("var lib/conductor/config.toml");
+    yes(&config, &["--yes", "server", "--listen", "127.0.0.1:45940"]).await;
+    let c = conductor::config::Config::load(Some(config.clone())).unwrap();
+    assert_eq!(c.data_dir, tmp.path().join("var lib/conductor"), "{}", read(&config));
+    // one that's there already (made by hand, without data_dir) keeps the usual default: its data isn't moved
+    let other = tmp.path().join("other/config.toml");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::write(&other, "").unwrap();
+    yes(&other, &["--yes", "server", "--listen", "127.0.0.1:45941"]).await;
+    assert_eq!(conductor::config::Config::load(Some(other)).unwrap().data_dir, conductor::config::default_data_dir());
+}

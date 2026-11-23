@@ -257,7 +257,18 @@ pub async fn run_with(config_path: Option<PathBuf>, args: &[&str], ui: &mut dyn 
         None => f.get("data").map(|d| PathBuf::from(d).join("config.toml")).unwrap_or_else(config::default_config_path),
     };
     let fresh = !path.is_file();
-    let d = Draft::load(&path)?;
+    let mut d = Draft::load(&path)?;
+    // a new settings file given with --config keeps its data beside it, as the default one does. The Linux
+    // package's service reads /var/lib/conductor/config.toml with its data in /var/lib/conductor: set up there as
+    // the conductor user, the data went to that user's ~/.local/share/conductor instead, and the admin made here
+    // wasn't in the database the service opened. (One that's there already keeps what it has.)
+    if explicit
+        && fresh
+        && f.get("data").is_none()
+        && let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()).and_then(|p| std::path::absolute(p).ok())
+    {
+        d.set("data_dir", dir.to_string_lossy().to_string());
+    }
     let mut w = Wizard { ui, f, d, make: None, ports: HashSet::new(), drives, downloads_near: None };
     w.ui.say("Prelude: setting up Conductor.");
     if !fresh {
