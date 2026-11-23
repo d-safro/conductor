@@ -126,6 +126,11 @@ pub fn client_ip(h: &HeaderMap, peer: SocketAddr) -> String {
         .unwrap_or_else(|| peer.ip().to_string())
 }
 
+/// Something happened in the Jam of `owner` (a guest's command, a new guest): the host's jamPoll and event stream.
+fn jam_changed(st: &AppState, owner: &str) {
+    st.live.publish("jam", live::Audience::User(owner.to_string()), json!({}));
+}
+
 /// At most `n` requests a minute from one address to one Jam.
 fn limited(st: &AppState, token: &str, ip: &str, n: usize) -> bool {
     let now = now_ms();
@@ -206,7 +211,13 @@ async fn state(
         }
         // past the limit a new guest still sees the Jam, just isn't counted
         if j.guests.contains_key(&id) || j.guests.len() < MAX_GUESTS {
-            j.guests.insert(id, (q.n.chars().take(30).collect(), now));
+            let new = j.guests.insert(id, (q.n.chars().take(30).collect(), now)).is_none();
+            if new {
+                let (owner, out) = (j.owner_id.clone(), j.public(now));
+                drop(g);
+                jam_changed(&st, &owner); // a new guest: the host's app shows how many
+                return (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(out)).into_response();
+            }
         }
     }
     (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(j.public(now))).into_response()
@@ -348,12 +359,13 @@ async fn action(
             json!({ "type": "skip", "id": sid.unwrap_or_default().chars().take(64).collect::<String>(), "by": by })
         }
     };
-    {
+    let owner = {
         let mut g = st.live.lock();
         let Some(j) = g.jams.get_mut(&token) else { return err(StatusCode::GONE, "This Jam has ended") };
         j.push(cmd);
-    }
-    st.live.bump();
+        j.owner_id.clone()
+    };
+    jam_changed(&st, &owner);
     Json(json!({ "ok": true })).into_response()
 }
 

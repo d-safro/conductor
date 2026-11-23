@@ -98,10 +98,18 @@ pub async fn scrobble(c: &Ctx) -> Result<Reply, ApiError> {
 
 async fn set_now_playing(c: &Ctx, track_id: &str) {
     let mut np = c.st.now_playing.lock().await;
-    np.insert(
+    let before = np.insert(
         (c.user.id.clone(), c.client.clone()),
         NowPlaying { track_id: track_id.to_string(), username: c.user.name.clone(), client: c.client.clone(), at: now() },
     );
+    if before.is_none_or(|b| b.track_id != track_id) {
+        now_playing_changed(c); // (the same song reported again isn't news)
+    }
+}
+
+/// What getNowPlaying shows changed: everyone sees it there, so every account's event stream hears.
+fn now_playing_changed(c: &Ctx) {
+    c.st.live.publish("nowPlaying", crate::live::Audience::Everyone, json!({}));
 }
 
 /// OpenSubsonic playback reports: we only keep "now playing" from them for now.
@@ -109,7 +117,9 @@ pub async fn report_playback(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("mediaId")?;
     match c.p.get("state").unwrap_or("playing") {
         "stopped" => {
-            c.st.now_playing.lock().await.remove(&(c.user.id.clone(), c.client.clone()));
+            if c.st.now_playing.lock().await.remove(&(c.user.id.clone(), c.client.clone())).is_some() {
+                now_playing_changed(c);
+            }
         }
         _ => set_now_playing(c, id).await,
     }
@@ -296,6 +306,7 @@ pub async fn create_playlist(c: &Ctx) -> Result<Reply, ApiError> {
     };
     set_entries(c, &pid, &songs).await?;
     let p = load_playlist(c, &pid).await?;
+    c.st.live.playlist_changed(&p.owner_id, &pid, false);
     let mut v = playlist_json(&p);
     let rows = items::tracks_where(c, "t.id IN (SELECT track_id FROM playlist_entry WHERE playlist_id = ?)", &[&pid], "").await?;
     v["entry"] = songs.iter().filter_map(|id| rows.iter().find(|t| &t.id == id)).map(items::song_json).collect::<Vec<_>>().into();
@@ -350,6 +361,7 @@ pub async fn update_playlist(c: &Ctx) -> Result<Reply, ApiError> {
     } else {
         sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&p.id).execute(&c.st.db).await?;
     }
+    c.st.live.playlist_changed(&p.owner_id, &p.id, false);
     empty()
 }
 
@@ -357,6 +369,7 @@ pub async fn delete_playlist(c: &Ctx) -> Result<Reply, ApiError> {
     let p = load_playlist(c, c.p.req("id")?).await?;
     owns(c, &p)?;
     sqlx::query("DELETE FROM playlist WHERE id = ?").bind(&p.id).execute(&c.st.db).await?;
+    c.st.live.playlist_changed(&p.owner_id, &p.id, true);
     empty()
 }
 

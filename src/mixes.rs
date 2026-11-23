@@ -375,6 +375,7 @@ async fn set_playlist(st: &AppState, uid: &str, slot: &str, name: &str, ids: &[S
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    st.live.playlist_changed(uid, &pid, false);
     Ok(())
 }
 
@@ -388,6 +389,7 @@ async fn delete_playlists(st: &AppState, uid: &str, prefix: &str) {
     for (slot, pid) in rows {
         if slot == prefix || slot.starts_with(&format!("{prefix}-")) {
             let _ = sqlx::query("DELETE FROM playlist WHERE id = ?").bind(&pid).execute(&st.db).await;
+            st.live.playlist_changed(uid, &pid, true);
             let _ = sqlx::query("DELETE FROM mix_playlist WHERE user_id = ? AND slot = ?")
                 .bind(uid)
                 .bind(&slot)
