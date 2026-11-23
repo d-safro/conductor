@@ -748,11 +748,27 @@ pub async fn get_bookmarks(c: &Ctx) -> Result<Reply, ApiError> {
 
 // ── streams and covers ──
 
-pub async fn stream(c: &Ctx, id: &str) -> Result<Reply, ApiError> {
+pub async fn stream(c: &Ctx, id: &str, download: bool) -> Result<Reply, ApiError> {
     let e = episode(c, id).await?;
     if let Some(rel) = &e.file {
         let path = folder(&c.st).join(rel);
         if path.is_file() {
+            // converted as a song is, when the app asks for another format or a lower bitrate (and cached the same way)
+            let suffix = path.extension().map(|x| x.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            let p2 = path.clone();
+            let bitrate = tokio::task::spawn_blocking(move || {
+                use lofty::prelude::AudioFile;
+                let p = lofty::read_from_path(&p2).ok()?;
+                p.properties().audio_bitrate().or(p.properties().overall_bitrate())
+            })
+            .await
+            .ok()
+            .flatten()
+            .map(i64::from)
+            .unwrap_or_else(|| if e.duration > 0 && e.size > 0 { e.size * 8 / e.duration / 1000 } else { 0 });
+            if let Some((x, br)) = super::media::conversion(c, &suffix, bitrate, download) {
+                return super::media::transcoded(c, &path, x, br).await;
+            }
             let mut req = Request::builder().uri("/");
             for h in [header::RANGE, header::IF_RANGE] {
                 if let Some(v) = c.headers.get(&h) {

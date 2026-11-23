@@ -5688,3 +5688,57 @@ async fn raw_aac_files_are_audio_aac() {
         assert_eq!((r.status().as_u16(), r.headers()["content-type"].to_str().unwrap()), (200, ct), "{suffix}");
     }
 }
+
+#[tokio::test]
+async fn podcast_episodes_are_converted_when_the_app_asks() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+        c.podcast_keep = 0;
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    tone(&dir.path().join("ep.flac"), "Ep", "Host", "Show", 1, 3);
+    let original = std::fs::read(dir.path().join("ep.flac")).unwrap();
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    let feed = format!(
+        r#"<?xml version="1.0"?><rss><channel><title>Talk</title>
+        <item><title>One</title><guid>one</guid><pubDate>Wed, 11 Nov 2026 08:00:00 +0000</pubDate><enclosure url="{fbase}/ep.flac" type="audio/flac"/></item>
+        </channel></rss>"#
+    );
+    let app = axum::Router::new()
+        .route("/feed.xml", axum::routing::get(move || { let f = feed.clone(); async move { ([("content-type", "application/rss+xml")], f) } }))
+        .nest_service("/ep.flac", tower_http::services::ServeFile::new(dir.path().join("ep.flac")));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    tokio::spawn(conductor::api::podcasts::worker(s.st.clone()));
+    s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    let id = s.ok("getPodcasts", &[]).await["podcasts"]["channel"][0]["episode"][0]["id"].as_str().unwrap().to_string();
+    s.ok("downloadPodcastEpisode", &[("id", &id)]).await;
+    wait_for(async || s.ok("getPodcastEpisode", &[("id", &id)]).await["podcastEpisode"]["downloaded"] == true, "the episode saved").await;
+
+    let get = async |p: &[(&str, &str)], method: &str| {
+        let r = s.http.get(s.url(method, p)).send().await.unwrap();
+        let h = |k: &str| r.headers().get(k).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        let (ct, mark, cache) = (h("content-type"), h("x-transcoded"), h("x-transcode-cache"));
+        (r.status().as_u16(), ct, mark, cache, r.bytes().await.unwrap().to_vec())
+    };
+    // as it is, unless asked
+    let (status, _, mark, _, body) = get(&[("id", &id)], "stream").await;
+    assert_eq!((status, mark.as_str(), body == original), (200, "", true));
+    // another format: converted, then from the cache
+    let (status, ct, mark, cache, body) = get(&[("id", &id), ("format", "mp3"), ("maxBitRate", "96")], "stream").await;
+    assert_eq!((status, ct.as_str(), mark.as_str(), cache.as_str()), (200, "audio/mpeg", "mp3@96k", "miss"));
+    assert!(body.len() > 10_000 && body != original);
+    let (_, _, _, cache, again) = get(&[("id", &id), ("format", "mp3"), ("maxBitRate", "96")], "stream").await;
+    assert_eq!((cache.as_str(), again.len()), ("hit", body.len()));
+    // a lower bitrate alone: mp3
+    let (_, ct, mark, _, _) = get(&[("id", &id), ("maxBitRate", "64")], "stream").await;
+    assert_eq!((ct.as_str(), mark.as_str()), ("audio/mpeg", "mp3@64k"));
+    // a download is the file itself
+    let (status, _, mark, _, body) = get(&[("id", &id), ("format", "mp3")], "download").await;
+    assert_eq!((status, mark.as_str(), body == original), (200, "", true));
+}

@@ -22,6 +22,9 @@ What changed in each release, newest first. The full notes for each are on the
   anyone else asking for another user's gets an error (code 50).
 - **Raw `.aac` files** were labelled `audio/mp4` (that's `.m4a`), so apps and players that go by the type could
   refuse them. They're `audio/aac` now, songs scanned before included; `.m4a` and `.mp4` stay `audio/mp4`.
+- **Podcast episodes were never converted**, whatever format or `maxBitRate` the app asked for. A saved episode now
+  goes through the same conversion as a song (and the same cache); one that isn't saved still comes straight from
+  the podcast's server.
 
 ## 1.0.0 (2026-11-22)
 

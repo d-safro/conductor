@@ -46,19 +46,28 @@ fn target(format: &str) -> Option<Transcode> {
 
 pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
     if let Some(id) = c.p.get("id").filter(|i| i.starts_with("pe-")) {
-        return super::podcasts::stream(c, id).await;
+        return super::podcasts::stream(c, id, download).await;
     }
     let t = items::track(c, c.p.req("id")?).await?;
     let path = file_of(c, &t)?;
+    match conversion(c, &t.suffix, t.bitrate, download) {
+        None => serve_file(c, &path, &t, download).await,
+        Some((x, br)) => transcoded(c, &path, x, br).await,
+    }
+}
+
+/// What a stream of a file (its suffix and bitrate) is converted to, if anything: the format the app asks for, mp3
+/// under its `maxBitRate`, or (`timeOffset`) from the middle of it. A download, or `format=raw`, is the file itself.
+pub(super) fn conversion(c: &Ctx, suffix: &str, bitrate: i64, download: bool) -> Option<(Transcode, i64)> {
     let max = c.p.int("maxBitRate").unwrap_or(0).max(0);
     let format = c.p.get("format").unwrap_or("").to_ascii_lowercase();
     let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
 
     let mut transcode = if download || format == "raw" {
         None
-    } else if !format.is_empty() && format != t.suffix {
+    } else if !format.is_empty() && format != suffix {
         target(&format).map(|x| (x, if max > 0 { max } else { 192 }))
-    } else if max > 0 && t.bitrate > max {
+    } else if max > 0 && bitrate > max {
         target("mp3").map(|x| (x, max))
     } else if offset > 0 {
         target(if format.is_empty() { "mp3" } else { &format }).map(|x| (x, if max > 0 { max } else { 320 }))
@@ -71,10 +80,7 @@ pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
         // would play as if it began at the offset
         transcode = target("mp3").map(|x| (x, if max > 0 { max } else { 320 }));
     }
-    match transcode {
-        None => serve_file(c, &path, &t, download).await,
-        Some((x, br)) => transcoded(c, &path, x, br.clamp(32, 512), offset).await,
-    }
+    transcode.map(|(x, br)| (x, br.clamp(32, 512)))
 }
 
 async fn serve_file(c: &Ctx, path: &Path, t: &items::TrackRow, download: bool) -> Result<Reply, ApiError> {
@@ -114,7 +120,9 @@ pub fn attachment(name: &str) -> String {
     format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{utf8}")
 }
 
-async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, offset: i64) -> Result<Reply, ApiError> {
+/// A file converted (see `conversion`), from the cache or as it's made.
+pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64) -> Result<Reply, ApiError> {
+    let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
     let conv = crate::transcode::convert(&c.st.cfg, &c.st.transcode_slots, path, x, kbps, offset).await.map_err(|e| {
         let m = e.to_string();
         let http = if m.contains("busy") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::INTERNAL_SERVER_ERROR };

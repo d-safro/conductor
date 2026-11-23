@@ -90,7 +90,8 @@ The detailed list. The [README](../README.md) has the short version.
   Set `jam_public_url` to the address guests open (e.g. through Tailscale Funnel).
 - **Podcasts**: the whole Subsonic podcast API; feeds checked every 2 hours; episodes stream through from the
   podcast's server (with seeking) unless saved on the server (`downloadPodcastEpisode`, or `podcast_keep` newest
-  per show); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
+  per show; a saved episode is converted like a song when the app asks for another format or a lower bitrate,
+  and kept in the same cache); played saved episodes go after `podcast_clean_days`; covers fetched once and kept; progress and
   bookmarks per user. Episode and show ids are the same as music-lookup's. Adding, removing, refreshing and saving
   shows is for admins. Feeds, episodes and covers are fetched only from the internet, redirects included, never this
   computer or your network (`podcast_local = true` allows those).
