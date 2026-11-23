@@ -229,8 +229,10 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const enc = encodeURIComponent;
 const fmt = t => { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') };
 const img = (id, size, cls = 'c') => `<img class="${cls}" loading="lazy" alt="" ${id ? `src="${esc(cover(id, size))}"` : ''}>`;
-// no cover: Conductor answers "not found" to Recital, which then shows its own plain square (as with no id), not a broken picture
-document.addEventListener('error', e => { if (e.target instanceof HTMLImageElement && e.target.getAttribute('src')) e.target.removeAttribute('src') }, true);
+// no cover: Conductor answers "not found" to Recital, which then shows its own plain square (a clear picture over the
+// card's colour), not a broken one
+const NO_COVER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+document.addEventListener('error', e => { if (e.target instanceof HTMLImageElement && e.target.src !== NO_COVER) e.target.src = NO_COVER }, true);
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const icon = n => `<svg><use href="#i-${n}"/></svg>`;
 

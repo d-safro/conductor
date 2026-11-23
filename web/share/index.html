@@ -48,6 +48,9 @@
 const $ = id => document.getElementById(id);
 const base = location.pathname.replace(/\/$/, '');
 let songs = [], cur = -1;
+// a song without a cover ("not found"): a clear picture, not a broken one
+const NO_COVER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+document.addEventListener('error', e => { if (e.target instanceof HTMLImageElement && e.target.src !== NO_COVER) e.target.src = NO_COVER }, true);
 const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 function play(i) {
   if (i < 0 || i >= songs.length) return;

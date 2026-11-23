@@ -4651,9 +4651,13 @@ async fn albums_without_a_cover_get_a_picture_except_in_apps_that_draw_their_own
         let u = s.url("getCoverArt", &[("id", &album)]).replace("c=test", &format!("c={}", app.replace(' ', "+")));
         assert_eq!(s.http.get(u).send().await.unwrap().status(), 404, "{app}");
     }
-    // ...and Recital does draw its own: a picture that fails loses its src (else browsers show a broken image)
+    // ...and Recital does draw its own: a picture that fails becomes a clear one (else browsers show a broken image)
     let page = s.http.get(format!("{}/", s.base)).send().await.unwrap().text().await.unwrap();
-    assert!(page.contains("document.addEventListener('error'") && page.contains("removeAttribute('src')"));
+    assert!(page.contains("document.addEventListener('error'") && page.contains("e.target.src = NO_COVER"));
+    // the guest pages (Jam, Chorus, shares) get "not found" too: the same clear picture (a whole GIF, which browsers draw)
+    for guest in [include_str!("../web/jam/index.html"), include_str!("../web/collab/index.html"), include_str!("../web/share/index.html")] {
+        assert!(guest.contains("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") && !guest.contains("R0lGODlhAQABAAAAACw="));
+    }
     // an album with a cover still gets its own
     let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0]["albumId"].as_str().unwrap().to_string();
     let r = s.http.get(s.url("getCoverArt", &[("id", &one)])).send().await.unwrap();

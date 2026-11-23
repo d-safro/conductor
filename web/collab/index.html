@@ -66,6 +66,9 @@
 const base = location.pathname.replace(/\/$/, '');
 const $ = id => document.getElementById(id);
 let me = localStorage.getItem('collab-guest');
+// a song without a cover ("not found"): a clear picture, not a broken one
+const NO_COVER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+document.addEventListener('error', e => { if (e.target instanceof HTMLImageElement && e.target.src !== NO_COVER) e.target.src = NO_COVER }, true);
 if (!me) { me = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('collab-guest', me); }
 let name = localStorage.getItem('collab-name') || '';
 function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('show'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('show'), 2200); }

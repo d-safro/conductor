@@ -101,7 +101,7 @@
   let state = null, lastQueueKey = '';
 
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
-  function cover(id, size) { return id ? base + '/cover/' + encodeURIComponent(id) + '?s=' + (size || 120) : 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; }
+  function cover(id, size) { return id ? base + '/cover/' + encodeURIComponent(id) + '?s=' + (size || 120) : 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; }
   function fmt(s) { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
@@ -138,7 +138,7 @@
     const now = st.now;
     $('np-title').textContent = now ? now.title : (st.radio ? st.radio : 'Nothing playing');
     $('np-artist').textContent = now ? [now.artist, now.by ? 'added by ' + now.by : ''].filter(Boolean).join(' · ') : (st.radio ? 'Internet radio' : '');
-    const img = $('np-img'); const src = cover(now && now.cover, 300); if (img.getAttribute('src') !== src) img.src = src;
+    const img = $('np-img'); const src = cover(now && now.cover, 300); if (img.dataset.src !== src) { img.dataset.src = src; img.src = src; img.onerror = () => { img.src = cover(''); }; }
     $('skip').disabled = !now;
 
     const pend = s.pending || [];

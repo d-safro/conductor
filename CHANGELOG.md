@@ -11,8 +11,9 @@ What changed in each release, newest first. The full notes for each are on the
   "a whole number"); they now take decimals, and a phone shows a keypad with a decimal point for them.
 - **Search ignored case only in A-Z**: "кино" didn't find "Кино" (SQLite's LIKE folds only ASCII). `search2`/`search3` and
   the Jam and Chorus guest pages now find Cyrillic, Greek and other names typed in any case.
-- **Recital** showed a broken-image icon (in Chrome, Edge and Encore's desktop app) for every album without a cover: the
-  server tells Recital "not found" so it can draw its own square, but the page never did. It now does.
+- **Recital, and the Jam, Chorus and share pages**, showed a broken-image icon (in Chrome, Edge and other Chromium
+  browsers) for every song or album without a cover: the server answers "not found" so the page can draw its own
+  square, but the pages never did (Jam's fallback picture was itself a broken GIF). They now show a plain square.
 - **`conductor restore` into another data folder** (a new computer, a moved folder) put the database there but brought
   back `config.toml` still naming the old folder, so the next start used the old one and the restored library seemed
   gone. The restored settings now keep the data folder the database went to.
