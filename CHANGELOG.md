@@ -4,13 +4,28 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased
+## 1.2.0 (2026-11-23)
 
 ### New
 - **Live updates** (`encore.events`): an app keeps one event stream open and hears at once what changed for its
   account: a command from your other device, a device starting or stopping a song, a friend in your Jam or adding to
   your playlist, a setting changed on another device, what's playing, the library scan. Encore uses it instead of
   asking every few seconds. Only what the account may see; resumes after a dropped connection; works behind Caddy.
+- **Levelling in conversions** (`level_conversions`: off, track or album; off by default), for apps that don't level
+  songs themselves (some Subsonic apps, a car stereo): a song converted for one is turned up or down by its
+  ReplayGain (the tags', else measured), never so far that its peak passes −1 dB, and sent without ReplayGain tags
+  of its own; the answer says so (`X-Levelled: track -6.20 dB`). Levelled and unlevelled copies are cached apart. Apps
+  that level themselves (Encore, Symfonium, Feishin, Recital) are left alone unless listed in
+  `level_conversions_clients`; a stream of the file itself, and the song's `replayGain`, never change.
+
+### Fixed
+- **Converted songs start sooner**: ffmpeg kept a few hundred KB (about 15 s of the song) before it wrote anything,
+  so an app waited for that much to be converted before it got its first byte. Now each piece is sent as it's made:
+  on a Raspberry Pi 4 core a song starts in 0.9 s instead of 2 s, on a desktop in 0.16 s instead of 0.33.
+- **Skipping through songs on a small server**: every song skipped went on being converted to its end, so the one
+  you stayed on started late (a Raspberry Pi 4, eight songs skipped a second apart: 4.1 s). A conversion nobody has
+  listened to for 3 seconds is now stopped (an app seeking or asking again within that time still follows it):
+  0.5 s.
 
 ## 1.1.2 (2026-11-23)
 

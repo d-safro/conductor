@@ -33,6 +33,12 @@ pub struct Config {
     pub loudness_analysis: bool,
     /// how many songs are measured at the same time
     pub loudness_threads: usize,
+    /// Levelling in conversions, for apps that don't level songs themselves: off, track or album (the album's gain
+    /// where the song has one, else its own). See `level_conversions` in src/api/media.rs.
+    pub level_conversions: Levelling,
+    /// Which apps get levelled conversions (part of the client name, any case). Empty: every app but those that level
+    /// songs themselves with `replayGain`.
+    pub level_conversions_clients: Vec<String>,
     /// Address of the Jam guest page (the only thing to put on the internet). Empty string: no Jam listener.
     pub jam_listen: String,
     /// The guest page's public address (e.g. https://music.example.com:8443). Without it, Jam can't start.
@@ -156,6 +162,15 @@ pub struct Config {
     pub slskd_fast_test: bool,
 }
 
+/// `level_conversions`: which gain a levelled conversion applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Levelling {
+    Off,
+    Track,
+    Album,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LibraryConfig {
     pub name: String,
@@ -182,6 +197,8 @@ impl Default for Config {
             transcode_cache_mb: 1000,
             loudness_analysis: true,
             loudness_threads: 1,
+            level_conversions: Levelling::Off,
+            level_conversions_clients: vec![],
             jam_listen: "127.0.0.1:4535".into(),
             jam_public_url: None,
             podcast_dir: None,

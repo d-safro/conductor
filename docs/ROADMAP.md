@@ -23,8 +23,32 @@ each ended, and what comes next.
    Tailscale) never count as "this computer" for setup; dependencies are checked in CI (which found and fixed the
    SQLite CVE in 0.5.1).
 6. ~~**A load test.**~~ Done: up to 64 apps streaming and converting at once, with a full rescan; it found ffmpeg
-   unbounded (every core, ~50 MB each), fixed by the conversion cache and slots. Still to do on a small machine (a
-   Raspberry Pi), with the numbers in the notes.
+   unbounded (every core, ~50 MB each), fixed by the conversion cache and slots. Then on a small machine: no Pi to
+   hand, so a Raspberry Pi 4 simulated by holding the release build and its ffmpegs to 4 cores at a Pi 4 core's speed
+   (CPU quotas: a 4-minute FLAC to mp3 in ~16 s, about what a Pi 4 core takes; a close stand-in, not a Pi), with 2 GB
+   and then 700 MB (a 1 GB Pi), the default settings (2 slots), 3,060 songs (306 albums; 60 songs 4 minutes long, the
+   rest 20 s) and the levelling pass measuring them throughout. Apps each pulled a converted song (mp3, 128k) the
+   moment the last one was in, much harder than people listening, while a light call (`getAlbumList2`) was timed:
+
+   | apps converting at once | first byte (median / 95%) | light call (median / max) |
+   |---|---|---|
+   | 1 | 0.31 / 0.39 s | 5 / 29 ms |
+   | 2 | 0.46 / 0.68 s | 10 / 40 ms |
+   | 4 | 0.98 / 1.6 s (4-minute songs: 1.2 / 1.8 s) | 20 / 79 ms |
+   | 8 | 2.2 / 2.6 s (4-minute: 1.6 / 2.3 s; levelled: 1.7 / 2.6 s) | 40 / 210 ms |
+   | 8, with a full rescan | 2.0 / 2.9 s; the rescan of 3,060 songs 12.5 s | 51 / 260 ms |
+   | 16 | 9.5 / 14 s | 59 / 210 ms |
+   | 32 | 19 / 23 s | 58 / 370 ms |
+
+   A Pi 5 (the same, its cores about 2.5 times as fast): 4 apps 0.45 s, 8 apps 0.9 s, 16 apps 3.1 s to the first
+   byte, light calls at most 140 ms. A song from the cache: 2-50 ms. Nothing failed: no errors, never more than 9 ffmpegs (8 conversions and the
+   levelling pass), Conductor itself 31-44 MB, everything together (Conductor and its ffmpegs) at most 165 MB besides
+   the page cache, which gave way at 700 MB: nothing was killed or slowed (8 apps on 4-minute songs with a rescan:
+   first byte 2.3 s). The levelling pass took 1-1.8 s a short song under that load (a 4-minute song: 6.6 s on a Pi 4 core). It found
+   two things, both fixed: ffmpeg wrote nothing until about 15 s of the song was converted (before: 2 apps 1.1 s, 8
+   apps 5.3 s to the first byte), and a song skipped went on being converted to its end (eight skipped a second
+   apart: the song stayed on started in 4.1 s, now 0.5 s). Recommended settings for small machines are in
+   [GUIDE.md](GUIDE.md#small-machines-a-raspberry-pi).
 
 ## Should be in 1.0
 7. ~~**Settings in Podium.**~~ Done: every setting in the reference, changed from Podium › Settings (secrets never
@@ -41,8 +65,8 @@ each ended, and what comes next.
   and timers stay for other servers). Still to do: Discord presence from it.
 - "Sounds like" from the audio itself, without AudioMuse-AI.
 - ~~Loudness levelling on the server.~~ Done: songs without ReplayGain tags are measured in the background and the
-  apps get the measured gain as their ReplayGain; Recital and share links level songs too. Still to do: levelling
-  baked into conversions, for apps that can't level themselves.
+  apps get the measured gain as their ReplayGain; Recital and share links level songs too; and conversions are
+  levelled for apps that can't level themselves (`level_conversions`).
 - Jukebox mode (the server plays on its own speakers).
 
 ## Done on the way (0.4.0, 0.5.0)

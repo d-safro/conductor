@@ -124,6 +124,27 @@ never written to the logs).
 pages; that is the only thing to put on the internet for them (e.g. Tailscale Funnel), with its public address in
 `jam_public_url`.
 
+## Small machines (a Raspberry Pi)
+
+Conductor itself needs little: about 30-45 MB of memory with a few thousand songs, and a light call answers in
+milliseconds even while songs are converted. What a small machine feels is ffmpeg, for apps that ask for another
+format or a lower bitrate (often on mobile data): on a Raspberry Pi 4 a converted song starts in about 0.3 s, 1 s
+with four being converted at once, 2 s with eight; on a Pi 5, 0.45 s with four and 0.9 s with eight (the
+measurements are in [ROADMAP.md](ROADMAP.md), item 6). The defaults are right for a Pi 4 or 5; what to change, if
+anything:
+
+- `transcode_slots`: leave it at 0 (half the cores: 2 on a Pi). More doesn't convert faster on 4 slow cores, it only
+  slows each song down. On a board with 1-2 cores, 1.
+- `transcode_cache_mb`: as much as the disk can spare (1000 is about 250 four-minute songs at 128k). A song from the
+  cache starts at once and costs nothing.
+- `loudness_threads`: 1. The first pass over songs without ReplayGain tags takes a while (about 10 s a 4-minute song
+  on a Pi 4 with its rest; 10,000 songs in a day or so), at the lowest priority, once. 2 finishes it twice as fast on
+  a 4-core Pi with nothing else to do.
+- `scan_threads` (per music folder): 1 for a USB hard disk or an SD card (a spinning disk is slower with more), 2 (the
+  default) for an SSD.
+- Apps: let them play the original files on Wi-Fi (no conversion at all), and convert only on mobile data.
+- 1 GB of memory is enough: everything together (Conductor and eight ffmpegs) stayed under 170 MB.
+
 ## Upgrade
 
 1. Make a backup: `conductor backup` (Conductor also makes one every day in `<data>/backups`).

@@ -767,7 +767,8 @@ pub async fn stream(c: &Ctx, id: &str, download: bool) -> Result<Reply, ApiError
             .map(i64::from)
             .unwrap_or_else(|| if e.duration > 0 && e.size > 0 { e.size * 8 / e.duration / 1000 } else { 0 });
             if let Some((x, br)) = super::media::conversion(c, &suffix, bitrate, download) {
-                return super::media::transcoded(c, &path, x, br).await;
+                // (not levelled: an episode has no measured loudness)
+                return super::media::transcoded(c, &path, x, br, None).await;
             }
             let mut req = Request::builder().uri("/");
             for h in [header::RANGE, header::IF_RANGE] {

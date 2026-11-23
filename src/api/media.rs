@@ -58,8 +58,30 @@ pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
     let path = file_of(c, &t)?;
     match conversion(c, &t.suffix, t.bitrate, download) {
         None => serve_file(c, &path, &t, download).await,
-        Some((x, br)) => transcoded(c, &path, x, br).await,
+        Some((x, br)) => transcoded(c, &path, x, br, levelling(c, &t)).await,
     }
+}
+
+/// Apps known to level songs themselves with `replayGain`: with `level_conversions_clients` empty, every app but these
+/// gets levelled conversions (levelled twice, a loud song would play far too quietly).
+const LEVEL_THEMSELVES: &[&str] = &["encore", "symfonium", "feishin", "recital"];
+
+/// The gain a conversion of this song applies for this app (`level_conversions`), if any. The song's `replayGain` is
+/// never changed for it: that's sent long before (and apart from) a stream, which may be the file itself.
+fn levelling(c: &Ctx, t: &items::TrackRow) -> Option<crate::loudness::Applied> {
+    use crate::config::Levelling;
+    let album = match c.st.cfg.level_conversions {
+        Levelling::Off => return None,
+        Levelling::Track => false,
+        Levelling::Album => true,
+    };
+    let client = c.client.to_lowercase();
+    let listed: Vec<String> = c.st.cfg.level_conversions_clients.iter().map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty()).collect();
+    let wanted = if listed.is_empty() { !LEVEL_THEMSELVES.iter().any(|n| client.contains(n)) } else { listed.iter().any(|n| client.contains(n.as_str())) };
+    if !wanted {
+        return None;
+    }
+    crate::loudness::conversion_gain(&t.levels(), album)
 }
 
 /// What a stream of a file (its suffix and bitrate) is converted to, if anything: the format the app asks for, mp3
@@ -220,15 +242,22 @@ pub fn attachment(name: &str) -> String {
     format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{utf8}")
 }
 
-/// A file converted (see `conversion`), from the cache or as it's made.
-pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64) -> Result<Reply, ApiError> {
+/// A file converted (see `conversion`), levelled when `level` says so, from the cache or as it's made. A levelled
+/// answer says so: `X-Levelled: track -6.20 dB` (or `album …`; "capped" when its peak kept it from being turned up
+/// as far as its gain says).
+pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, level: Option<crate::loudness::Applied>) -> Result<Reply, ApiError> {
     let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
-    let conv = crate::transcode::convert(&c.st.cfg, &c.st.transcode_slots, path, x, kbps, offset).await.map_err(|e| {
+    let gain = level.map(|l| l.gain);
+    let conv = crate::transcode::convert(&c.st.cfg, &c.st.transcode_slots, path, x, kbps, gain, offset).await.map_err(|e| {
         let m = e.to_string();
         let http = if m.contains("busy") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::INTERNAL_SERVER_ERROR };
         ApiError { http, ..ApiError::new(0, m) }
     })?;
     let mark = (header::HeaderName::from_static("x-transcoded"), format!("{}@{kbps}k", x.suffix));
+    let levelled = level.map(|l| {
+        let which = if l.album { "album" } else { "track" };
+        (header::HeaderName::from_static("x-levelled"), format!("{which} {:.2} dB{}", l.gain, if l.capped { " capped" } else { "" }))
+    });
     let body = match conv {
         Converted::Cached(file, before) => {
             // from the cache: a plain file, so ranges (seeking) work
@@ -245,13 +274,15 @@ pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64) ->
             };
             let (mut parts, body) = resp.into_parts();
             parts.headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(x.content_type));
-            if let Ok(v) = mark.1.parse() {
-                parts.headers.insert(mark.0.clone(), v);
+            for (k, v) in [Some(&mark), levelled.as_ref()].into_iter().flatten() {
+                if let Ok(v) = v.parse() {
+                    parts.headers.insert(k.clone(), v);
+                }
             }
             parts.headers.insert(header::HeaderName::from_static("x-transcode-cache"), header::HeaderValue::from_static(if before { "hit" } else { "miss" }));
             return Ok(Reply::Raw(axum::response::Response::from_parts(parts, Body::new(body))));
         }
-        Converted::Growing(f, state) => Body::from_stream(crate::transcode::follow(f, state)),
+        Converted::Growing(f, state, l) => Body::from_stream(crate::transcode::follow(f, state, l)),
         Converted::Piped(out, first) => {
             let rest = tokio_util::io::ReaderStream::with_capacity(out, 64 * 1024);
             Body::from_stream(futures_util::StreamExt::chain(
@@ -260,7 +291,9 @@ pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64) ->
             ))
         }
     };
-    Ok(raw(StatusCode::OK, &[(header::CONTENT_TYPE, x.content_type.to_string()), mark, (header::HeaderName::from_static("x-transcode-cache"), "miss".into())], body))
+    let mut headers = vec![(header::CONTENT_TYPE, x.content_type.to_string()), mark, (header::HeaderName::from_static("x-transcode-cache"), "miss".into())];
+    headers.extend(levelled);
+    Ok(raw(StatusCode::OK, &headers, body))
 }
 
 // ── cover art ──
