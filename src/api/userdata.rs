@@ -221,10 +221,16 @@ fn not_smart(p: &PlaylistRow) -> Result<(), ApiError> {
 }
 
 pub async fn playlists(c: &Ctx) -> Result<Reply, ApiError> {
+    // another user's (`username`, as the Subsonic spec has it): only for an admin, and then the ones they see
+    let whose = match c.p.get("username").filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&c.user.name)) {
+        None => c.user.id.clone(),
+        Some(_) if !c.user.is_admin => return Err(ApiError::new(50, "Only admins can see other users' playlists")),
+        Some(name) => super::users::find(c, name).await?.0,
+    };
     refresh_smart(c).await?;
     let rows: Vec<PlaylistRow> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!("{PLAYLIST_SELECT} WHERE p.owner_id = ? OR p.public = 1 ORDER BY p.name COLLATE NOCASE")))
-            .bind(&c.user.id)
+            .bind(&whose)
             .fetch_all(&c.st.db)
             .await?;
     ok(json!({ "playlists": { "playlist": rows.iter().map(playlist_json).collect::<Vec<_>>() } }))

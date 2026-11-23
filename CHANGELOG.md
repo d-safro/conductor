@@ -18,6 +18,8 @@ What changed in each release, newest first. The full notes for each are on the
 - **`transcode_cache_mb = 0`**: a very short song could be done converting before it was sent, was removed from the
   cache at once, and the app got "This song can't be transcoded". 0 now means nothing is kept once it's sent; every
   conversion still plays whole.
+- **`getPlaylists?username=`** was ignored: an admin now gets that user's playlists, as the Subsonic spec says, and
+  anyone else asking for another user's gets an error (code 50).
 
 ## 1.0.0 (2026-11-22)
 

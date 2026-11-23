@@ -5627,3 +5627,35 @@ async fn with_no_transcode_cache_conversions_are_still_sent_whole() {
     let dir = s.st.cfg.cache_dir().join("transcode");
     wait_for(async || std::fs::read_dir(&dir).unwrap().count() == 0, "nothing kept").await;
 }
+
+#[tokio::test]
+async fn an_admin_can_list_another_users_playlists() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    let as_ann = |method: &str, extra: &str| {
+        let u = format!("{}/rest/{method}.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json{extra}", s.base);
+        let http = s.http.clone();
+        async move {
+            let r: Value = http.get(u).send().await.unwrap().json().await.unwrap();
+            r["subsonic-response"].clone()
+        }
+    };
+    assert_eq!(as_ann("createPlaylist", "&name=Ann%27s%20own").await["status"], "ok");
+    s.ok("createPlaylist", &[("name", "Mine")]).await;
+    let names = |r: &Value| -> Vec<String> {
+        r["playlists"]["playlist"].as_array().map(|a| a.iter().map(|p| p["name"].as_str().unwrap().to_string()).collect()).unwrap_or_default()
+    };
+    assert_eq!(names(&s.ok("getPlaylists", &[]).await), ["Mine"]);
+    assert_eq!(names(&s.ok("getPlaylists", &[("username", "ann")]).await), ["Ann's own"], "the admin sees Ann's");
+    assert_eq!(names(&s.ok("getPlaylists", &[("username", USER)]).await), ["Mine"]);
+    let r = s.call("getPlaylists", &[("username", "nobody")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
+    // Ann isn't an admin: not someone else's
+    let r = as_ann("getPlaylists", &format!("&username={USER}")).await;
+    assert_eq!((r["status"].as_str(), r["error"]["code"].as_i64()), (Some("failed"), Some(50)), "{r}");
+    let r = as_ann("getPlaylists", "&username=ann").await;
+    assert_eq!(names(&r), ["Ann's own"]);
+}
