@@ -13,7 +13,10 @@ pub fn csp(page: &str, policy: &str) -> String {
         let Some(open_end) = after.find('>') else { break };
         let body = &after[open_end + 1..];
         let Some(close) = body.find("</script>") else { break };
-        let digest = Sha256::digest(&body.as_bytes()[..close]);
+        // as the browser hashes it: its HTML parser reads every CRLF (and lone CR) as LF. A Windows checkout gives
+        // the pages CRLF lines, and the hash of those bytes matched no script: the page's own was blocked too.
+        let text = body[..close].replace("\r\n", "\n").replace('\r', "\n");
+        let digest = Sha256::digest(text.as_bytes());
         hashes.push(format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(digest)));
         rest = &body[close..];
     }
@@ -35,6 +38,9 @@ mod tests {
         let c = csp(p, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'");
         let h = |s: &str| format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(s.as_bytes())));
         assert_eq!(c, format!("default-src 'none'; script-src {} {}; style-src 'unsafe-inline'", h("let a = 1;"), h("go()")));
+        // a page with Windows line ends: hashed as the browser reads it, with LF
+        let crlf = csp("<p>\r\n<script>\r\nlet a = 1;\r\ngo()\r</script>", "script-src 'unsafe-inline'");
+        assert_eq!(crlf, format!("script-src {}", h("\nlet a = 1;\ngo()\n")));
         // every real page has exactly its one script hashed, and no 'unsafe-inline' scripts
         for page in [
             include_str!("../web/admin/index.html"),

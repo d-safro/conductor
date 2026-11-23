@@ -421,6 +421,37 @@ async fn a_song_ffmpeg_cant_read_is_an_error_not_silence() {
 }
 
 #[tokio::test]
+async fn every_song_converts_to_ogg_and_opus_at_any_bitrate() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    // a 96 kHz stereo FLAC (Vorbis takes no bitrate at all for it), and the mono songs the tests make
+    let hi = s.music.join("Hi/Res/01 Hi.flac");
+    std::fs::create_dir_all(hi.parent().unwrap()).unwrap();
+    let ok = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2:sample_rate=96000", "-ac", "2"])
+        .args(["-metadata", "title=Hi", "-metadata", "artist=Hi"])
+        .arg(&hi)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    for title in ["Hi", "One"] {
+        let id = s.ok("search3", &[("query", title)]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+        for format in ["ogg", "opus"] {
+            for kbps in ["32", "128", "320", "512"] {
+                let r = s.http.get(s.url("stream", &[("id", &id), ("format", format), ("maxBitRate", kbps)])).send().await.unwrap();
+                let status = r.status().as_u16();
+                assert_eq!(status, 200, "{title} as {format} at {kbps}k: {}", r.text().await.unwrap());
+                assert!(r.bytes().await.unwrap().len() > 1000, "{title} as {format} at {kbps}k");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn encore_extensions() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");
@@ -5136,10 +5167,17 @@ async fn settings_from_podium() {
     // a value Conductor can't take, a number that isn't, a setting that isn't one here
     assert_eq!(set("scan_interval_min", "soon".into()).await.status(), 400);
     assert_eq!(set("data_dir", "/tmp/x".into()).await.status(), 400);
+    // a Jam address that isn't one: refused (taken, it stopped the server from starting)
+    assert_eq!(set("jam_listen", "music.example.com".into()).await.status(), 400);
+    assert_eq!(set("jam_listen", "127.0.0.1:4599".into()).await.status(), 200);
+    // settings with a decimal point take one
+    assert_eq!(set("trial_hours", "1.5".into()).await.status(), 200);
+    assert_eq!(set("lidarr_match_ratio", "soon".into()).await.status(), 400);
     let file = s.st.cfg.data_dir.join("config.toml");
     let cfg = conductor::config::Config::load(Some(file.clone())).unwrap();
     assert_eq!((cfg.lyrics_online, cfg.scan_interval_min, cfg.discovery.clone()), (false, 30, vec!["weekly-jams".to_string(), "daily-jams".into()]));
     assert_eq!(cfg.lastfm_secret.as_deref(), Some("s3cr3t-value"));
+    assert_eq!((cfg.jam_listen.as_str(), cfg.trial_hours), ("127.0.0.1:4599", 1.5));
     // the secret is in secrets.toml, not config.toml, and never sent back
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cr3t"));
     assert!(std::fs::read_to_string(file.with_file_name("secrets.toml")).unwrap().contains("s3cr3t-value"));
@@ -5190,4 +5228,13 @@ async fn made_for_you_without_audiomuse() {
     assert!(artists.windows(2).all(|w| w[0] != w[1]) || artists.iter().collect::<std::collections::HashSet<_>>().len() == 1, "never twice in a row: {artists:?}");
     // the same all day
     assert_eq!(s.ok("getForYou", &[("count", "20")]).await["forYou"], mix["forYou"]);
+    // also once you play songs from it (made again from the plays, the whole list changed)
+    let ids = |v: &Value| v["forYou"]["song"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let before = ids(&mix);
+    for id in before.iter().take(3) {
+        s.ok("scrobble", &[("id", id)]).await;
+    }
+    assert_eq!(ids(&s.ok("getForYou", &[("count", "20")]).await), before);
+    // fewer asked for: the start of the same list
+    assert_eq!(ids(&s.ok("getForYou", &[("count", "2")]).await), before[..2.min(before.len())]);
 }

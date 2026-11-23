@@ -4,6 +4,24 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### Fixed
+- **Web pages built on Windows**: each page may run only its own script, named by its hash, but a Windows checkout
+  gives the pages CRLF line ends and browsers hash scripts with LF, so nothing matched and Podium, setup, Recital and
+  the Jam, Chorus and share pages did nothing. Scripts are now hashed as browsers read them, and the pages are checked
+  out with LF everywhere.
+- **Ogg and Opus conversions** failed ("This song can't be transcoded") for 96 kHz songs, for mono songs at 320k and
+  for stereo ones at 32k (Vorbis), and for mono above 256k (Opus). They're now made in stereo (Vorbis at 44.1 kHz,
+  48-480 kbps), which every song converts to.
+- **A conversion that fails part way** (ffmpeg killed, the disk full) breaks off, instead of being sent as a whole
+  song that ends early.
+- **Made for you stays the same all day**, also once you play its songs (playing one reshuffled the whole list).
+- **Podium's Settings**: a Jam address that isn't one (`jam_listen`) was saved as fine and the server then didn't
+  start; it's refused now. A huge `transcode_slots` made the server panic at start (now taken as 1024).
+  `trial_hours` and `lidarr_match_ratio` take decimals. Six online-info addresses showed other settings'
+  descriptions.
+
 ## 1.0.0 (2026-11-22)
 
 1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with these fixes:

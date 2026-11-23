@@ -73,6 +73,8 @@ pub struct AppState {
     pub lastfm_pending: crate::scrobble::Pending,
     /// which artists go with which (built from the library and plays; see `crate::similar`)
     pub similar: crate::similar::Cache,
+    /// each user's "Made for you" today: user id → (day, song ids), so it stays the same all day (see for_you)
+    pub for_you: std::sync::Mutex<HashMap<String, (i64, Vec<String>)>>,
     /// conversions working right now (see media::transcoded)
     pub transcode_slots: crate::transcode::Slots,
 }
@@ -100,6 +102,7 @@ impl AppState {
             login_fails: Default::default(),
             lastfm_pending: Default::default(),
             similar: Default::default(),
+            for_you: Default::default(),
             transcode_slots,
         }
     }

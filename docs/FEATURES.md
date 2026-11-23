@@ -37,6 +37,7 @@ The detailed list. The [README](../README.md) has the short version.
   the app is sent them, so each takes ffmpeg a second or two whatever the app's speed; played again (and seeking) from
   the cache (`transcode_cache_mb`, least recently used out first; a changed file is converted again). `transcode_slots`
   at once as a rule, a short wait, then up to four times as many; ffmpeg at a lower priority than everything else.
+  Ogg Vorbis and Opus are made in stereo (Vorbis at 44.1 kHz, 48-480 kbps), so every song converts at any bitrate.
 - **Big libraries**: measured with 100,000 songs (`cargo run --release --example bench_library -- DIR 100000` makes
   one in seconds): first scan ~10 s, a rescan ~1 s, ~75 MB of memory; lists and albums in ~1-25 ms; an app fetching
   the whole library 500 songs at a time ~10 s in all (stable paging, nothing skipped or repeated).

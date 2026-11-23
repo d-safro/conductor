@@ -101,7 +101,22 @@ fn ffmpeg(cfg: &Config) -> tokio::process::Command {
 
 fn args(cmd: &mut tokio::process::Command, src: &Path, x: Target, kbps: i64) {
     cmd.arg("-i").arg(src);
-    cmd.args(["-map", "0:a:0", "-vn", "-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container]);
+    cmd.args(["-map", "0:a:0", "-vn"]);
+    // Vorbis and Opus take only some bitrates for some channels and sample rates: Vorbis none at all for a 96 kHz
+    // FLAC, nor 320k for a mono song or 32k for a stereo one; Opus at most 256k for mono. ffmpeg then failed and the
+    // song didn't play. Given stereo (Vorbis at 44.1 kHz, between 48k and 480k), every song converts.
+    let kbps = match x.codec {
+        "libvorbis" => {
+            cmd.args(["-ac", "2", "-ar", "44100"]);
+            kbps.clamp(48, 480)
+        }
+        "libopus" => {
+            cmd.args(["-ac", "2"]);
+            kbps
+        }
+        _ => kbps,
+    };
+    cmd.args(["-c:a", x.codec, "-b:a", &format!("{kbps}k"), "-f", x.container]);
 }
 
 fn dir(cfg: &Config) -> PathBuf {
@@ -150,7 +165,9 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
                 st2.store(DONE, Ordering::SeqCst);
                 trim(&cache, limit);
             } else {
-                st2.store(if filled { DONE } else { FAILED }, Ordering::SeqCst);
+                // ffmpeg stopped part way (killed, the disk full): the app is told the song broke off, rather than
+                // sent its first half as if that were all of it
+                st2.store(if ok && filled { DONE } else { FAILED }, Ordering::SeqCst);
                 let _ = std::fs::remove_file(&part2);
             }
         });
@@ -209,6 +226,10 @@ pub fn follow(f: tokio::fs::File, state: Arc<AtomicU8>) -> impl futures_util::St
                             buf.truncate(n);
                             Some((Ok(axum::body::Bytes::from(buf)), Some((f, state))))
                         }
+                        // it failed part way: the answer breaks off (not a song that "ends" early)
+                        _ if state.load(Ordering::SeqCst) == FAILED => {
+                            Some((Err(std::io::Error::other("the conversion failed part way")), None))
+                        }
                         _ => None,
                     };
                 }
@@ -263,6 +284,21 @@ pub fn clean_parts(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_conversion_that_fails_part_way_breaks_off() {
+        use futures_util::StreamExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.mp3.abc.part");
+        std::fs::write(&p, b"half a song").unwrap();
+        for (state, broke_off) in [(DONE, false), (FAILED, true)] {
+            let f = tokio::fs::File::open(&p).await.unwrap();
+            let got: Vec<_> = follow(f, Arc::new(AtomicU8::new(state))).collect().await;
+            assert_eq!(got[0].as_ref().unwrap().as_ref(), b"half a song");
+            assert_eq!(got.len(), if broke_off { 2 } else { 1 });
+            assert_eq!(got.last().unwrap().is_err(), broke_off);
+        }
+    }
 
     #[test]
     fn the_cache_is_trimmed_least_recently_used_first() {
