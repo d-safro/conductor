@@ -40,6 +40,8 @@ What changed in each release, newest first. The full notes for each are on the
 - **A backup restored on another computer** brought back the old computer's `data_dir` in config.toml (another
   user's home, or `C:\ProgramData\conductor`): the next start looked there and the database just restored went
   unused. The restored config.toml now names the folder it was restored into.
+- **The Windows service with settings it can't read** (a typo in config.toml) stopped without writing why anywhere,
+  while install.ps1 says to look in conductor.log. The error is now written to conductor.log beside config.toml.
 
 ## 1.0.0 (2026-11-22)
 

@@ -125,11 +125,17 @@ fn status(state: ServiceState) -> ServiceStatus {
 fn service_main(_args: Vec<OsString>) {
     let config = CONFIG.get().cloned().flatten();
     // the log goes next to the data (a service has no console)
-    if let Ok(cfg) = conductor::config::Config::load(config.clone()) {
-        conductor::config::move_old_names(&cfg); // before the log file makes the new folder
-        let _ = std::fs::create_dir_all(&cfg.data_dir);
-        crate::init_logs(std::fs::OpenOptions::new().create(true).append(true).open(cfg.data_dir.join("conductor.log")).ok());
-    }
+    let log_dir = match conductor::config::Config::load(config.clone()) {
+        Ok(cfg) => {
+            conductor::config::move_old_names(&cfg); // before the log file makes the new folder
+            cfg.data_dir
+        }
+        // settings that can't be read: the log goes beside them, so why the service didn't start is written where
+        // install.ps1 says to look (before, nothing was written anywhere)
+        Err(_) => config.as_deref().and_then(|c| c.parent()).map(PathBuf::from).unwrap_or_else(conductor::config::default_data_dir),
+    };
+    let _ = std::fs::create_dir_all(&log_dir);
+    crate::init_logs(std::fs::OpenOptions::new().create(true).append(true).open(log_dir.join("conductor.log")).ok());
     if let Err(e) = run_service(config) {
         tracing::error!("Conductor service: {e:#}");
     }
