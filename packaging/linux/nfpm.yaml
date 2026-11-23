@@ -15,12 +15,6 @@ homepage: https://github.com/d-safro/conductor
 license: AGPL-3.0-or-later
 recommends:
   - ffmpeg
-overrides:
-  archlinux:
-    depends: []
-    recommends: []
-    optional_depends:
-      - "ffmpeg: converting formats for apps that ask for smaller files"
 contents:
   - src: ${BIN}
     dst: /usr/bin/conductor
