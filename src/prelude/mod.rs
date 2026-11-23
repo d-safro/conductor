@@ -228,6 +228,9 @@ Secrets can come from the environment instead of the command line: CONDUCTOR_SLS
 CONDUCTOR_PROXY, CONDUCTOR_LIDARR_API_KEY, CONDUCTOR_LISTENBRAINZ_TOKEN, CONDUCTOR_LASTFM_API_KEY, CONDUCTOR_AUDIOMUSE_TOKEN,
 CONDUCTOR_TUNNEL_TOKEN.";
 
+/// Setup without a terminal ran out of answers (`conductor setup < /dev/null`, in a script or a service).
+const NO_ANSWERS: &str = "no more answers (no terminal?): run `conductor setup --yes` with the settings as flags instead (see `conductor setup --help`)";
+
 /// `conductor setup …` in a terminal (or with --yes, without questions). Returns the settings file.
 pub async fn cli(config_path: Option<PathBuf>, args: &[&str]) -> Result<PathBuf> {
     if args.contains(&"--help") || args.contains(&"-h") {
@@ -383,6 +386,9 @@ impl Wizard<'_> {
             look = false;
             if path.is_empty() {
                 if i == 0 && !self.ui.auto() {
+                    if self.ui.ended() {
+                        bail!("{NO_ANSWERS}");
+                    }
                     self.ui.say("A music folder is needed.");
                     continue;
                 }
@@ -572,12 +578,18 @@ impl Wizard<'_> {
                 break a;
             }
             if a.chars().count() < 6 {
+                if self.ui.ended() {
+                    bail!("{NO_ANSWERS}");
+                }
                 self.ui.say("At least 6 characters.");
                 continue;
             }
             let b = self.ui.secret("Once more", None);
             if a == b {
                 break a;
+            }
+            if self.ui.ended() {
+                bail!("{NO_ANSWERS}");
             }
             self.ui.say("They differ; again.");
         };

@@ -16,6 +16,10 @@ pub trait Ui {
     fn auto(&self) -> bool {
         false
     }
+    /// No answers left (the input ended): a question asked again until it's answered would be asked forever.
+    fn ended(&mut self) -> bool {
+        false
+    }
 }
 
 /// Questions and answers over a reader and a writer (the terminal, or a script in tests).
@@ -80,6 +84,10 @@ impl<R: BufRead, W: Write> Ui for Term<R, W> {
                 return default; // the script ended
             }
         }
+    }
+    fn ended(&mut self) -> bool {
+        // a real terminal (secrets typed hidden) doesn't end; only a script, a pipe or /dev/null does
+        !self.hide && self.input.fill_buf().map(|b| b.is_empty()).unwrap_or(true)
     }
 }
 

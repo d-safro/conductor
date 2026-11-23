@@ -767,3 +767,32 @@ async fn a_new_settings_file_given_keeps_its_data_beside_it() {
     yes(&other, &["--yes", "server", "--listen", "127.0.0.1:45941"]).await;
     assert_eq!(conductor::config::Config::load(Some(other)).unwrap().data_dir, conductor::config::default_data_dir());
 }
+
+/// What setup writes, up to a limit: past it, setup is asking the same thing forever.
+struct Capped(usize);
+
+impl std::io::Write for Capped {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0 += b.len();
+        assert!(self.0 < 100_000, "setup kept asking");
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn answers_that_run_out_end_setup_instead_of_asking_forever() {
+    // `conductor setup < /dev/null` (no terminal: a script, a service, CI) asked for the admin's password again and
+    // again, writing "At least 6 characters." hundreds of MB a second; now it stops and says what to do instead
+    let base = services().await;
+    let p = place(&base);
+    let data = p.root.join("data");
+    yes(&p.config, &["--yes", "server", "--data", data.to_str().unwrap(), "--listen", "127.0.0.1:45942"]).await;
+    for (lines, part) in [("me\nshort\n", "admin"), ("", "music")] {
+        let mut ui = Term { input: Cursor::new(lines.as_bytes().to_vec()), out: Capped(0), hide: false };
+        let r = prelude::run_with(Some(p.config.clone()), &[part], &mut ui, Some(vec![])).await;
+        assert!(r.unwrap_err().to_string().contains("--yes"), "{part}: says what to do");
+    }
+}

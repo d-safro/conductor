@@ -30,6 +30,8 @@ What changed in each release, newest first. The full notes for each are on the
   still can't.
 - **A Soulseek file name with `..` in it** (the name is the peer's) made Conductor look for the finished download
   beside the downloads folder instead of in it, and move a file of that name from there into the music folder.
+- **`conductor setup` without a terminal** (`< /dev/null`, a script, a service) asked for the admin's password (or a
+  music folder) forever, writing hundreds of MB a second. When its input ends it now stops and points to `--yes`.
 
 ## 1.0.0 (2026-11-22)
 
