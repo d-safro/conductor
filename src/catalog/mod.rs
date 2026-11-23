@@ -347,29 +347,38 @@ pub async fn album_tracks(st: &AppState, album_id: &str) -> Vec<Value> {
 
 /// The Deezer album that is this library album (same name, same artist, most of your songs on it).
 pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[String]) -> Option<String> {
-    let key = format!("{}|{}", ak(artist), alk(name));
+    // artists credited together ("Андрей Макаревич & Папоротник") are often under the first one only: searched
+    // for that too when the whole name finds nothing. (Its own key, so a miss kept from before is asked again.)
+    let lead = text::lead_artist(artist);
+    let key = format!("{}|{}{}", ak(artist), alk(name), if lead.is_some() { "|lead" } else { "" });
     if let Some(hit) = cache_get(st, "album", &key, 7).await {
         return hit;
     }
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
-    for q in [format!(r#"artist:"{artist}" album:"{clean}""#), format!("{artist} {clean}")] {
-        let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
-            // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless the
-            // first search already found something to go on
-            if cands.is_empty() {
-                return None;
-            }
+    for who in std::iter::once(artist.to_string()).chain(lead) {
+        if !cands.is_empty() {
             break;
-        };
-        for a in found {
-            if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
-                cands.push(a);
-            }
         }
-        // both searches, always: the exact one can find only a bigger edition ("Sticky Fingers (Super Deluxe)", and
-        // a live album that isn't a match) while the album itself ("Sticky Fingers (Remastered)") comes up only in
-        // the plain one. (One more request per album; the match is kept for a week.)
+        for q in [format!(r#"artist:"{who}" album:"{clean}""#), format!("{who} {clean}")] {
+            let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
+                // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless the
+                // first search already found something to go on
+                if cands.is_empty() {
+                    return None;
+                }
+                break;
+            };
+            for a in found {
+                // (an album of the lead artist's counts: "Андрей Макаревич" is in "Андрей Макаревич & Папоротник")
+                if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
+                    cands.push(a);
+                }
+            }
+            // both searches, always: the exact one can find only a bigger edition ("Sticky Fingers (Super Deluxe)",
+            // and a live album that isn't a match) while the album itself ("Sticky Fingers (Remastered)") comes up
+            // only in the plain one. (One more request per album; the match is kept for a week.)
+        }
     }
     let want = alk(name);
     let mine = edition_tier(name);

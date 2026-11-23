@@ -4,6 +4,13 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.5.1 (2026-11-23)
+
+### Fixed
+- **Albums by artists credited together are completed again** ("Андрей Макаревич & Папоротник", "A feat. B", "A и
+  группа B"): when Deezer has nothing under the whole name, the album is looked for under the first-named artist,
+  where Deezer usually has it, so its songs you don't have show (and can be fetched) as on any other album.
+
 ## 1.5.0 (2026-11-23)
 
 ### New

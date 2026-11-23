@@ -849,6 +849,8 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                     ed(id, "", 0)
                 }
                 "/search" => json!({ "data": if q.contains("psycho") { vec![pk.clone(), one.clone()] } else { vec![] } }),
+                // Deezer has no "Alpha & The Band", only Alpha
+                "/search/album" if q.contains("alpha") && q.contains("band") => json!({ "data": [] }),
                 "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
                 "/search/album" => json!({ "data": if q.contains("talking") || q.contains("psycho") { vec![al77.clone()] } else { vec![] } }),
                 "/search/artist" if q.contains("alpha") => json!({ "data": [alpha] }),
@@ -5805,6 +5807,32 @@ async fn downloading_an_album_or_artist_sends_a_zip_of_its_files() {
     // an id that's nothing
     let r = s.call("download", &[("id", "nothing-here")]).await;
     assert_eq!(r["error"]["code"], 70, "{r}");
+}
+
+#[tokio::test]
+async fn an_album_by_artists_together_is_completed_from_the_first_ones() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    let who = "Alpha & The Band";
+    let tags = [("title", "One"), ("artist", who), ("album_artist", who), ("album", "First Album")];
+    tone_tags(&s.music.join("Alpha/First Album/One.flac"), 1, &tags);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let albums = s.ok("search3", &[("query", "First Album"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let id = albums.iter().find(|a| !a["id"].as_str().unwrap().starts_with("dz-")).unwrap()["id"].as_str().unwrap().to_string();
+    let al = s.ok("getAlbum", &[("id", &id)]).await;
+    let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["One", "⬇ Three and a Half"]);
 }
 
 #[tokio::test]
