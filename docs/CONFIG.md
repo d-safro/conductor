@@ -20,7 +20,7 @@ Paths may use `~`. A setting that isn't there takes the default shown.
 | `scan_interval_min` | 15 | Minutes between full scans (0: only at start and on request). |
 | `ffmpeg` | (not set) | ffmpeg for transcoding; found on PATH when not set. |
 | `transcode_slots` | 0 | How many ffmpegs convert at once as a rule (each uses about a core and 50 MB while it works). When they're all busy, a song waits half a second for one, then starts anyway, up to four times as many (at least 8); past that it waits its turn (up to 30 s). ffmpeg runs at a lower priority than everything else. 0: half the cores, at least 2. |
-| `transcode_cache_mb` | 1000 | Converted songs are kept in `<data>/cache/transcode` (played again, and seeking, from there); the least recently used go when it's bigger than this. |
+| `transcode_cache_mb` | 1000 | Converted songs are kept in `<data>/cache/transcode` (played again, and seeking, from there); the least recently used go when it's bigger than this. 0: none are kept (each song is converted again every time it's played, and sent as it's made; its file goes once it's done). A song asked for again while it's being converted (two devices, an app asking twice) follows that conversion rather than starting another. |
 | `backup_keep` | 7 | How many daily backups are kept (0: none are made). `conductor backup` makes one any time. |
 | `backup_dir` | (not set) | Where the daily backups go (default: `<data_dir>/backups`). |
 

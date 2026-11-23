@@ -5554,3 +5554,76 @@ async fn a_music_folder_picked_in_the_app_shows_only_its_music() {
     let r = s.call("getArtists", &[("musicFolderId", "999")]).await;
     assert_eq!(r["error"]["code"], 70, "{r}");
 }
+
+#[tokio::test]
+async fn the_same_conversion_asked_for_together_runs_once() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // a long song (its conversion takes a moment), asked for by three apps at once; the first hangs up at once
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let music = c.data_dir.parent().unwrap().join("music");
+        tone(&music.join("Long/Long/01 Long.flac"), "Long", "Long", "Long", 1, 240);
+    })
+    .await;
+    let id = s.ok("search3", &[("query", "Long")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let u = s.url("stream", &[("id", &id), ("format", "mp3"), ("maxBitRate", "128")]);
+    let first = s.http.get(&u).send().await.unwrap();
+    assert_eq!(first.status().as_u16(), 200);
+    drop(first); // hung up
+    let get = || {
+        let (http, u) = (s.http.clone(), u.clone());
+        async move {
+            let r = http.get(u).send().await.unwrap();
+            (r.status().as_u16(), r.bytes().await.unwrap().len())
+        }
+    };
+    let (b, c) = futures_util::join!(get(), get());
+    assert_eq!((b.0, c.0), (200, 200));
+    assert!(b.1 > 100_000 && b.1 == c.1, "{b:?} {c:?}: each the whole song");
+    assert_eq!(s.st.transcode_slots.started(), 1, "one ffmpeg for all three");
+    // it went on to the end for the others, and is in the cache
+    let r = s.http.get(&u).send().await.unwrap();
+    assert_eq!(r.headers()["x-transcode-cache"], "hit");
+    assert_eq!(r.bytes().await.unwrap().len(), b.1);
+    let dir = s.st.cfg.cache_dir().join("transcode");
+    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names.len(), 1, "one file, no parts: {names:?}");
+}
+
+#[tokio::test]
+async fn with_no_transcode_cache_conversions_are_still_sent_whole() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // transcode_cache_mb = 0: nothing kept, but a song so short it's done before the answer starts still comes
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.transcode_cache_mb = 0;
+        let f = c.data_dir.parent().unwrap().join("music/Short/Short/01 Blip.flac");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        let ok = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.1"])
+            .args(["-metadata", "title=Blip", "-metadata", "artist=Short", "-metadata", "album=Short"])
+            .arg(&f)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+    })
+    .await;
+    let songs = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    let id = |t: &str| songs.iter().find(|x| x["title"] == t).unwrap()["id"].as_str().unwrap().to_string();
+    for (title, at_least) in [("Blip", 500), ("One", 20_000)] {
+        let mut lens = vec![];
+        for _ in 0..3 {
+            let r = s.http.get(s.url("stream", &[("id", &id(title)), ("format", "mp3"), ("maxBitRate", "128")])).send().await.unwrap();
+            assert_eq!((r.status().as_u16(), r.headers()["x-transcode-cache"].to_str().unwrap()), (200, "miss"), "{title}");
+            lens.push(r.bytes().await.unwrap().len());
+        }
+        assert!(lens[0] >= at_least && lens.iter().all(|l| *l == lens[0]), "{title}: {lens:?}");
+    }
+    let dir = s.st.cfg.cache_dir().join("transcode");
+    wait_for(async || std::fs::read_dir(&dir).unwrap().count() == 0, "nothing kept").await;
+}

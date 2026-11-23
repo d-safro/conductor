@@ -12,6 +12,12 @@ What changed in each release, newest first. The full notes for each are on the
   counts, starred items and search. A folder that doesn't exist is "not found" (code 70), as in Navidrome.
 
 ### Fixed
+- **Two apps asking for the same conversion at once** (two devices, an app that asks twice) each started their own
+  ffmpeg. The second now follows the one being made, which goes on to the end even when the app that started it
+  stops listening.
+- **`transcode_cache_mb = 0`**: a very short song could be done converting before it was sent, was removed from the
+  cache at once, and the app got "This song can't be transcoded". 0 now means nothing is kept once it's sent; every
+  conversion still plays whole.
 
 ## 1.0.0 (2026-11-22)
 
