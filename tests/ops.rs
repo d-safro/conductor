@@ -1,8 +1,10 @@
 //! How Conductor runs and stops, as the real program: started on a free port with its own scratch folder, stopped
 //! the way systemd and `docker stop` stop it.
 
+#[cfg(unix)]
+use std::path::Path;
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -124,6 +126,7 @@ fn get(port: u16, path: &str, headers: &[(&str, &str)]) -> Option<(u16, String)>
     Some((code, buf.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default()))
 }
 
+#[cfg(unix)]
 fn wal(data: &Path) -> u64 {
     std::fs::metadata(data.join("conductor.db-wal")).map(|m| m.len()).unwrap_or(0)
 }
@@ -265,7 +268,10 @@ fn the_setup_link_is_shown_but_not_written_to_logs() {
     let (_, log) = s.stop();
     assert!(log.contains("conductor setup link"), "it says where the link is: {log}");
     assert!(!log.contains(&token), "the token isn't in the log: {log}");
-    // stopped: there's no link to show
-    let o = conductor(&["--config", &cfg, "setup", "link"]).output().unwrap();
-    assert!(!o.status.success(), "{o:?}");
+    // stopped (as it is asked to stop: on Windows here it's killed): there's no link to show
+    #[cfg(unix)]
+    {
+        let o = conductor(&["--config", &cfg, "setup", "link"]).output().unwrap();
+        assert!(!o.status.success(), "{o:?}");
+    }
 }
