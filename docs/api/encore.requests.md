@@ -158,7 +158,7 @@ Parameters: `id` (required), `aside`.
 
 ## `searchRequestFiles`
 
-Admins. `id`, `query` (at least 3 letters; by default the request's own `query`): search Soulseek your own way. Every audio file found, the likeliest first (at most 120 of `total`), with what fits: `match` (what the automatic search would take), `titleOk`, `artistOk`, `sameAlbum`. Waits for the search (10–40 s; one at a time).
+Admins. `id`, `query` (at least 3 letters; by default the request's own `query`): search Soulseek your own way. Every audio file found, the likeliest first (at most 120 of `total`), with what fits: `match` (what the automatic search would take), `titleOk`, `artistOk`, `sameAlbum`. Waits for the search (10–40 s; one at a time). Refused on a read-only server (nothing found could be picked).
 
 Parameters: `id` (required), `query`.
 

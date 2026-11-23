@@ -164,6 +164,7 @@ pub async fn refresh(st: &AppState, kind: &str) -> Result<()> {
     }
     sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&mut *tx).await?;
     tx.commit().await?;
+    st.live.playlist_changed(&owner, &pid, false);
     // last time's songs you didn't keep go (unless another discovery playlist still has them); kept ones move into Songs
     clean_up(st).await?;
     let mut asked = 0;

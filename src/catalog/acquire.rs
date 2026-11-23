@@ -542,6 +542,12 @@ pub async fn apply_wants(st: &AppState, key: &str, local: &str) -> Result<()> {
             .await?;
             if added.rows_affected() > 0 {
                 sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&st.db).await?;
+                // the playlist's owner hears (a friend's song in a shared playlist is still the owner's playlist)
+                let owner: Option<String> =
+                    sqlx::query_scalar("SELECT owner_id FROM playlist WHERE id = ?").bind(&pid).fetch_optional(&st.db).await?;
+                if let Some(owner) = owner {
+                    st.live.playlist_changed(&owner, &pid, false);
+                }
             }
         }
         sqlx::query("UPDATE request_want SET done = 1 WHERE key = ? AND user_id = ? AND playlist_id = ?")
