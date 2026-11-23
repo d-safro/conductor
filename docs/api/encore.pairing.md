@@ -33,7 +33,7 @@ Wait for the approval: waiting, then done with the login.
 
 A signed-in device approves the code, handing over a login.
 
-Parameters: `code`.
+Parameters: `code`, `login`.
 
 | Field | Type |
 |---|---|

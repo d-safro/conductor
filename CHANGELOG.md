@@ -18,6 +18,9 @@ What changed in each release, newest first. The full notes for each are on the
   gone. The restored settings now keep the data folder the database went to.
 - **`conductor --help`**, or a mistyped command, made a database in the default data folder before saying "unknown
   command; see the top of src/main.rs". Now nothing is opened, and the commands are listed.
+- **Docs**: the settings reference (also Podium's Settings help) described `deezer_url`, `info_lang`, `wikidata_url`,
+  `musicbrainz_url` and `coverart_url` with another setting's text; the `encore.*` specs left out the JSON parameters
+  (`state`, `command`, `value`, `login`); FEATURES.md now says `musicFolderId` isn't used (every call covers all folders).
 
 ## 1.0.0 (2026-11-22)
 

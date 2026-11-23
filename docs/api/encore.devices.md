@@ -8,7 +8,7 @@ Your devices see each other, and one can play on another (remote control). Each 
 
 A device announces itself (and is listed for a while after).
 
-Parameters: `id`, `name`, `kind`.
+Parameters: `id`, `name`, `kind`, `state`.
 
 | Field | Type |
 |---|---|
@@ -27,7 +27,7 @@ Parameters: `id`, `name`, `kind`.
 
 What it's playing, and where.
 
-Parameters: `id`.
+Parameters: `id`, `state`.
 
 Answers "ok" with no fields.
 
@@ -52,7 +52,7 @@ Your devices, the others' state.
 
 Send a command (play, pause, next, seek, volume…) to a device.
 
-Parameters: `target`, `id`.
+Parameters: `target`, `id`, `command`.
 
 | Field | Type |
 |---|---|

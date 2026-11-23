@@ -157,6 +157,9 @@ def params(call, hs):
     seen = {}
     for kind, name in re.findall(r'\.p\.(req|get|int|bool|all|float|i64)\("([a-zA-Z_]+)"\)', b):
         seen[name] = seen.get(name) == "required" or kind == "req"
+    # JSON values (a device's state, a command, a synced value): json_param(c, "name")
+    for name in re.findall(r'json_param\(c, "([a-zA-Z_]+)"\)', b):
+        seen.setdefault(name, False)
     return [(n, "required" if r else "optional") for n, r in seen.items()]
 
 
