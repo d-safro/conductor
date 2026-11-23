@@ -184,6 +184,7 @@ async fn status(State(st): State<Shared>, h: HeaderMap) -> Response {
         "playlists": count(&st, "SELECT COUNT(*) FROM playlist").await,
         "podcasts": count(&st, "SELECT COUNT(*) FROM podcast").await,
         "scanning": st.scan.scanning.load(Ordering::Relaxed),
+        "levelling": crate::loudness::status(&st).await,
         "lastScan": st.scan.last_scan.load(Ordering::Relaxed),
         "requests": by_status.into_iter().map(|(s, n)| (s, json!(n))).collect::<serde_json::Map<_, _>>(),
         "onTrial": count(&st, "SELECT COUNT(*) FROM request WHERE trial = 1").await,
