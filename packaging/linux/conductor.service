@@ -1,0 +1,24 @@
+# Conductor as a system service, from the package: it runs as the "conductor" user, with its settings and data in
+# /var/lib/conductor. Not started until you set it up (see `systemctl cat conductor` and the guide):
+#   sudo -u conductor conductor --config /var/lib/conductor/config.toml setup
+#   sudo systemctl enable --now conductor
+# (Or run `conductor setup` as yourself instead, for a service that runs as you.)
+[Unit]
+Description=Conductor music server
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/conductor/config.toml
+
+[Service]
+User=conductor
+Group=conductor
+Environment=CONDUCTOR_DATA_DIR=/var/lib/conductor
+ExecStart=/usr/bin/conductor --config /var/lib/conductor/config.toml serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

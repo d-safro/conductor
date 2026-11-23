@@ -42,6 +42,41 @@ jobs:
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-audit }
       - run: cargo audit
+  packages:
+    # The Linux packages (.deb, .rpm, Arch) from the static program, each installed in a container of its system:
+    # the program runs, the service's user, folder and unit are there, and removing it takes the program away.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-musl }
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+      - name: the packages
+        run: |
+          export VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1) ARCH=amd64 BIN=target/x86_64-unknown-linux-musl/release/conductor
+          mkdir -p dist
+          for p in deb rpm archlinux; do ~/go/bin/nfpm package -p $p -f packaging/linux/nfpm.yaml -t dist/; done
+          ls -la dist
+      - name: Debian
+        run: |
+          docker run --rm -v "$PWD/dist:/dist" debian:stable-slim sh -euc '
+            apt-get update -qq && apt-get install -y -qq /dist/conductor_*.deb >/dev/null
+            conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
+            apt-get remove -y -qq conductor >/dev/null; ! command -v conductor'
+      - name: Fedora
+        run: |
+          docker run --rm -v "$PWD/dist:/dist" fedora:latest sh -euc '
+            dnf install -y -q /dist/conductor-*.rpm >/dev/null
+            conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
+            dnf remove -y -q conductor >/dev/null; ! command -v conductor'
+      - name: Arch
+        run: |
+          docker run --rm -v "$PWD/dist:/dist" archlinux:latest sh -euc '
+            pacman -U --noconfirm /dist/conductor-*.pkg.tar.zst >/dev/null
+            conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
+            pacman -R --noconfirm conductor >/dev/null; ! command -v conductor'
   windows-service:
     # The release build installed as a Windows service with install.ps1 (as a user would, no questions asked),
     # checked from outside, restarted, then removed with uninstall.ps1.

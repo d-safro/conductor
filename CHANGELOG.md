@@ -17,6 +17,9 @@ What changed in each release, newest first. The full notes for each are on the
   Tailscale as from elsewhere by their own headers.
 
 ### New
+- **Linux packages**: .deb (Debian, Ubuntu), .rpm (Fedora, openSUSE) and Arch, for x86-64 and ARM64, with a system
+  service that runs as its own user (not started until it's set up). Each is installed and removed again in its
+  system on every change.
 - **"Made for you" without AudioMuse-AI** (`encore.forYou`, `getForYou`): a mix from the artists you play most and
   those that go with them, about 60% new to you, the same all day and new each day. Encore uses it when the server has
   no AudioMuse-AI.

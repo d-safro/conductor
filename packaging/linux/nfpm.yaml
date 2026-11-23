@@ -1,0 +1,44 @@
+# Conductor's Linux packages (.deb, .rpm, Arch), made by nfpm from the release's static program:
+#   VERSION=0.6.0 ARCH=amd64 BIN=path/to/conductor nfpm package -p deb -f packaging/linux/nfpm.yaml -t out/
+name: conductor
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+section: sound
+priority: optional
+maintainer: "d-safro <330074961+d-safro@users.noreply.github.com>"
+description: |
+  Your own music server: Subsonic and OpenSubsonic for every app, with Encore's extras.
+  After installing, set it up with `conductor setup`.
+vendor: d-safro
+homepage: https://github.com/d-safro/conductor
+license: AGPL-3.0-or-later
+recommends:
+  - ffmpeg
+overrides:
+  archlinux:
+    depends: []
+    recommends: []
+    optional_depends:
+      - "ffmpeg: converting formats for apps that ask for smaller files"
+contents:
+  - src: ${BIN}
+    dst: /usr/bin/conductor
+    file_info: { mode: 0755 }
+  - src: packaging/linux/conductor.service
+    dst: /usr/lib/systemd/system/conductor.service
+  - src: packaging/linux/sysusers.conf
+    dst: /usr/lib/sysusers.d/conductor.conf
+  - src: packaging/linux/tmpfiles.conf
+    dst: /usr/lib/tmpfiles.d/conductor.conf
+  - src: README.md
+    dst: /usr/share/doc/conductor/README.md
+  - src: docs/GUIDE.md
+    dst: /usr/share/doc/conductor/GUIDE.md
+  - src: docs/CONFIG.md
+    dst: /usr/share/doc/conductor/CONFIG.md
+  - src: LICENSE
+    dst: /usr/share/licenses/conductor/LICENSE
+scripts:
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh

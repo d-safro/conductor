@@ -15,6 +15,13 @@ something's off. Every setting is in [CONFIG.md](CONFIG.md); everything it can d
 Install `ffmpeg` too (your distribution's package): Conductor plays files as they are without it, but needs it to
 convert formats for apps that ask for smaller files.
 
+**Debian, Ubuntu, Fedora, Arch** (x86-64 or ARM64): the release also has a package for each
+(`conductor_<version>_amd64.deb`, `conductor-<version>-1.x86_64.rpm`, `conductor-<version>-1-x86_64.pkg.tar.zst`, and
+the same for ARM64). Install it with your package manager, then run `conductor setup`. It also brings a system
+service that runs as its own `conductor` user with its data in `/var/lib/conductor` (not started until you set it up:
+`sudo -u conductor conductor --config /var/lib/conductor/config.toml setup`, then `sudo systemctl enable --now
+conductor`; that user needs to be able to read your music). It recommends ffmpeg.
+
 **Windows:** download `conductor-<version>-windows-x86_64.zip`, unpack it, and in PowerShell as administrator:
 
 ```powershell

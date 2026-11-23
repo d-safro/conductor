@@ -27,7 +27,8 @@ start: your data, settings, the API and Conductor's own extensions keep working 
    shown); music folders and the data folder stay with `conductor setup`.
 8. ~~**Encore's "Made for you" without AudioMuse-AI.**~~ Done: `encore.forYou` (Conductor) and Encore's Discover and
    Home use it when there's no AudioMuse-AI. Moods need audio analysis and stay AudioMuse's.
-9. **Linux packages** for Conductor (.deb, .rpm, Arch), as Encore has.
+9. ~~**Linux packages.**~~ Done: .deb, .rpm and Arch for x86-64 and ARM64, each installed and removed in its system's
+   container by CI.
 10. **Accessibility and phone layout** of Recital and Podium, checked.
 
 ## After 1.0
