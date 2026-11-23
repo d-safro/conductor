@@ -15,6 +15,34 @@ What changed in each release, newest first. The full notes for each are on the
   is ("measured 812 of 1676"). Settings: `loudness_analysis` (on), `loudness_threads` (1).
 - **Recital and share links level songs too**, with the same gains, never past a song's peak (nothing clips). A
   button beside Recital's volume turns it off.
+- **Picking a music folder in your app** (Symfonium, Tempus, Ultrasonic, DSub, Feishin…) now shows only that
+  folder's music: `musicFolderId` is used by artists, album lists of every kind, random songs, songs by genre, genre
+  counts, starred items and search. A folder that doesn't exist is "not found" (code 70), as in Navidrome.
+- **Downloading a whole album** (or an artist) from an app: `download` with an album or artist id sends a zip of the
+  original files ("01 Title.flac", each album in its own folder for an artist), made as it's sent. It said "Song
+  not found" before.
+
+### Fixed
+- **Two apps asking for the same conversion at once** (two devices, an app that asks twice) each started their own
+  ffmpeg. The second now follows the one being made, which goes on to the end even when the app that started it
+  stops listening.
+- **`transcode_cache_mb = 0`**: a very short song could be done converting before it was sent, was removed from the
+  cache at once, and the app got "This song can't be transcoded". 0 now means nothing is kept once it's sent; every
+  conversion still plays whole.
+- **`getPlaylists?username=`** was ignored: an admin now gets that user's playlists, as the Subsonic spec says, and
+  anyone else asking for another user's gets an error (code 50).
+- **Raw `.aac` files** were labelled `audio/mp4` (that's `.m4a`), so apps and players that go by the type could
+  refuse them. They're `audio/aac` now, songs scanned before included; `.m4a` and `.mp4` stay `audio/mp4`.
+- **Podcast episodes were never converted**, whatever format or `maxBitRate` the app asked for. A saved episode now
+  goes through the same conversion as a song (and the same cache); one that isn't saved still comes straight from
+  the podcast's server.
+- **An album completed from the wrong edition**: "Sticky Fingers" (10 songs, two of them yours) was filled out with
+  the 33-song Super Deluxe edition, because Deezer had only that and a remaster, both counted as "editions" alike.
+  The plain album now comes first, then a remaster of it (the same songs), and only then a deluxe edition (unless
+  yours is one); albums matched before are matched again.
+- **Recording the API contract** (`CONDUCTOR_BLESS=1`) with only some tests running wrote each answer's shape from
+  just those tests, so `search3.json` lost fields. Recording now only adds fields; one a whole run never sees is
+  listed in `target/tmp/contract-unseen/`, and CI fails on it.
 
 ## 1.0.0 (2026-11-22)
 

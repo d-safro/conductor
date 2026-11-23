@@ -26,7 +26,7 @@ pub struct Config {
     pub ffmpeg: Option<PathBuf>,
     /// how many conversions may work at the same time (0: half the cores, at least 2)
     pub transcode_slots: usize,
-    /// the most the conversions kept in the cache may take, in MB
+    /// the most the conversions kept in the cache may take, in MB (0: none are kept, each is sent as it's made)
     pub transcode_cache_mb: u64,
     /// Sound levelling: measure the loudness of songs whose files have no ReplayGain tags, in the background (ffmpeg
     /// at the lowest priority), so the apps can play every song at the same loudness. See src/loudness.rs.

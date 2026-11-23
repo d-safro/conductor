@@ -12,14 +12,20 @@
 //! once still can't take all the memory of a small server. ffmpeg runs at a lower priority than everything else on
 //! the machine, so the other services stay quick while it's busy.
 //!
+//! A second request for a conversion that's being made (two devices, an app that asks twice) follows the one that's
+//! running instead of starting another ffmpeg; the conversion goes on to the end even when the app that started it
+//! stops listening. With `transcode_cache_mb = 0` nothing is kept: each conversion is sent from its open file and the
+//! file is gone once it's done.
+//!
 //! A stream from the middle of a song (`timeOffset`) is converted straight to the app, not cached.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicU8, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -35,10 +41,16 @@ const WAIT_FOR_SLOT: Duration = Duration::from_secs(30);
 /// How long it waits for one of the usual slots before it starts anyway (under the hard limit).
 const WAIT_FOR_USUAL: Duration = Duration::from_millis(500);
 
-/// The ffmpegs that may run: the usual number, and the most there may be (for memory).
+/// The conversions being made into the cache: cache file → (its part file, its state).
+type Running = HashMap<PathBuf, (PathBuf, Arc<AtomicU8>)>;
+
+/// The ffmpegs that may run: the usual number, and the most there may be (for memory); and the conversions being
+/// made for the cache now (cache file → its part file and state), for a second request to follow.
 pub struct Slots {
     usual: Arc<tokio::sync::Semaphore>,
     most: Arc<tokio::sync::Semaphore>,
+    running: Arc<Mutex<Running>>,
+    started: AtomicUsize,
 }
 
 /// A running ffmpeg's place (given back when it ends).
@@ -46,7 +58,26 @@ pub struct Place(#[allow(dead_code)] tokio::sync::OwnedSemaphorePermit, #[allow(
 
 impl Slots {
     pub fn new(usual: usize) -> Self {
-        Self { usual: Arc::new(tokio::sync::Semaphore::new(usual)), most: Arc::new(tokio::sync::Semaphore::new((usual * 4).max(8))) }
+        Self {
+            usual: Arc::new(tokio::sync::Semaphore::new(usual)),
+            most: Arc::new(tokio::sync::Semaphore::new((usual * 4).max(8))),
+            running: Default::default(),
+            started: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many ffmpegs were started for the cache (each conversion once, however many asked for it).
+    pub fn started(&self) -> usize {
+        self.started.load(Ordering::Relaxed)
+    }
+
+    /// The conversion being made into `file`, opened to follow it.
+    fn follow_running(&self, file: &Path) -> Option<(tokio::fs::File, Arc<AtomicU8>)> {
+        let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        let (part, state) = running.get(file)?;
+        // (under the lock: the part is moved into place or removed only after it's taken out of the map)
+        let f = std::fs::File::open(part).ok()?;
+        Some((tokio::fs::File::from_std(f), state.clone()))
     }
 
     async fn take(&self) -> Result<Place> {
@@ -140,54 +171,34 @@ fn cache_file(cfg: &Config, src: &Path, x: Target, kbps: i64) -> PathBuf {
 pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i64, offset: i64) -> Result<Converted> {
     if offset == 0 {
         let file = cache_file(cfg, src, x, kbps);
-        if file.is_file() {
-            // used again: the last to go when the cache is trimmed
-            if let Ok(f) = std::fs::File::options().append(true).open(&file) {
-                let _ = f.set_modified(std::time::SystemTime::now());
-            }
-            return Ok(Converted::Cached(file, true));
+        if let Some(hit) = cached(&file) {
+            return Ok(hit);
+        }
+        // being made already (another app, the same app asking twice): follow that one
+        if let Some((f, state)) = slots.follow_running(&file) {
+            return first_bytes(f, state, &file).await;
         }
         let permit = slots.take().await?;
         std::fs::create_dir_all(dir(cfg))?;
-        let part = file.with_extension(format!("{}.{}.part", x.suffix, crate::db::random_id()));
-        let mut cmd = ffmpeg(cfg);
-        args(&mut cmd, src, x, kbps);
-        cmd.arg("-y").arg(&part).stdout(Stdio::null()).kill_on_drop(false);
-        let mut child = cmd.spawn().map_err(|e| anyhow!("ffmpeg can't start ({e}); is it installed?"))?;
-        let state = Arc::new(AtomicU8::new(RUNNING));
-        let (st2, part2, file2, limit) = (state.clone(), part.clone(), file.clone(), cfg.transcode_cache_mb);
-        let cache = dir(cfg);
-        tokio::spawn(async move {
-            let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
-            drop(permit); // the next ffmpeg may start
-            let filled = std::fs::metadata(&part2).map(|m| m.len() > 0).unwrap_or(false);
-            if ok && filled && std::fs::rename(&part2, &file2).is_ok() {
-                st2.store(DONE, Ordering::SeqCst);
-                trim(&cache, limit);
+        let started = {
+            let mut running = slots.running.lock().unwrap_or_else(|e| e.into_inner());
+            // while this one waited for a slot, another may have started it, or finished it
+            if running.contains_key(&file) || file.is_file() {
+                drop(permit); // (not needed: following takes none)
+                None
             } else {
-                // ffmpeg stopped part way (killed, the disk full): the app is told the song broke off, rather than
-                // sent its first half as if that were all of it
-                st2.store(if ok && filled { DONE } else { FAILED }, Ordering::SeqCst);
-                let _ = std::fs::remove_file(&part2);
+                Some(start(cfg, &mut running, slots, permit, src, x, kbps, &file)?)
             }
-        });
-        // its first bytes (or its failure) before answering
-        loop {
-            if let Ok(m) = std::fs::metadata(&part)
-                && m.len() > 0
-            {
-                // (opened before it's moved into place or removed: the open file stays readable)
-                if let Ok(f) = tokio::fs::File::open(&part).await {
-                    return Ok(Converted::Growing(f, state));
-                }
-            }
-            match state.load(Ordering::SeqCst) {
-                RUNNING => tokio::time::sleep(Duration::from_millis(15)).await,
-                // done already (a very short song): it's in the cache now
-                DONE if file.is_file() => return Ok(Converted::Cached(file, false)),
-                _ => bail!("This song can't be transcoded (ffmpeg couldn't read it)"),
-            }
-        }
+        };
+        return match started {
+            Some((reader, state)) => first_bytes(reader, state, &file).await,
+            None => match (cached(&file), slots.follow_running(&file)) {
+                (Some(hit), _) => Ok(hit),
+                (None, Some((f, state))) => first_bytes(f, state, &file).await,
+                // (it failed and is gone: as if it had failed for this one)
+                (None, None) => bail!("This song can't be transcoded (ffmpeg couldn't read it)"),
+            },
+        };
     }
     // from the middle of a song: straight to the app (an ffmpeg slot while it runs)
     let permit = slots.take().await?;
@@ -209,6 +220,89 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
         drop(permit);
     });
     Ok(Converted::Piped(out, first))
+}
+
+/// An ffmpeg started into the cache (the caller holds the map's lock): its part, opened, and its state.
+#[allow(clippy::too_many_arguments)]
+fn start(
+    cfg: &Config,
+    running: &mut Running,
+    slots: &Slots,
+    permit: Place,
+    src: &Path,
+    x: Target,
+    kbps: i64,
+    file: &Path,
+) -> Result<(tokio::fs::File, Arc<AtomicU8>)> {
+    let part = file.with_extension(format!("{}.{}.part", x.suffix, crate::db::random_id()));
+    // the part is made (and opened) here, and ffmpeg writes into it: what's sent is read from this open file,
+    // which stays readable when the part is moved into the cache or (transcode_cache_mb = 0) removed
+    let reader = std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&part)?;
+    let mut cmd = ffmpeg(cfg);
+    args(&mut cmd, src, x, kbps);
+    cmd.arg("-y").arg(&part).stdout(Stdio::null()).kill_on_drop(false);
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            bail!("ffmpeg can't start ({e}); is it installed?");
+        }
+    };
+    slots.started.fetch_add(1, Ordering::Relaxed);
+    let state = Arc::new(AtomicU8::new(RUNNING));
+    running.insert(file.to_path_buf(), (part.clone(), state.clone()));
+    let (st2, part2, file2, limit) = (state.clone(), part.clone(), file.to_path_buf(), cfg.transcode_cache_mb);
+    let (cache, map) = (dir(cfg), slots.running.clone());
+    // (spawned: it runs to the end, for whoever follows it, even when this request is dropped)
+    tokio::spawn(async move {
+        let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        drop(permit); // the next ffmpeg may start
+        let filled = std::fs::metadata(&part2).map(|m| m.len() > 0).unwrap_or(false);
+        let kept = {
+            let mut running = map.lock().unwrap_or_else(|e| e.into_inner());
+            running.remove(&file2);
+            ok && filled && limit > 0 && std::fs::rename(&part2, &file2).is_ok()
+        };
+        // ffmpeg stopped part way (killed, the disk full): the app is told the song broke off, rather than
+        // sent its first half as if that were all of it
+        st2.store(if ok && filled { DONE } else { FAILED }, Ordering::SeqCst);
+        if kept {
+            trim(&cache, limit);
+        } else {
+            // (failed, or nothing is kept: those sending it still have it open)
+            let _ = std::fs::remove_file(&part2);
+        }
+    });
+    Ok((tokio::fs::File::from_std(reader), state))
+}
+
+/// A conversion in the cache, marked as used again (the last to go when the cache is trimmed).
+fn cached(file: &Path) -> Option<Converted> {
+    if !file.is_file() {
+        return None;
+    }
+    if let Ok(f) = std::fs::File::options().append(true).open(file) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+    Some(Converted::Cached(file.to_path_buf(), true))
+}
+
+/// A conversion being made, once it has its first bytes (or has failed): what's answered.
+async fn first_bytes(f: tokio::fs::File, state: Arc<AtomicU8>, file: &Path) -> Result<Converted> {
+    loop {
+        let st = state.load(Ordering::SeqCst);
+        // done already (a very short song) and in the cache: sent from there, with ranges
+        if st == DONE && file.is_file() {
+            return Ok(Converted::Cached(file.to_path_buf(), false));
+        }
+        if f.metadata().await.map(|m| m.len() > 0).unwrap_or(false) {
+            return Ok(Converted::Growing(f, state));
+        }
+        match st {
+            RUNNING => tokio::time::sleep(Duration::from_millis(15)).await,
+            _ => bail!("This song can't be transcoded (ffmpeg couldn't read it)"),
+        }
+    }
 }
 
 /// A file being written by ffmpeg, as a stream: what's there, then waits for more until ffmpeg is done.

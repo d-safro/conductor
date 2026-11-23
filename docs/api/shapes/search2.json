@@ -5,8 +5,164 @@
   "searchResult2.album": [
     "array"
   ],
+  "searchResult2.album[]": [
+    "object"
+  ],
+  "searchResult2.album[].album": [
+    "string"
+  ],
+  "searchResult2.album[].artist": [
+    "string"
+  ],
+  "searchResult2.album[].artistId": [
+    "string"
+  ],
+  "searchResult2.album[].artists": [
+    "array"
+  ],
+  "searchResult2.album[].artists[]": [
+    "object"
+  ],
+  "searchResult2.album[].artists[].id": [
+    "string"
+  ],
+  "searchResult2.album[].artists[].name": [
+    "string"
+  ],
+  "searchResult2.album[].coverArt": [
+    "string"
+  ],
+  "searchResult2.album[].created": [
+    "string"
+  ],
+  "searchResult2.album[].discTitles": [
+    "array"
+  ],
+  "searchResult2.album[].displayArtist": [
+    "string"
+  ],
+  "searchResult2.album[].duration": [
+    "number"
+  ],
+  "searchResult2.album[].explicitStatus": [
+    "string"
+  ],
+  "searchResult2.album[].genre": [
+    "string"
+  ],
+  "searchResult2.album[].genres": [
+    "array"
+  ],
+  "searchResult2.album[].genres[]": [
+    "object"
+  ],
+  "searchResult2.album[].genres[].name": [
+    "string"
+  ],
+  "searchResult2.album[].id": [
+    "string"
+  ],
+  "searchResult2.album[].isCompilation": [
+    "boolean"
+  ],
+  "searchResult2.album[].isDir": [
+    "boolean"
+  ],
+  "searchResult2.album[].mediaType": [
+    "string"
+  ],
+  "searchResult2.album[].moods": [
+    "array"
+  ],
+  "searchResult2.album[].musicBrainzId": [
+    "string"
+  ],
+  "searchResult2.album[].name": [
+    "string"
+  ],
+  "searchResult2.album[].originalReleaseDate": [
+    "object"
+  ],
+  "searchResult2.album[].originalReleaseDate.year": [
+    "number"
+  ],
+  "searchResult2.album[].parent": [
+    "string"
+  ],
+  "searchResult2.album[].playCount": [
+    "number"
+  ],
+  "searchResult2.album[].played": [
+    "string"
+  ],
+  "searchResult2.album[].recordLabels": [
+    "array"
+  ],
+  "searchResult2.album[].releaseDate": [
+    "object"
+  ],
+  "searchResult2.album[].releaseDate.year": [
+    "number"
+  ],
+  "searchResult2.album[].releaseTypes": [
+    "array"
+  ],
+  "searchResult2.album[].songCount": [
+    "number"
+  ],
+  "searchResult2.album[].sortName": [
+    "string"
+  ],
+  "searchResult2.album[].starred": [
+    "string"
+  ],
+  "searchResult2.album[].title": [
+    "string"
+  ],
+  "searchResult2.album[].userRating": [
+    "number"
+  ],
+  "searchResult2.album[].version": [
+    "string"
+  ],
+  "searchResult2.album[].year": [
+    "number"
+  ],
   "searchResult2.artist": [
     "array"
+  ],
+  "searchResult2.artist[]": [
+    "object"
+  ],
+  "searchResult2.artist[].albumCount": [
+    "number"
+  ],
+  "searchResult2.artist[].coverArt": [
+    "string"
+  ],
+  "searchResult2.artist[].id": [
+    "string"
+  ],
+  "searchResult2.artist[].musicBrainzId": [
+    "string"
+  ],
+  "searchResult2.artist[].name": [
+    "string"
+  ],
+  "searchResult2.artist[].roles": [
+    "array"
+  ],
+  "searchResult2.artist[].roles[]": [
+    "string"
+  ],
+  "searchResult2.artist[].sortName": [
+    "string"
+  ],
+  "searchResult2.artist[].starred": [
+    "string"
+  ],
+  "searchResult2.artist[].userRating": [
+    "number"
   ],
   "searchResult2.song": [
     "array"
@@ -137,6 +293,9 @@
   "searchResult2.song[].playCount": [
     "number"
   ],
+  "searchResult2.song[].played": [
+    "string"
+  ],
   "searchResult2.song[].replayGain": [
     "object"
   ],
@@ -150,6 +309,9 @@
     "number"
   ],
   "searchResult2.song[].sortName": [
+    "string"
+  ],
+  "searchResult2.song[].starred": [
     "string"
   ],
   "searchResult2.song[].suffix": [

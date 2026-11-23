@@ -92,6 +92,9 @@
   "albumList.album[].playCount": [
     "number"
   ],
+  "albumList.album[].played": [
+    "string"
+  ],
   "albumList.album[].recordLabels": [
     "array"
   ],
@@ -108,6 +111,9 @@
     "number"
   ],
   "albumList.album[].sortName": [
+    "string"
+  ],
+  "albumList.album[].starred": [
     "string"
   ],
   "albumList.album[].title": [

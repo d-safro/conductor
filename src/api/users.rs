@@ -37,7 +37,7 @@ fn password(c: &Ctx) -> Result<String, ApiError> {
     Ok(p)
 }
 
-async fn find(c: &Ctx, name: &str) -> Result<(String, String, bool), ApiError> {
+pub(super) async fn find(c: &Ctx, name: &str) -> Result<(String, String, bool), ApiError> {
     sqlx::query_as("SELECT id, name, is_admin FROM user WHERE name = ?")
         .bind(name)
         .fetch_optional(&c.st.db)

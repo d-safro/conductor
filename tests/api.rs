@@ -109,7 +109,7 @@ impl Server {
         let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();
         let st = Arc::new(AppState::new(pool, secrets, cfg, libs));
         let rep = library::scan(&st.db, &st.libs, &st.scan, false).await.unwrap();
-        assert_eq!(rep.added, 3);
+        assert!(rep.added >= 3, "{}", rep.added); // (more when a test adds a music folder)
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = api::router(st.clone());
@@ -823,7 +823,28 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
             let uh = json!({ "id": 901, "title": "Uh-Oh, Love Comes to Town", "duration": 3, "artist": th, "album": al77, "track_position": 2, "disk_number": 1 });
             let one = json!({ "id": 801, "title": "One", "duration": 3, "artist": alpha, "album": first, "track_position": 1 });
             let half = json!({ "id": 803, "title": "Three and a Half", "duration": 3, "artist": alpha, "album": first, "track_position": 3 });
+            // editions, each listed before the album they're of (Deezer often lists the deluxe one first)
+            let rs = json!({ "id": 20, "name": "The Rolling Stones", "nb_fan": 800 });
+            let ed = |id: i64, title: &str, n: i64| json!({ "id": id, "title": title, "artist": rs, "record_type": "album", "nb_tracks": n, "fans": 100 });
+            let tr = |id: i64, title: &str, pos: i64| json!({ "id": id, "title": title, "duration": 3, "artist": rs, "track_position": pos, "disk_number": 1 });
+            let side = |base: i64, titles: &[&str]| json!({ "data": titles.iter().enumerate().map(|(i, t)| tr(base + i as i64, t, i as i64 + 1)).collect::<Vec<_>>() });
             let body = match path.as_str() {
+                // only a remaster and a super deluxe edition: the remaster
+                "/search/album" if q.contains("sticky") => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5), ed(71, "Sticky Fingers (Remastered)", 3)] }),
+                "/album/70/tracks" => side(7000, &["Brown Sugar", "Sway", "Wild Horses", "Midnight Jam", "Roundhouse Encore"]),
+                "/album/71/tracks" => side(7100, &["Brown Sugar", "Sway", "Wild Horses"]),
+                // the plain album and an anniversary edition: the plain one
+                "/search/album" if q.contains("bleed") => json!({ "data": [ed(73, "Let It Bleed (50th Anniversary Edition)", 4), ed(74, "Let It Bleed", 3)] }),
+                "/album/73/tracks" => side(7300, &["Gimme Shelter", "Love in Vain", "Country Honk", "Studio Outtake Jam"]),
+                "/album/74/tracks" => side(7400, &["Gimme Shelter", "Love in Vain", "Country Honk"]),
+                // a library album named as a remaster ("(2009 Re-Mastered)"): the remaster, not the deluxe version
+                "/search/album" if q.contains("exile") => json!({ "data": [ed(75, "Exile on Main St. (Deluxe Version)", 4), ed(76, "Exile on Main St. (Remastered)", 3)] }),
+                "/album/75/tracks" => side(7500, &["Rocks Off", "Rip This Joint", "Shake Your Hips", "Pass the Wine"]),
+                "/album/76/tracks" => side(7600, &["Rocks Off", "Rip This Joint", "Shake Your Hips"]),
+                "/album/70" | "/album/71" | "/album/73" | "/album/74" | "/album/75" | "/album/76" => {
+                    let id: i64 = path[7..].parse().unwrap();
+                    ed(id, "", 0)
+                }
                 "/search" => json!({ "data": if q.contains("psycho") { vec![pk.clone(), one.clone()] } else { vec![] } }),
                 "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
                 "/search/album" => json!({ "data": if q.contains("talking") || q.contains("psycho") { vec![al77.clone()] } else { vec![] } }),
@@ -4997,7 +5018,12 @@ async fn song_radio_without_audiomuse_stays_close() {
 /// The API's contract: the shape of every answer (its fields and their types) is recorded in docs/api/shapes/, one
 /// file per call. Every call a test makes is checked against it: a field that isn't recorded, or has another type,
 /// fails the test. `CONDUCTOR_BLESS=1 cargo test --test api` records them again; CI does that and fails if the files
-/// change, so a dropped or changed field is seen (STABILITY.md: fields may be added, never taken away).
+/// change, so a new or changed field is seen (STABILITY.md: fields may be added, never taken away).
+///
+/// Recording only ever adds: a field (or a type) already in a file stays there, so blessing while only some tests
+/// run (`CONDUCTOR_BLESS=1 cargo test --test api search`) can't shrink the contract. The fields a recording run never
+/// saw are listed in `<target>/tmp/contract-unseen/<call>.txt`; after a whole run (as in CI) that folder is empty, or
+/// a field was dropped. (A field that really goes, in a new major version, is taken out of its file by hand.)
 mod contract {
     use std::{
         collections::{BTreeMap, BTreeSet},
@@ -5009,9 +5035,8 @@ mod contract {
 
     type Shape = BTreeMap<String, BTreeSet<String>>;
     static SEEN: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
-    /// What was committed, read before this run writes over it: a field's types are kept (a field that's sometimes
-    /// null, a list that's sometimes empty, seen one way in one run and the other way in another), while the fields
-    /// themselves come from this run alone (so one that's gone shows).
+    /// What was committed, read before this run writes over it: every field and type in it is kept (a field that's
+    /// sometimes null, a list that's sometimes empty, a field only some tests see), and this run's are added.
     static COMMITTED: Mutex<BTreeMap<String, Shape>> = Mutex::new(BTreeMap::new());
     /// The envelope every answer has (checked by Subsonic apps themselves, and the same for every call).
     const ENVELOPE: &[&str] = &["status", "version", "type", "serverVersion", "openSubsonic", "error"];
@@ -5060,6 +5085,15 @@ mod contract {
         }
     }
 
+    /// The recorded shape and what this run saw, together: nothing recorded is ever dropped.
+    pub fn merge(recorded: &Shape, seen: &Shape) -> Shape {
+        let mut out = recorded.clone();
+        for (p, t) in seen {
+            out.entry(p.clone()).or_default().extend(t.iter().cloned());
+        }
+        out
+    }
+
     pub fn observe(method: &str, r: &Value) {
         let method = method.trim_end_matches(".view");
         if method.contains('/') || r["status"] != "ok" {
@@ -5080,14 +5114,21 @@ mod contract {
                 .or_insert_with(|| std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
             let all = seen.entry(method.to_string()).or_default();
             for (p, t) in shape {
-                let e = all.entry(p.clone()).or_default();
-                e.extend(t);
-                if let Some(k) = before.get(&p) {
-                    e.extend(k.iter().cloned());
-                }
+                all.entry(p).or_default().extend(t);
             }
+            let merged = merge(before, all);
             std::fs::create_dir_all(dir()).unwrap();
-            std::fs::write(&file, serde_json::to_string_pretty(all).unwrap() + "\n").unwrap();
+            std::fs::write(&file, serde_json::to_string_pretty(&merged).unwrap() + "\n").unwrap();
+            // what's recorded and this run hasn't seen (yet): empty after a whole run
+            let unseen_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("contract-unseen");
+            let unseen: Vec<&String> = before.keys().filter(|p| !all.contains_key(*p)).collect();
+            let unseen_file = unseen_dir.join(format!("{method}.txt"));
+            if unseen.is_empty() {
+                let _ = std::fs::remove_file(&unseen_file);
+            } else {
+                std::fs::create_dir_all(&unseen_dir).unwrap();
+                std::fs::write(&unseen_file, unseen.iter().map(|p| format!("{p}\n")).collect::<String>()).unwrap();
+            }
             return;
         }
         let Ok(text) = std::fs::read_to_string(&file) else {
@@ -5101,6 +5142,18 @@ mod contract {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn recording_only_adds_fields() {
+        // a run that saw only some of a call's fields (one test run alone) keeps the rest
+        let set = |t: &[&str]| t.iter().map(|x| x.to_string()).collect::<BTreeSet<_>>();
+        let recorded: Shape = [("a".to_string(), set(&["string"])), ("b".to_string(), set(&["number", "null"]))].into();
+        let seen: Shape = [("b".to_string(), set(&["number"])), ("c".to_string(), set(&["array"]))].into();
+        let m = merge(&recorded, &seen);
+        assert_eq!(m.keys().collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(m["b"], set(&["null", "number"]));
+        assert_eq!(merge(&recorded, &Shape::new()), recorded, "nothing seen: nothing dropped");
     }
 }
 
@@ -5438,4 +5491,357 @@ async fn a_backup_restored_into_another_data_folder_is_used_there() {
     assert_eq!(after.data_dir, new.path().join("data"), "where the database was restored");
     assert!(after.data_dir.join("conductor.db").is_file());
     assert!(!after.lyrics_online, "the rest of the settings came back");
+}
+
+#[tokio::test]
+async fn a_music_folder_picked_in_the_app_shows_only_its_music() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // a second music folder, "Talks", with one album
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let talks = c.data_dir.parent().unwrap().join("talks");
+        tone(&talks.join("Gamma/Third/01 Four.flac"), "Four", "Gamma", "Third", 1, 2);
+        c.libraries.push(LibraryConfig { name: "Talks".into(), path: talks, sentinel: None, scan_threads: None });
+    })
+    .await;
+    let folders = s.ok("getMusicFolders", &[]).await["musicFolders"]["musicFolder"].as_array().unwrap().clone();
+    let fid = |name: &str| folders.iter().find(|f| f["name"] == name).unwrap()["id"].to_string();
+    let (music, talks) = (fid("Music"), fid("Talks"));
+    let names = |v: &Value, key: &str| -> Vec<String> {
+        let mut n: Vec<String> = v.as_array().map(|a| a.iter().map(|x| x[key].as_str().unwrap().to_string()).collect()).unwrap_or_default();
+        n.sort();
+        n
+    };
+    let index_names = |v: &Value| -> Vec<String> {
+        let mut n: Vec<String> = v["index"].as_array().unwrap().iter().flat_map(|i| names(&i["artist"], "name")).collect();
+        n.sort();
+        n
+    };
+    // without one: everything
+    assert_eq!(index_names(&s.ok("getArtists", &[]).await["artists"]), ["Alpha", "Gamma", "The Beta Band"]);
+    assert_eq!(index_names(&s.ok("getArtists", &[("musicFolderId", &talks)]).await["artists"]), ["Gamma"]);
+    assert_eq!(index_names(&s.ok("getIndexes", &[("musicFolderId", &music)]).await["indexes"]), ["Alpha", "The Beta Band"]);
+
+    // every list type
+    let all = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    for x in &all {
+        let id = x["id"].as_str().unwrap();
+        s.ok("star", &[("id", id), ("albumId", x["albumId"].as_str().unwrap()), ("artistId", x["artistId"].as_str().unwrap())]).await;
+        s.ok("setRating", &[("id", x["albumId"].as_str().unwrap()), ("rating", "4")]).await;
+        s.ok("scrobble", &[("id", id)]).await;
+    }
+    for ty in ["random", "newest", "frequent", "recent", "starred", "highest", "alphabeticalByName", "alphabeticalByArtist", "byYear", "byGenre"] {
+        fn p<'a>(ty: &'a str, f: &'a str) -> Vec<(&'a str, &'a str)> {
+            vec![("type", ty), ("musicFolderId", f), ("fromYear", "2000"), ("toYear", "2030"), ("genre", "Test")]
+        }
+        let r = s.ok("getAlbumList2", &p(ty, &talks)).await;
+        assert_eq!(names(&r["albumList2"]["album"], "name"), ["Third"], "{ty}: {r}");
+        let r = s.ok("getAlbumList", &p(ty, &music)).await;
+        assert_eq!(names(&r["albumList"]["album"], "name"), ["First Album", "Second"], "{ty}: {r}");
+    }
+    let r = s.ok("getRandomSongs", &[("musicFolderId", &talks), ("size", "50")]).await;
+    assert_eq!(names(&r["randomSongs"]["song"], "title"), ["Four"]);
+    let r = s.ok("getSongsByGenre", &[("genre", "Test"), ("musicFolderId", &music)]).await;
+    assert_eq!(names(&r["songsByGenre"]["song"], "title"), ["One", "Three", "Two"]);
+    for (m, key) in [("getStarred2", "starred2"), ("getStarred", "starred")] {
+        let r = s.ok(m, &[("musicFolderId", &talks)]).await;
+        assert_eq!(
+            (names(&r[key]["artist"], "name"), names(&r[key]["album"], "name"), names(&r[key]["song"], "title")),
+            (vec!["Gamma".to_string()], vec!["Third".to_string()], vec!["Four".to_string()]),
+            "{m}: {r}"
+        );
+    }
+    for (m, key) in [("search3", "searchResult3"), ("search2", "searchResult2")] {
+        let r = s.ok(m, &[("query", ""), ("musicFolderId", &talks)]).await;
+        assert_eq!(
+            (names(&r[key]["artist"], "name"), names(&r[key]["album"], "name"), names(&r[key]["song"], "title")),
+            (vec!["Gamma".to_string()], vec!["Third".to_string()], vec!["Four".to_string()]),
+            "{m}: {r}"
+        );
+    }
+    let r = s.ok("getGenres", &[("musicFolderId", &talks)]).await;
+    assert_eq!((r["genres"]["genre"][0]["songCount"].as_i64(), r["genres"]["genre"][0]["albumCount"].as_i64()), (Some(1), Some(1)), "{r}");
+    // both folders, given twice
+    let r = s.ok("getAlbumList2", &[("type", "alphabeticalByName"), ("musicFolderId", &talks), ("musicFolderId", &music)]).await;
+    assert_eq!(names(&r["albumList2"]["album"], "name"), ["First Album", "Second", "Third"]);
+
+    // a folder that isn't there: not found, as in Navidrome
+    for bad in ["999", "abc"] {
+        let r = s.call("getAlbumList2", &[("type", "newest"), ("musicFolderId", bad)]).await;
+        assert_eq!((r["status"].as_str(), r["error"]["code"].as_i64()), (Some("failed"), Some(70)), "{r}");
+    }
+    let r = s.call("getArtists", &[("musicFolderId", "999")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
+}
+
+#[tokio::test]
+async fn the_same_conversion_asked_for_together_runs_once() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // a long song (its conversion takes a moment), asked for by three apps at once; the first hangs up at once
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let music = c.data_dir.parent().unwrap().join("music");
+        tone(&music.join("Long/Long/01 Long.flac"), "Long", "Long", "Long", 1, 240);
+    })
+    .await;
+    let id = s.ok("search3", &[("query", "Long")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let u = s.url("stream", &[("id", &id), ("format", "mp3"), ("maxBitRate", "128")]);
+    let first = s.http.get(&u).send().await.unwrap();
+    assert_eq!(first.status().as_u16(), 200);
+    drop(first); // hung up
+    let get = || {
+        let (http, u) = (s.http.clone(), u.clone());
+        async move {
+            let r = http.get(u).send().await.unwrap();
+            (r.status().as_u16(), r.bytes().await.unwrap().len())
+        }
+    };
+    let (b, c) = futures_util::join!(get(), get());
+    assert_eq!((b.0, c.0), (200, 200));
+    assert!(b.1 > 100_000 && b.1 == c.1, "{b:?} {c:?}: each the whole song");
+    assert_eq!(s.st.transcode_slots.started(), 1, "one ffmpeg for all three");
+    // it went on to the end for the others, and is in the cache
+    let r = s.http.get(&u).send().await.unwrap();
+    assert_eq!(r.headers()["x-transcode-cache"], "hit");
+    assert_eq!(r.bytes().await.unwrap().len(), b.1);
+    let dir = s.st.cfg.cache_dir().join("transcode");
+    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names.len(), 1, "one file, no parts: {names:?}");
+}
+
+#[tokio::test]
+async fn with_no_transcode_cache_conversions_are_still_sent_whole() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // transcode_cache_mb = 0: nothing kept, but a song so short it's done before the answer starts still comes
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.transcode_cache_mb = 0;
+        let f = c.data_dir.parent().unwrap().join("music/Short/Short/01 Blip.flac");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        let ok = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.1"])
+            .args(["-metadata", "title=Blip", "-metadata", "artist=Short", "-metadata", "album=Short"])
+            .arg(&f)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+    })
+    .await;
+    let songs = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    let id = |t: &str| songs.iter().find(|x| x["title"] == t).unwrap()["id"].as_str().unwrap().to_string();
+    for (title, at_least) in [("Blip", 500), ("One", 20_000)] {
+        let mut lens = vec![];
+        for _ in 0..3 {
+            let r = s.http.get(s.url("stream", &[("id", &id(title)), ("format", "mp3"), ("maxBitRate", "128")])).send().await.unwrap();
+            assert_eq!((r.status().as_u16(), r.headers()["x-transcode-cache"].to_str().unwrap()), (200, "miss"), "{title}");
+            lens.push(r.bytes().await.unwrap().len());
+        }
+        assert!(lens[0] >= at_least && lens.iter().all(|l| *l == lens[0]), "{title}: {lens:?}");
+    }
+    let dir = s.st.cfg.cache_dir().join("transcode");
+    wait_for(async || std::fs::read_dir(&dir).unwrap().count() == 0, "nothing kept").await;
+}
+
+#[tokio::test]
+async fn an_admin_can_list_another_users_playlists() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    auth::create_user(&s.st.db, &s.st.secrets, "ann", "ann pass 1", false).await.unwrap();
+    let as_ann = |method: &str, extra: &str| {
+        let u = format!("{}/rest/{method}.view?u=ann&p=ann%20pass%201&v=1.16.1&c=test&f=json{extra}", s.base);
+        let http = s.http.clone();
+        async move {
+            let r: Value = http.get(u).send().await.unwrap().json().await.unwrap();
+            r["subsonic-response"].clone()
+        }
+    };
+    assert_eq!(as_ann("createPlaylist", "&name=Ann%27s%20own").await["status"], "ok");
+    s.ok("createPlaylist", &[("name", "Mine")]).await;
+    let names = |r: &Value| -> Vec<String> {
+        r["playlists"]["playlist"].as_array().map(|a| a.iter().map(|p| p["name"].as_str().unwrap().to_string()).collect()).unwrap_or_default()
+    };
+    assert_eq!(names(&s.ok("getPlaylists", &[]).await), ["Mine"]);
+    assert_eq!(names(&s.ok("getPlaylists", &[("username", "ann")]).await), ["Ann's own"], "the admin sees Ann's");
+    assert_eq!(names(&s.ok("getPlaylists", &[("username", USER)]).await), ["Mine"]);
+    let r = s.call("getPlaylists", &[("username", "nobody")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
+    // Ann isn't an admin: not someone else's
+    let r = as_ann("getPlaylists", &format!("&username={USER}")).await;
+    assert_eq!((r["status"].as_str(), r["error"]["code"].as_i64()), (Some("failed"), Some(50)), "{r}");
+    let r = as_ann("getPlaylists", "&username=ann").await;
+    assert_eq!(names(&r), ["Ann's own"]);
+}
+
+#[tokio::test]
+async fn raw_aac_files_are_audio_aac() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let dir = c.data_dir.parent().unwrap().join("music/Delta/Raw");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, fmt) in [("01 Raw.aac", "adts"), ("02 Boxed.m4a", "ipod")] {
+            let ok = Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", "-f", fmt])
+                .arg(dir.join(name))
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+        }
+    })
+    .await;
+    let songs = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    for (suffix, ct) in [("aac", "audio/aac"), ("m4a", "audio/mp4")] {
+        let x = songs.iter().find(|x| x["suffix"] == suffix).unwrap_or_else(|| panic!("{suffix}: {songs:?}"));
+        assert_eq!(x["contentType"], ct, "{suffix}");
+        let r = s.http.get(s.url("stream", &[("id", x["id"].as_str().unwrap())])).send().await.unwrap();
+        assert_eq!((r.status().as_u16(), r.headers()["content-type"].to_str().unwrap()), (200, ct), "{suffix}");
+    }
+}
+
+#[tokio::test]
+async fn podcast_episodes_are_converted_when_the_app_asks() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+        c.podcast_keep = 0;
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    tone(&dir.path().join("ep.flac"), "Ep", "Host", "Show", 1, 3);
+    let original = std::fs::read(dir.path().join("ep.flac")).unwrap();
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    let feed = format!(
+        r#"<?xml version="1.0"?><rss><channel><title>Talk</title>
+        <item><title>One</title><guid>one</guid><pubDate>Wed, 11 Nov 2026 08:00:00 +0000</pubDate><enclosure url="{fbase}/ep.flac" type="audio/flac"/></item>
+        </channel></rss>"#
+    );
+    let app = axum::Router::new()
+        .route("/feed.xml", axum::routing::get(move || { let f = feed.clone(); async move { ([("content-type", "application/rss+xml")], f) } }))
+        .nest_service("/ep.flac", tower_http::services::ServeFile::new(dir.path().join("ep.flac")));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    tokio::spawn(conductor::api::podcasts::worker(s.st.clone()));
+    s.ok("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    let id = s.ok("getPodcasts", &[]).await["podcasts"]["channel"][0]["episode"][0]["id"].as_str().unwrap().to_string();
+    s.ok("downloadPodcastEpisode", &[("id", &id)]).await;
+    wait_for(async || s.ok("getPodcastEpisode", &[("id", &id)]).await["podcastEpisode"]["downloaded"] == true, "the episode saved").await;
+
+    let get = async |p: &[(&str, &str)], method: &str| {
+        let r = s.http.get(s.url(method, p)).send().await.unwrap();
+        let h = |k: &str| r.headers().get(k).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        let (ct, mark, cache) = (h("content-type"), h("x-transcoded"), h("x-transcode-cache"));
+        (r.status().as_u16(), ct, mark, cache, r.bytes().await.unwrap().to_vec())
+    };
+    // as it is, unless asked
+    let (status, _, mark, _, body) = get(&[("id", &id)], "stream").await;
+    assert_eq!((status, mark.as_str(), body == original), (200, "", true));
+    // another format: converted, then from the cache
+    let (status, ct, mark, cache, body) = get(&[("id", &id), ("format", "mp3"), ("maxBitRate", "96")], "stream").await;
+    assert_eq!((status, ct.as_str(), mark.as_str(), cache.as_str()), (200, "audio/mpeg", "mp3@96k", "miss"));
+    assert!(body.len() > 10_000 && body != original);
+    let (_, _, _, cache, again) = get(&[("id", &id), ("format", "mp3"), ("maxBitRate", "96")], "stream").await;
+    assert_eq!((cache.as_str(), again.len()), ("hit", body.len()));
+    // a lower bitrate alone: mp3
+    let (_, ct, mark, _, _) = get(&[("id", &id), ("maxBitRate", "64")], "stream").await;
+    assert_eq!((ct.as_str(), mark.as_str()), ("audio/mpeg", "mp3@64k"));
+    // a download is the file itself
+    let (status, _, mark, _, body) = get(&[("id", &id), ("format", "mp3")], "download").await;
+    assert_eq!((status, mark.as_str(), body == original), (200, "", true));
+}
+
+#[tokio::test]
+async fn downloading_an_album_or_artist_sends_a_zip_of_its_files() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0].clone();
+    let (album, artist) = (one["albumId"].as_str().unwrap().to_string(), one["artistId"].as_str().unwrap().to_string());
+    let get = async |id: &str| {
+        let r = s.http.get(s.url("download", &[("id", id)])).send().await.unwrap();
+        let h = |k: &str| r.headers().get(k).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        let (ct, cd) = (h("content-type"), h("content-disposition"));
+        (r.status().as_u16(), ct, cd, r.bytes().await.unwrap().to_vec())
+    };
+    let original = |rel: &str| std::fs::read(s.music.join(rel)).unwrap();
+    for (id, name, files) in [
+        (&album, "Alpha - First Album.zip", [("01 One.flac", "Alpha/First Album/01 One.flac"), ("02 Two.flac", "Alpha/First Album/02 Two.flac")]),
+        (&artist, "Alpha.zip", [("First Album/01 One.flac", "Alpha/First Album/01 One.flac"), ("First Album/02 Two.flac", "Alpha/First Album/02 Two.flac")]),
+    ] {
+        let (status, ct, cd, body) = get(id).await;
+        assert_eq!((status, ct.as_str()), (200, "application/zip"), "{}", String::from_utf8_lossy(&body));
+        assert!(cd.contains(&format!("filename=\"{name}\"")), "{cd}");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(body)).unwrap();
+        let mut names: Vec<String> = z.file_names().map(|n| n.unwrap().to_string()).collect();
+        names.sort();
+        assert_eq!(names, files.iter().map(|f| f.0.to_string()).collect::<Vec<_>>());
+        for (inside, rel) in files {
+            let mut got = vec![];
+            std::io::Read::read_to_end(&mut z.by_name(inside).unwrap(), &mut got).unwrap();
+            assert!(got == original(rel), "{inside}: the original file");
+        }
+    }
+    // a song is still the song itself
+    let (status, ct, _, body) = get(one["id"].as_str().unwrap()).await;
+    assert_eq!((status, ct.as_str(), body == original("Alpha/First Album/01 One.flac")), (200, "audio/flac", true));
+    // an id that's nothing
+    let r = s.call("download", &[("id", "nothing-here")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
+}
+
+#[tokio::test]
+async fn an_album_is_completed_from_its_own_edition_not_a_deluxe_one() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    // one or two songs of each album
+    let rs = "The Rolling Stones";
+    for (i, (album, title)) in
+        [("Sticky Fingers", "Brown Sugar"), ("Sticky Fingers", "Sway"), ("Let It Bleed", "Gimme Shelter"), ("Exile on Main St. (2009 Re-Mastered)", "Rocks Off")]
+            .into_iter()
+            .enumerate()
+    {
+        let tags = [("title", title), ("artist", rs), ("album_artist", rs), ("album", album)];
+        tone_tags(&s.music.join(format!("Stones/{album}/{title}.flac")), i as u32 + 1, &tags);
+    }
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let albums = s.ok("search3", &[("query", "Rolling Stones"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for (album, want) in [
+        ("Sticky Fingers", vec!["Brown Sugar", "Sway", "⬇ Wild Horses"]),
+        ("Let It Bleed", vec!["Gimme Shelter", "⬇ Love in Vain", "⬇ Country Honk"]),
+        ("Exile on Main St. (2009 Re-Mastered)", vec!["Rocks Off", "⬇ Rip This Joint", "⬇ Shake Your Hips"]),
+    ] {
+        let id = albums.iter().find(|a| a["name"] == album && !a["id"].as_str().unwrap().starts_with("dz-")).unwrap_or_else(|| panic!("{album}: {albums:?}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let al = s.ok("getAlbum", &[("id", &id)]).await;
+        let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+        assert_eq!(titles, want, "{album}");
+    }
 }

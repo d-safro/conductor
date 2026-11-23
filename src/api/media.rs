@@ -46,19 +46,34 @@ fn target(format: &str) -> Option<Transcode> {
 
 pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
     if let Some(id) = c.p.get("id").filter(|i| i.starts_with("pe-")) {
-        return super::podcasts::stream(c, id).await;
+        return super::podcasts::stream(c, id, download).await;
+    }
+    if download {
+        let id = c.p.req("id")?;
+        if let Some(kind @ ("album" | "artist")) = items::kind_of(c, id).await? {
+            return zip_of(c, id, kind == "artist").await;
+        }
     }
     let t = items::track(c, c.p.req("id")?).await?;
     let path = file_of(c, &t)?;
+    match conversion(c, &t.suffix, t.bitrate, download) {
+        None => serve_file(c, &path, &t, download).await,
+        Some((x, br)) => transcoded(c, &path, x, br).await,
+    }
+}
+
+/// What a stream of a file (its suffix and bitrate) is converted to, if anything: the format the app asks for, mp3
+/// under its `maxBitRate`, or (`timeOffset`) from the middle of it. A download, or `format=raw`, is the file itself.
+pub(super) fn conversion(c: &Ctx, suffix: &str, bitrate: i64, download: bool) -> Option<(Transcode, i64)> {
     let max = c.p.int("maxBitRate").unwrap_or(0).max(0);
     let format = c.p.get("format").unwrap_or("").to_ascii_lowercase();
     let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
 
     let mut transcode = if download || format == "raw" {
         None
-    } else if !format.is_empty() && format != t.suffix {
+    } else if !format.is_empty() && format != suffix {
         target(&format).map(|x| (x, if max > 0 { max } else { 192 }))
-    } else if max > 0 && t.bitrate > max {
+    } else if max > 0 && bitrate > max {
         target("mp3").map(|x| (x, max))
     } else if offset > 0 {
         target(if format.is_empty() { "mp3" } else { &format }).map(|x| (x, if max > 0 { max } else { 320 }))
@@ -71,10 +86,7 @@ pub async fn stream(c: &Ctx, download: bool) -> Result<Reply, ApiError> {
         // would play as if it began at the offset
         transcode = target("mp3").map(|x| (x, if max > 0 { max } else { 320 }));
     }
-    match transcode {
-        None => serve_file(c, &path, &t, download).await,
-        Some((x, br)) => transcoded(c, &path, x, br.clamp(32, 512), offset).await,
-    }
+    transcode.map(|(x, br)| (x, br.clamp(32, 512)))
 }
 
 async fn serve_file(c: &Ctx, path: &Path, t: &items::TrackRow, download: bool) -> Result<Reply, ApiError> {
@@ -101,6 +113,100 @@ async fn serve_file(c: &Ctx, path: &Path, t: &items::TrackRow, download: bool) -
     Ok(Reply::Raw(axum::response::Response::from_parts(parts, Body::new(body))))
 }
 
+/// A name for a file or folder inside a zip: no slashes or characters Windows can't have, not empty.
+fn zip_name(s: &str) -> String {
+    let n: String = s.chars().map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect();
+    let n = n.trim().trim_end_matches('.').trim().to_string();
+    if n.is_empty() || n == ".." { "_".into() } else { n }
+}
+
+/// `download` of an album (or an artist: each album in its own folder): a zip of the original files, made as it's
+/// sent (stored, not compressed: music is compressed already), so nothing is built in memory or on disk.
+async fn zip_of(c: &Ctx, id: &str, artist: bool) -> Result<Reply, ApiError> {
+    let (cond, title) = if artist {
+        let a = items::artists_where(c, "ar.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Artist"))?;
+        ("al.artist_id = ?", a.name)
+    } else {
+        let a = items::albums_where(c, "al.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Album"))?;
+        ("t.album_id = ?", format!("{} - {}", a.artist_name, a.name))
+    };
+    let songs = items::tracks_where(c, cond, &[id], "ORDER BY al.year, al.sort_name, al.id, t.disc, t.number, t.sort_title").await?;
+    let discs: std::collections::HashMap<&str, i64> = songs.iter().fold(Default::default(), |mut m, t| {
+        let e = m.entry(t.album_id.as_str()).or_insert(0);
+        *e = (*e).max(t.disc.unwrap_or(1));
+        m
+    });
+    let mut files: Vec<(String, PathBuf, u64)> = vec![];
+    let mut taken = std::collections::HashSet::new();
+    let mut offline = false;
+    for t in &songs {
+        let path = match file_of(c, t) {
+            Ok(p) => p,
+            Err(e) => {
+                offline |= e.http == StatusCode::SERVICE_UNAVAILABLE;
+                continue;
+            }
+        };
+        let num = match (t.number, discs.get(t.album_id.as_str()).copied().unwrap_or(1) > 1) {
+            (Some(n), true) => format!("{}-{n:02} ", t.disc.unwrap_or(1)),
+            (Some(n), false) => format!("{n:02} "),
+            (None, _) => String::new(),
+        };
+        let folder = if artist { format!("{}/", zip_name(&t.album_name)) } else { String::new() };
+        let base = format!("{folder}{}", zip_name(&format!("{num}{}", t.title)));
+        let mut name = format!("{base}.{}", t.suffix);
+        for n in 2.. {
+            if taken.insert(name.to_lowercase()) {
+                break;
+            }
+            name = format!("{base} ({n}).{}", t.suffix);
+        }
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        files.push((name, path, size));
+    }
+    if files.is_empty() {
+        return Err(if offline { ApiError::offline() } else { ApiError::not_found("File") });
+    }
+
+    // written on a thread of its own into a small channel; the app hanging up ends it
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<axum::body::Bytes>>(8);
+    struct Pipe(tokio::sync::mpsc::Sender<std::io::Result<axum::body::Bytes>>);
+    impl std::io::Write for Pipe {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.blocking_send(Ok(axum::body::Bytes::copy_from_slice(b))).map_err(|_| std::io::Error::other("the app hung up"))?;
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    tokio::task::spawn_blocking(move || {
+        let err = tx.clone();
+        let run = || -> zip::result::ZipResult<()> {
+            let mut z = zip::ZipWriter::new_stream(std::io::BufWriter::with_capacity(256 * 1024, Pipe(tx)));
+            for (name, path, size) in files {
+                let opts = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+                    .large_file(size >= u32::MAX as u64);
+                z.start_file(name.as_str(), opts)?;
+                std::io::copy(&mut std::fs::File::open(&path)?, &mut z)?;
+            }
+            std::io::Write::flush(&mut z.finish()?)?;
+            Ok(())
+        };
+        if let Err(e) = run() {
+            // the zip breaks off (not a zip that looks whole without its last songs)
+            let _ = err.blocking_send(Err(std::io::Error::other(e.to_string())));
+        }
+    });
+    let body = Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|x| (x, rx)) }));
+    Ok(raw(
+        StatusCode::OK,
+        &[(header::CONTENT_TYPE, "application/zip".into()), (header::CONTENT_DISPOSITION, attachment(&format!("{}.zip", zip_name(&title))))],
+        body,
+    ))
+}
+
 /// Content-Disposition for saving as `name`: a plain ASCII name for old clients and the real one (RFC 6266
 /// filename*), so names in any language keep their letters. (A header can only hold ASCII: before, a name with
 /// "ö" or "日" made the header fail and the file was saved as "download.view".)
@@ -114,7 +220,9 @@ pub fn attachment(name: &str) -> String {
     format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{utf8}")
 }
 
-async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, offset: i64) -> Result<Reply, ApiError> {
+/// A file converted (see `conversion`), from the cache or as it's made.
+pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64) -> Result<Reply, ApiError> {
+    let offset = c.p.int("timeOffset").unwrap_or(0).max(0);
     let conv = crate::transcode::convert(&c.st.cfg, &c.st.transcode_slots, path, x, kbps, offset).await.map_err(|e| {
         let m = e.to_string();
         let http = if m.contains("busy") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::INTERNAL_SERVER_ERROR };

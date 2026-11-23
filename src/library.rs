@@ -34,7 +34,9 @@ pub fn content_type(suffix: &str) -> &'static str {
         "flac" => "audio/flac",
         "ogg" | "oga" => "audio/ogg",
         "opus" => "audio/ogg; codecs=opus",
-        "m4a" | "m4b" | "mp4" | "aac" | "alac" => "audio/mp4",
+        "m4a" | "m4b" | "mp4" | "alac" => "audio/mp4",
+        // raw AAC (ADTS), not in an MP4 box
+        "aac" => "audio/aac",
         "wav" => "audio/wav",
         "aif" | "aiff" => "audio/aiff",
         "ape" => "audio/x-ape",
