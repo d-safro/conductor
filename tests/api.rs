@@ -5136,10 +5136,17 @@ async fn settings_from_podium() {
     // a value Conductor can't take, a number that isn't, a setting that isn't one here
     assert_eq!(set("scan_interval_min", "soon".into()).await.status(), 400);
     assert_eq!(set("data_dir", "/tmp/x".into()).await.status(), 400);
+    // a Jam address that isn't one: refused (taken, it stopped the server from starting)
+    assert_eq!(set("jam_listen", "music.example.com".into()).await.status(), 400);
+    assert_eq!(set("jam_listen", "127.0.0.1:4599".into()).await.status(), 200);
+    // settings with a decimal point take one
+    assert_eq!(set("trial_hours", "1.5".into()).await.status(), 200);
+    assert_eq!(set("lidarr_match_ratio", "soon".into()).await.status(), 400);
     let file = s.st.cfg.data_dir.join("config.toml");
     let cfg = conductor::config::Config::load(Some(file.clone())).unwrap();
     assert_eq!((cfg.lyrics_online, cfg.scan_interval_min, cfg.discovery.clone()), (false, 30, vec!["weekly-jams".to_string(), "daily-jams".into()]));
     assert_eq!(cfg.lastfm_secret.as_deref(), Some("s3cr3t-value"));
+    assert_eq!((cfg.jam_listen.as_str(), cfg.trial_hours), ("127.0.0.1:4599", 1.5));
     // the secret is in secrets.toml, not config.toml, and never sent back
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cr3t"));
     assert!(std::fs::read_to_string(file.with_file_name("secrets.toml")).unwrap().contains("s3cr3t-value"));

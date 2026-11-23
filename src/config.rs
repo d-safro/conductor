@@ -643,13 +643,19 @@ impl Config {
         if !catalog_set && c.slskd_url.is_none() && c.lidarr_url.is_none() {
             c.catalog = false;
         }
+        // checked here and not only when the Jam listener starts: an address that isn't one stopped the whole server
+        // from starting, and Podium's Settings saved one as fine (it takes what this takes)
+        if !c.jam_listen.is_empty() && c.jam_listen.parse::<std::net::SocketAddr>().is_err() {
+            bail!("jam_listen: {:?} isn't an address with a port, like 127.0.0.1:4535 (or empty: no Jam listener)", c.jam_listen);
+        }
         Ok(c)
     }
 
     /// How many conversions may work at once: the setting, or half the cores (at least 2).
     pub fn transcode_slots(&self) -> usize {
         if self.transcode_slots > 0 {
-            return self.transcode_slots;
+            // (a huge number is taken as plenty: past this the slots couldn't be made and the server didn't start)
+            return self.transcode_slots.min(1024);
         }
         (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2) / 2).max(2)
     }
@@ -688,6 +694,14 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_huge_number_of_conversion_slots_still_starts() {
+        // Semaphore::new panics past ~2^61 permits: that was the server not starting
+        let cfg = super::Config { transcode_slots: 1 << 62, ..Default::default() };
+        let _ = crate::transcode::Slots::new(cfg.transcode_slots());
+        assert_eq!(super::Config { transcode_slots: 3, ..Default::default() }.transcode_slots(), 3);
+    }
+
     #[test]
     fn playlist_pictures_follow_the_data_folder() {
         let dir = tempfile::tempdir().unwrap();

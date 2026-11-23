@@ -721,6 +721,13 @@ async fn set_setting(State(st): State<Shared>, h: HeaderMap, Json(b): Json<SetSe
                 Some(x) => d.set(&s.name, x),
                 None => return bad("on or off"),
             },
+            // a setting whose default has a decimal point takes one too (trial_hours 1.5, lidarr_match_ratio 0.6)
+            "number" if s.default.contains('.') => {
+                match v.as_f64().or_else(|| v.as_str().and_then(|t| t.trim().parse().ok())).filter(|x: &f64| x.is_finite()) {
+                    Some(x) => d.set(&s.name, x),
+                    None => return bad("a number"),
+                }
+            }
             "number" => match v.as_i64().or_else(|| v.as_str().and_then(|t| t.trim().parse().ok())) {
                 Some(x) => d.set(&s.name, x),
                 None => return bad("a whole number"),
