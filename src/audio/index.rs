@@ -240,6 +240,39 @@ mod tests {
         assert_eq!(p.iter().collect::<HashSet<_>>().len(), 4, "each song once");
     }
 
+    /// How long building the index and a look take at 100,000 songs (docs/GUIDE.md).
+    /// `cargo test --release --lib hundred_thousand -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn hundred_thousand_songs() {
+        let mut seed = 1u32;
+        let mut r = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let songs: Vec<Song> = (0..100_000)
+            .map(|i| Song {
+                id: format!("{i:032x}"),
+                artist: format!("{:032x}", i / 12),
+                title: format!("Song number {i}"),
+                features: (0..DIMS).map(|d| if d == 0 { 60.0 + 120.0 * r() } else { r() }).collect(),
+            })
+            .collect();
+        let rss = || {
+            let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+            s.lines().find(|l| l.starts_with("VmRSS")).and_then(|l| l.split_whitespace().nth(1)?.parse::<i64>().ok()).unwrap_or(0)
+        };
+        let before = rss();
+        let t = std::time::Instant::now();
+        let ix = Index::build(songs, 6).unwrap();
+        let built = t.elapsed();
+        let t = std::time::Instant::now();
+        for i in 0..20 {
+            ix.nearest(i * 4999);
+        }
+        eprintln!("INDEX 100,000 songs: built in {built:?}, a song's nearest in {:?}; {} MB (with the songs read)", t.elapsed() / 20, (rss() - before) / 1024);
+    }
+
     #[test]
     fn same_song_is_found_through_brackets() {
         assert_eq!(same_song_key("a", "Song (Remastered 2011)"), same_song_key("a", "song"));

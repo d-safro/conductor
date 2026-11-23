@@ -339,3 +339,58 @@ async fn off_means_no_analysis_and_the_answers_as_before() {
     let off = Server::open(dir, |c| c.audio_analysis = false).await;
     assert_eq!(off.call("getSonicSimilarTracks", &[("id", &ids["Beat 0"])]).await["error"]["code"], 70);
 }
+
+/// What analysing costs (docs/GUIDE.md, "Small machines"): four-minute songs, decoding and the numbers timed apart.
+/// `cargo test --release --test audio_similarity cost -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn cost_of_analysing_a_song() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    // (CONDUCTOR_COST_DIR: the songs made there once and kept, to time them again under a CPU quota)
+    let dir = std::env::var_os("CONDUCTOR_COST_DIR").map(PathBuf::from).unwrap_or_else(|| dir.path().to_path_buf());
+    let cfg = Config::default();
+    let n = 8;
+    let mut files = vec![];
+    for v in 0..n {
+        let f = dir.join(format!("{v}.flac"));
+        if f.is_file() {
+            files.push(f);
+            continue;
+        }
+        // something like music: a beat, a low chord and a bright line, in stereo at 44.1 kHz, four minutes
+        let e = format!("({})*0.5+({})*0.6+({})*0.3", expr(Kind::Beat, v % 4), expr(Kind::Pad, v % 4), expr(Kind::Bright, v % 4));
+        let s = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("aevalsrc='{e}|{e}':s=44100:d=240")])
+            .arg(&f)
+            .status()
+            .unwrap();
+        assert!(s.success());
+        files.push(f);
+    }
+    let hwm = || {
+        let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        s.lines().find(|l| l.starts_with("VmHWM")).map(|l| l.split_whitespace().nth(1).unwrap_or("0").parse::<u64>().unwrap_or(0)).unwrap_or(0)
+    };
+    let before = hwm();
+    let (mut dec, mut dsp) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    for f in &files {
+        let t = std::time::Instant::now();
+        let x = audio::decode(&cfg, f, 240_000).await.unwrap_or_else(|_| panic!("decode"));
+        dec += t.elapsed();
+        let t = std::time::Instant::now();
+        let feats = audio::dsp::analyse(&x).unwrap();
+        dsp += t.elapsed();
+        assert!(feats.tempo > 0.0);
+    }
+    let each = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / n as f64;
+    eprintln!(
+        "COST a four-minute song: decoding a minute of it {:.0} ms, the numbers {:.0} ms, {:.0} ms in all; peak memory +{} KB",
+        each(dec),
+        each(dsp),
+        each(dec + dsp),
+        hwm().saturating_sub(before)
+    );
+}
