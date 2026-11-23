@@ -56,6 +56,8 @@ pub struct ScanStatus {
     /// how long the last scan took, and whether it re-read every file
     pub last_elapsed_ms: AtomicI64,
     pub last_full: AtomicBool,
+    /// woken when a scan starts, gets on (every 50 songs) or ends: the event streams' scan events
+    pub changed: tokio::sync::Notify,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
@@ -488,6 +490,7 @@ pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatu
     if status.scanning.swap(true, Ordering::SeqCst) {
         return Ok(ScanReport::default());
     }
+    status.changed.notify_waiters();
     if let Err(e) = normalize_genres(db).await {
         warn!("couldn't tidy genres: {e:#}");
     }
@@ -497,6 +500,7 @@ pub async fn scan(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanStatu
     status.last_full.store(full, Ordering::SeqCst);
     status.scanning.store(false, Ordering::SeqCst);
     status.last_scan.store(db::now(), Ordering::SeqCst);
+    status.changed.notify_waiters();
     if let Ok(rep) = &r {
         info!(?rep, "scan done");
     }
@@ -565,7 +569,9 @@ async fn scan_inner(db: &Db, libs: &[(i64, LibraryConfig)], status: &Arc<ScanSta
                 tx.commit().await?;
                 tx = db.begin().await?;
             }
-            status.count.fetch_add(1, Ordering::Relaxed);
+            if status.count.fetch_add(1, Ordering::Relaxed) % 50 == 49 {
+                status.changed.notify_waiters();
+            }
             let suffix = Path::new(&f.rel).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
             let id = ids.track(*lib_id, &f.rel);
             if known.contains_key(&f.rel) {

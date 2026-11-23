@@ -363,6 +363,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         }
     }
     let db = state.db.clone();
+    let streams = state.clone(); // (event streams never finish by themselves: closed when stopping)
     let app = api::router(state).layer(api::trace_layer());
     info!(%addr, "Conductor listening");
     // asked to stop: no new connections; the requests under way get STOP_GRACE to finish
@@ -370,6 +371,7 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let asked = async move {
         shutdown.await;
         info!("stopping");
+        streams.live.close_streams();
         let _ = stopping_tx.send(true);
     };
     let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(asked);
