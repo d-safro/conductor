@@ -21,6 +21,8 @@ What changed in each release, newest first. The full notes for each are on the
   hears.
 
 ### Fixed
+- **Security:** the `cookie` crate (Podium's sign-in cookie) is updated to 0.18.3 for RUSTSEC-2026-0594 (private
+  cookie nonces could repeat in a process that forks; Conductor doesn't, but the fix is in).
 - **searchRequestFiles on a read-only server** (and Podium's search) is refused at once with a clear message instead
   of searching Soulseek for files that couldn't be picked there.
 
