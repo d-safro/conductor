@@ -114,6 +114,9 @@ pub const MAX_ALL_STREAMS: usize = 2000;
 /// A keep-alive comment this often, so proxies (Caddy's default, nginx's 60 s) keep a quiet stream open.
 pub const KEEPALIVE: Duration = Duration::from_secs(20);
 
+/// How often the list of requests (`encore.requests`) is looked at for `requests` events while a stream is open.
+pub const REQUESTS_EVERY: Duration = Duration::from_secs(3);
+
 /// Who may see an event.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Audience {
@@ -197,6 +200,9 @@ pub struct Live {
     keepalive_ms: AtomicU64,
     /// the scan watcher (`crate::api::events`) is running
     pub scan_watch: AtomicBool,
+    /// the requests watcher (`crate::api::events`) is running
+    pub requests_watch: AtomicBool,
+    requests_every_ms: AtomicU64,
 }
 
 impl Default for Live {
@@ -210,6 +216,8 @@ impl Default for Live {
             boot: crate::db::random_id()[..8].to_string(),
             keepalive_ms: AtomicU64::new(KEEPALIVE.as_millis() as u64),
             scan_watch: AtomicBool::new(false),
+            requests_watch: AtomicBool::new(false),
+            requests_every_ms: AtomicU64::new(REQUESTS_EVERY.as_millis() as u64),
         }
     }
 }
@@ -298,6 +306,15 @@ impl Live {
     /// How often streams send a keep-alive (20 s; the tests make it shorter).
     pub fn set_keepalive(&self, d: Duration) {
         self.keepalive_ms.store(d.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    pub fn requests_every(&self) -> Duration {
+        Duration::from_millis(self.requests_every_ms.load(Ordering::Relaxed).max(10))
+    }
+
+    /// How often the requests are looked at for `requests` events (3 s; the tests make it shorter).
+    pub fn set_requests_every(&self, d: Duration) {
+        self.requests_every_ms.store(d.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Count a new event stream of `user`. A stream from the same device replaces the older one (a phone that

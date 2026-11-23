@@ -103,7 +103,7 @@ EXTENSIONS = {
     "encore.events": ("Live updates: one stream of server-sent events (`text/event-stream`) instead of long-polls "
                       "and timers. Each event is a small hint (what changed, not the thing itself): the app fetches it "
                       "with the calls it already has. Only what the signed-in account may see: its own devices, "
-                      "commands, sync, playlists and Jam; now playing and the scan, which everyone sees.",
+                      "commands, sync, playlists, Jam and requests; now playing and the scan, which everyone sees.",
                       [("eventStream", "GET (or a form POST, to keep the login out of the address). `id`: this "
                         "device's id (then `command` events are only its own, and the stream keeps it listed as "
                         "online, as devicePoll does). `lastEventId` or the `Last-Event-ID` header: resume after it.")],
@@ -115,7 +115,9 @@ EXTENSIONS = {
                       "`command` (`device`, `seq`: a command waits; take it with devicePoll), `jam` (a guest did "
                       "something or came: jamPoll), `sync` (`key`, `by`, `at`: syncGet), `nowPlaying` "
                       "(getNowPlaying), `scan` (`state` started / progress / finished, `scanning`, `count`), "
-                      "`playlist` (`id`, `deleted`: one of yours).\n"
+                      "`playlist` (`id`, `deleted`: one of yours), `requests` (what you asked for changed: a song "
+                      "found, its download's progress by 10%, arrived, kept; an admin hears of any change, Lidarr's "
+                      "albums too: getRequests; looked at every 3 s, so at most that often).\n"
                       "- A keep-alive comment (`: keep-alive`, with the newest `id:`) every 20 s, so proxies keep "
                       "the stream open. Behind Caddy nothing is needed (it doesn't hold back event streams); nginx "
                       "is told by `X-Accel-Buffering: no`.\n"
