@@ -22,6 +22,8 @@ What changed in each release, newest first. The full notes for each are on the
   restore …`, `setup`, `user add`, …) left the database and key owned by root, and the service, running as the
   conductor user, stopped with "attempt to write a readonly database". What a command run as root makes in a data
   folder that belongs to someone else is now given to that folder's owner.
+- **A podcast feed or cover of any size** was read into memory whole, and feeds are read again every 2 hours: a broken
+  or hostile feed could run the server out of memory. Feeds stop at 64 MB and covers at 16 MB.
 
 ## 1.0.0 (2026-11-22)
 

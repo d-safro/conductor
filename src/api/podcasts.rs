@@ -185,9 +185,31 @@ fn get(st: &AppState, url: &str) -> Result<reqwest::RequestBuilder> {
     Ok(b.build()?.get(url))
 }
 
+/// The most a feed is read (the biggest real ones are a few MB) and a cover. Feeds come from anyone and are read
+/// again every 2 hours: without a limit, a broken or hostile one was taken into memory whole, however big.
+const MAX_FEED: usize = 64 << 20;
+const MAX_COVER: usize = 16 << 20;
+
+async fn read_capped(r: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    let too_big = || anyhow!("too big (over {} MB)", max >> 20);
+    if r.content_length().is_some_and(|n| n > max as u64) {
+        return Err(too_big());
+    }
+    let mut out = Vec::new();
+    let mut body = r.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk?;
+        if out.len() + chunk.len() > max {
+            return Err(too_big());
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 async fn fetch_text(st: &AppState, url: &str) -> Result<String> {
     let r = get(st, url)?.timeout(Duration::from_secs(30)).send().await?.error_for_status()?;
-    Ok(r.text().await?)
+    Ok(String::from_utf8_lossy(&read_capped(r, MAX_FEED).await?).into_owned())
 }
 
 /// Save a feed: new episodes added, known ones updated.
@@ -764,7 +786,7 @@ pub async fn cover_bytes(st: &AppState, id: &str) -> Result<Option<Vec<u8>>> {
         return Ok(Some(b));
     }
     let r = get(st, &url)?.timeout(Duration::from_secs(20)).send().await?.error_for_status()?;
-    let b = r.bytes().await?.to_vec();
+    let b = read_capped(r, MAX_COVER).await?;
     if image::guess_format(&b).is_err() {
         bail!("not a picture");
     }

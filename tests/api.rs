@@ -569,6 +569,36 @@ async fn encore_extensions() {
 }
 
 #[tokio::test]
+async fn a_huge_podcast_feed_is_refused() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    // a "feed" far bigger than any real one (a broken or hostile server): it was read into memory whole, however
+    // big, at every refresh; now it stops at 64 MB
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+    })
+    .await;
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    let feed = format!(
+        "<?xml version=\"1.0\"?><rss><channel><title>Huge</title><!-- {} --></channel></rss>",
+        "x".repeat(70 << 20)
+    );
+    let feed = axum::body::Bytes::from(feed);
+    let app = axum::Router::new().route("/feed.xml", axum::routing::get(move || {
+        let f = feed.clone();
+        async move { f }
+    }));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    let r = s.call("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("too big"), "{r}");
+}
+
+#[tokio::test]
 async fn podcasts() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");
