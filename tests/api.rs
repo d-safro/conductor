@@ -5659,3 +5659,32 @@ async fn an_admin_can_list_another_users_playlists() {
     let r = as_ann("getPlaylists", "&username=ann").await;
     assert_eq!(names(&r), ["Ann's own"]);
 }
+
+#[tokio::test]
+async fn raw_aac_files_are_audio_aac() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let dir = c.data_dir.parent().unwrap().join("music/Delta/Raw");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, fmt) in [("01 Raw.aac", "adts"), ("02 Boxed.m4a", "ipod")] {
+            let ok = Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", "-f", fmt])
+                .arg(dir.join(name))
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+        }
+    })
+    .await;
+    let songs = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    for (suffix, ct) in [("aac", "audio/aac"), ("m4a", "audio/mp4")] {
+        let x = songs.iter().find(|x| x["suffix"] == suffix).unwrap_or_else(|| panic!("{suffix}: {songs:?}"));
+        assert_eq!(x["contentType"], ct, "{suffix}");
+        let r = s.http.get(s.url("stream", &[("id", x["id"].as_str().unwrap())])).send().await.unwrap();
+        assert_eq!((r.status().as_u16(), r.headers()["content-type"].to_str().unwrap()), (200, ct), "{suffix}");
+    }
+}

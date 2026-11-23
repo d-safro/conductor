@@ -20,6 +20,8 @@ What changed in each release, newest first. The full notes for each are on the
   conversion still plays whole.
 - **`getPlaylists?username=`** was ignored: an admin now gets that user's playlists, as the Subsonic spec says, and
   anyone else asking for another user's gets an error (code 50).
+- **Raw `.aac` files** were labelled `audio/mp4` (that's `.m4a`), so apps and players that go by the type could
+  refuse them. They're `audio/aac` now, songs scanned before included; `.m4a` and `.mp4` stay `audio/mp4`.
 
 ## 1.0.0 (2026-11-22)
 
