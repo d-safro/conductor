@@ -193,10 +193,39 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
             std::fs::create_dir_all(d)?;
         }
         let mut f = if name == "secret.key" || name == "secrets.toml" { private_file(&to)? } else { std::fs::File::create(&to)? };
-        std::io::copy(&mut e, &mut f).with_context(|| format!("writing {}", to.display()))?;
+        if name == "config.toml" {
+            let mut text = String::new();
+            e.read_to_string(&mut text).context("reading the backup's config.toml")?;
+            f.write_all(with_data_dir(&text, &cfg.data_dir).as_bytes()).with_context(|| format!("writing {}", to.display()))?;
+        } else {
+            std::io::copy(&mut e, &mut f).with_context(|| format!("writing {}", to.display()))?;
+        }
         out.files.push(name);
     }
     Ok(out)
+}
+
+/// The backup's config.toml with its `data_dir` pointing where the data is restored to. It named the folder of the
+/// computer the backup was made on (another user's home, C:\ProgramData…): kept, the next start looked there and the
+/// database just restored went unused. The rest stays as it was, comments too.
+fn with_data_dir(text: &str, data_dir: &Path) -> String {
+    let quoted = toml::Value::String(data_dir.to_string_lossy().to_string()).to_string();
+    let mut out = String::new();
+    let mut top = true; // before the first [table]: where data_dir is
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[') {
+            top = false;
+        }
+        let key = t.strip_prefix("data_dir").map(str::trim_start);
+        if top && key.is_some_and(|k| k.starts_with('=')) {
+            let end = &line[line.trim_end_matches(['\r', '\n']).len()..]; // its line ending, as it was
+            out += &format!("data_dir = {quoted}{end}");
+        } else {
+            out += line;
+        }
+    }
+    out
 }
 
 /// A rename, tried for a few seconds: on Windows a file another program just let go of (or a virus scanner is

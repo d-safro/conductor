@@ -130,7 +130,8 @@ consistent copy of the database, `secret.key` (without it the saved passwords ca
 playlist pictures; not the music and not the cache. **The zip holds secrets: keep copies somewhere private.**
 
 `conductor backup [FILE]` makes one now. To bring one back, stop Conductor, then `conductor restore FILE` (add
-`--force` over an existing library; what was there is moved to `before-restore-<time>/`, never deleted).
+`--force` over an existing library; what was there is moved to `before-restore-<time>/`, never deleted). On another
+computer, the restored settings' `data_dir` is set to where the data was restored; check the music folders in them.
 
 ## Moving from Navidrome
 

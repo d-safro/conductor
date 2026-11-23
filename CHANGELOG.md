@@ -37,6 +37,9 @@ What changed in each release, newest first. The full notes for each are on the
   AGPL-3.0-or-later now, as the project does (it said AGPL-3.0-only).
 - **Upgrading the Arch package** left the old version running: pacman runs the install script only on a first
   install. An upgrade now restarts a running service, as the .deb and .rpm do.
+- **A backup restored on another computer** brought back the old computer's `data_dir` in config.toml (another
+  user's home, or `C:\ProgramData\conductor`): the next start looked there and the database just restored went
+  unused. The restored config.toml now names the folder it was restored into.
 
 ## 1.0.0 (2026-11-22)
 

@@ -4021,6 +4021,33 @@ async fn restore_keeps_the_settings_a_backup_has_none_of() {
 }
 
 #[tokio::test]
+async fn a_restore_on_another_computer_uses_the_data_it_restored() {
+    // the backup's config.toml names the old computer's data folder (another user's home, or C:\ProgramData on
+    // Windows): restored as it was, the next start looked there, and the database just restored went unused
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("old");
+    std::fs::create_dir_all(&old).unwrap();
+    let old_config = old.join("config.toml");
+    std::fs::write(&old_config, format!("# mine\ndata_dir = {:?}\nlisten = \"0.0.0.0:4533\"\n\n[[libraries]]\nname = \"Music\"\npath = \"/music\"\n", old.to_str().unwrap()))
+        .unwrap();
+    let from = Config::load(Some(old_config)).unwrap();
+    let pool = db::open(&from.data_dir.join("conductor.db")).await.unwrap();
+    let out = tmp.path().join("b.zip");
+    conductor::backup::make(&from, &pool, &out).await.unwrap();
+    pool.close().await;
+
+    let new = tmp.path().join("new place");
+    let config = new.join("config.toml");
+    let cfg = Config { data_dir: new.clone(), config_path: Some(config.clone()), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    conductor::backup::restore(&cfg, &out, false).unwrap();
+    let back = Config::load(Some(config.clone())).unwrap();
+    assert_eq!(back.data_dir, new, "{}", std::fs::read_to_string(&config).unwrap());
+    assert!(back.data_dir.join("conductor.db").is_file());
+    assert_eq!(back.libraries.len(), 1, "the rest of the settings came back as they were");
+    assert!(std::fs::read_to_string(&config).unwrap().starts_with("# mine"));
+}
+
+#[tokio::test]
 async fn whole_library_paging_gets_each_song_once() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");
