@@ -7,9 +7,10 @@ start: your data, settings, the API and Conductor's own extensions keep working 
 1. ~~**Specs for Conductor's own API extensions.**~~ Done: a spec per `encore.*` extension in [api/](api/) (calls,
    parameters, every field of the answer), and the recorded shape of every call's answer (117 calls), checked by the
    tests and by CI, so a change can add fields but never drop or change one.
-2. **Other apps, for real.** Used against a real server, one by one, and fixed for what they trip over: Symfonium,
-   Tempo, Ultrasonic / DSub, Substreamer (Android); Feishin and Supersonic (desktop); Airsonic-refix (web); Amperfy
-   and play:Sub (iPhone). Until now only Encore, Feishin's web version and scripted calls have been.
+2. **Other apps, for real.** Used against a real server, one by one, and fixed for what they trip over. Done so far:
+   Tempus and Ultrasonic (Android: browse, search, stream with seeking, star, rate, scrobble, lyrics, podcasts,
+   radio, shares, bookmarks; no errors), Encore, Feishin's web version. Still to try: Symfonium, Substreamer;
+   Feishin and Supersonic (desktop); Airsonic-refix (web); Amperfy and play:Sub (iPhone).
 3. **Windows on a real PC.** Installed with `install.ps1` as a service, reached from a phone through the firewall,
    with the music on a USB drive (the drive guard). CI covers the tests and the service install, not a real machine.
 4. **A release candidate run.** 1.0-rc on a real home server for a couple of weeks: memory, errors, scans and the

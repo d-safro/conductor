@@ -339,6 +339,10 @@ async fn handle(State(st): State<Shared>, Path(method): Path<String>, req: Reque
     }
     let ctx = Ctx { st, user, p, headers, client, body };
     let r = dispatch(&ctx, &method).await;
+    if let Err(e) = &r {
+        // which call an app got an error from, and why (RUST_LOG=debug), for finding what an app trips over
+        tracing::debug!(method = %method, client = %ctx.client, code = e.code, "answered with an error: {}", e.message);
+    }
     render(fmt, r)
 }
 
