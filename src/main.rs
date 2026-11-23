@@ -52,7 +52,7 @@ conductor import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to
 conductor service install|uninstall|start|stop   (Windows)
 ";
 
-/// Stops the server when it completes (Ctrl+C, or the Windows service being stopped).
+/// Stops the server when it completes (Ctrl+C, SIGTERM, or the Windows service being stopped).
 pub type Shutdown = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub fn init_logs(file: Option<std::fs::File>) {
@@ -80,14 +80,32 @@ fn main() -> Result<()> {
     }
     init_logs(None);
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run(
-        args,
-        config_path,
-        Box::pin(async {
-            let _ = tokio::signal::ctrl_c().await;
-        }),
-    ))
+    let res = rt.block_on(run(args, config_path, Box::pin(stop_asked())));
+    // what's still running (a request past its time, a scan's file reads) isn't waited for long
+    rt.shutdown_timeout(Duration::from_secs(1));
+    res
 }
+
+/// Ctrl+C, or SIGTERM: what systemd, `docker stop` and `kill` send. Both stop the server the same way (before, SIGTERM
+/// killed it at once, in the middle of whatever it was doing).
+async fn stop_asked() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+/// How long requests under way (a song playing, a download) get to finish once Conductor is asked to stop. `docker
+/// stop` waits 10 s before it kills; this, then closing the database, fits in that.
+const STOP_GRACE: Duration = Duration::from_secs(4);
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -271,28 +289,29 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     conductor::import::jobs::recover(&state).await;
-    tokio::spawn(scan_loop(state.clone()));
+    // the background workers, stopped when Conductor is
+    let mut workers = vec![tokio::spawn(scan_loop(state.clone()))];
     conductor::jam::load(&state).await;
-    tokio::spawn(conductor::api::podcasts::worker(state.clone()));
-    tokio::spawn(conductor::catalog::acquire::worker(state.clone()));
-    tokio::spawn(conductor::online::worker(state.clone()));
-    tokio::spawn(conductor::vpn::worker(state.clone()));
-    tokio::spawn(conductor::listenbrainz::worker(state.clone()));
-    tokio::spawn(conductor::scrobble::worker(state.clone()));
+    workers.push(tokio::spawn(conductor::api::podcasts::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::catalog::acquire::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::online::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::vpn::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::listenbrainz::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::scrobble::worker(state.clone())));
     conductor::transcode::clean_parts(&state.cfg);
-    tokio::spawn(conductor::spotify::worker(state.clone()));
-    tokio::spawn(conductor::concerts::worker(state.clone()));
-    tokio::spawn(conductor::mixes::worker(state.clone()));
-    tokio::spawn(conductor::loudness::worker(state.clone()));
-    tokio::spawn(conductor::backup::worker(state.cfg.clone(), state.db.clone()));
+    workers.push(tokio::spawn(conductor::spotify::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::concerts::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::mixes::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::loudness::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::backup::worker(state.cfg.clone(), state.db.clone())));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();
-        tokio::spawn(async move {
+        workers.push(tokio::spawn(async move {
             if let Err(e) = conductor::jam::serve(st, jam_addr).await {
                 warn!("Jam guest page: {e:#}");
             }
-        });
+        }));
     }
 
     let admins: i64 = auth::admin_count(&state.db).await.unwrap_or(1);
@@ -302,11 +321,43 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
         info!("No admin yet. Make the first admin at {link} (or run `conductor setup` here)");
         println!("No admin yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
     }
+    let db = state.db.clone();
     let app = api::router(state).layer(api::trace_layer());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
     info!(%addr, "Conductor listening");
-    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(shutdown).await?;
-    Ok(())
+    // asked to stop: no new connections; the requests under way get STOP_GRACE to finish
+    let (stopping_tx, mut stopping) = tokio::sync::watch::channel(false);
+    let asked = async move {
+        shutdown.await;
+        info!("stopping");
+        let _ = stopping_tx.send(true);
+    };
+    let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(asked);
+    let res = tokio::select! {
+        r = std::future::IntoFuture::into_future(server) => r.map_err(anyhow::Error::from),
+        _ = async {
+            if stopping.wait_for(|s| *s).await.is_err() {
+                std::future::pending::<()>().await; // (the server ended by itself: the branch above)
+            }
+            tokio::time::sleep(STOP_GRACE).await;
+        } => {
+            warn!("requests still under way after {} s were cut off", STOP_GRACE.as_secs());
+            Ok(())
+        }
+    };
+    for w in &workers {
+        w.abort();
+    }
+    // everything written goes into conductor.db itself, and the database is closed
+    let close = async {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&db).await;
+        db.close().await;
+    };
+    if tokio::time::timeout(Duration::from_secs(3), close).await.is_err() {
+        warn!("the database took too long to close (it's checked when Conductor starts again)");
+    }
+    info!("Conductor stopped");
+    res
 }
 
 /// Scan at start, then on a timer. A music folder that comes back (drive reconnected) is scanned at once.

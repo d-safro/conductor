@@ -43,6 +43,10 @@ What changed in each release, newest first. The full notes for each are on the
 - **Recording the API contract** (`CONDUCTOR_BLESS=1`) with only some tests running wrote each answer's shape from
   just those tests, so `search3.json` lost fields. Recording now only adds fields; one a whole run never sees is
   listed in `target/tmp/contract-unseen/`, and CI fails on it.
+- **Stopping with systemd or `docker stop`** (SIGTERM) killed Conductor at once, in the middle of whatever it was
+  doing; only Ctrl-C stopped it cleanly. Both now stop it the same way, as does stopping the Windows service: it
+  stops taking new connections, gives songs playing and other requests under way a few seconds to finish, stops its
+  background work and closes the database.
 
 ## 1.0.0 (2026-11-22)
 

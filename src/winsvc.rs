@@ -157,13 +157,16 @@ fn run_service(config: Option<PathBuf>) -> Result<()> {
     let handle = service_control_handler::register(NAME, handler)?;
     handle.set_service_status(status(ServiceState::Running))?;
     let rt = tokio::runtime::Runtime::new()?;
+    // stopped as from a terminal (Ctrl+C, SIGTERM): requests under way finish, the workers stop, the database closes
     let res = rt.block_on(crate::run(
         vec![],
         config,
         Box::pin(async move {
             let _ = rx.await;
+            let _ = handle.set_service_status(status(ServiceState::StopPending));
         }),
     ));
+    rt.shutdown_timeout(Duration::from_secs(1));
     handle.set_service_status(status(ServiceState::Stopped))?;
     res
 }
