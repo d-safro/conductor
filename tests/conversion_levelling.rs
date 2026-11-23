@@ -189,6 +189,12 @@ fn rand_name() -> String {
     format!("{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Two mp3s of the same conversion: the one sent as it was made has the header ffmpeg fills in at the end (its
+/// length, a seek table) still blank; the rest is the same.
+fn same_song(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.len() > 4096 && a[4096..] == b[4096..]
+}
+
 fn near(got: f64, want: f64, by: f64, what: &str) {
     assert!((got - want).abs() <= by, "{what}: {got:.2} is not within {by} of {want:.2}");
 }
@@ -316,10 +322,10 @@ async fn the_cache_keeps_levelled_and_unlevelled_copies_apart() {
     // each again from the cache, each as it was
     let again = s.mp3("my car stereo", "Loud").await;
     assert_eq!((again.header("x-transcode-cache"), again.header("x-levelled")), (Some("hit"), levelled.header("x-levelled")));
-    assert_eq!(again.body, levelled.body);
+    assert!(same_song(&again.body, &levelled.body), "the copy from the cache is the one sent as it was made");
     let again = s.mp3("test", "Loud").await;
     assert_eq!((again.header("x-transcode-cache"), again.header("x-levelled")), (Some("hit"), None));
-    assert_eq!(again.body, plain.body);
+    assert!(same_song(&again.body, &plain.body), "the copy from the cache is the one sent as it was made");
     assert_eq!(s.cached().len(), 2);
 
     near(s.measure(&levelled.body).await.loudness, loudness::REFERENCE_LUFS, 1.0, "the levelled copy");

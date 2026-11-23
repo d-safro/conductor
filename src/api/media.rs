@@ -282,7 +282,7 @@ pub(super) async fn transcoded(c: &Ctx, path: &Path, x: Transcode, kbps: i64, le
             parts.headers.insert(header::HeaderName::from_static("x-transcode-cache"), header::HeaderValue::from_static(if before { "hit" } else { "miss" }));
             return Ok(Reply::Raw(axum::response::Response::from_parts(parts, Body::new(body))));
         }
-        Converted::Growing(f, state) => Body::from_stream(crate::transcode::follow(f, state)),
+        Converted::Growing(f, state, l) => Body::from_stream(crate::transcode::follow(f, state, l)),
         Converted::Piped(out, first) => {
             let rest = tokio_util::io::ReaderStream::with_capacity(out, 64 * 1024);
             Body::from_stream(futures_util::StreamExt::chain(
