@@ -150,7 +150,9 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
                 st2.store(DONE, Ordering::SeqCst);
                 trim(&cache, limit);
             } else {
-                st2.store(if filled { DONE } else { FAILED }, Ordering::SeqCst);
+                // ffmpeg stopped part way (killed, the disk full): the app is told the song broke off, rather than
+                // sent its first half as if that were all of it
+                st2.store(if ok && filled { DONE } else { FAILED }, Ordering::SeqCst);
                 let _ = std::fs::remove_file(&part2);
             }
         });
@@ -209,6 +211,10 @@ pub fn follow(f: tokio::fs::File, state: Arc<AtomicU8>) -> impl futures_util::St
                             buf.truncate(n);
                             Some((Ok(axum::body::Bytes::from(buf)), Some((f, state))))
                         }
+                        // it failed part way: the answer breaks off (not a song that "ends" early)
+                        _ if state.load(Ordering::SeqCst) == FAILED => {
+                            Some((Err(std::io::Error::other("the conversion failed part way")), None))
+                        }
                         _ => None,
                     };
                 }
@@ -263,6 +269,21 @@ pub fn clean_parts(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_conversion_that_fails_part_way_breaks_off() {
+        use futures_util::StreamExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.mp3.abc.part");
+        std::fs::write(&p, b"half a song").unwrap();
+        for (state, broke_off) in [(DONE, false), (FAILED, true)] {
+            let f = tokio::fs::File::open(&p).await.unwrap();
+            let got: Vec<_> = follow(f, Arc::new(AtomicU8::new(state))).collect().await;
+            assert_eq!(got[0].as_ref().unwrap().as_ref(), b"half a song");
+            assert_eq!(got.len(), if broke_off { 2 } else { 1 });
+            assert_eq!(got.last().unwrap().is_err(), broke_off);
+        }
+    }
 
     #[test]
     fn the_cache_is_trimmed_least_recently_used_first() {
