@@ -52,14 +52,43 @@ let songs = [], cur = -1;
 const NO_COVER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 document.addEventListener('error', e => { if (e.target instanceof HTMLImageElement && e.target.src !== NO_COVER) e.target.src = NO_COVER }, true);
 const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+// sound levelling: each song at the same loudness, from its ReplayGain (tags, or measured by Conductor), never past
+// what its peak allows. Through Web Audio once the page is touched (a quiet song is turned up too); before that, only
+// ever quieter.
+const au = $('audio');
+let actx = null, gainNode = null;
+function levelFactor(s) {
+  const rg = s && s.replayGain || {}, num = x => typeof x === 'number' && isFinite(x);
+  const g = num(rg.trackGain) ? rg.trackGain : rg.albumGain;
+  if (!num(g)) return 1;
+  const peak = num(rg.trackPeak) && rg.trackPeak > 0 ? rg.trackPeak : num(rg.albumPeak) && rg.albumPeak > 0 ? rg.albumPeak : 0;
+  return Math.min(10 ** (g / 20), peak ? 1 / peak : 1);
+}
+function applyLevel() {
+  const f = levelFactor(songs[cur]);
+  if (gainNode) gainNode.gain.value = f; else au.volume = Math.min(1, f);
+}
+function startAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (actx || !AC) return;
+  try {
+    const c = new AC(), g = c.createGain();
+    c.createMediaElementSource(au).connect(g).connect(c.destination);
+    actx = c; gainNode = g; au.volume = 1; applyLevel();
+  } catch { actx = gainNode = null }
+}
+document.addEventListener('pointerdown', startAudio, true);
+document.addEventListener('keydown', startAudio, true);
+au.addEventListener('play', () => { if (actx && actx.state !== 'running') actx.resume().catch(() => {}) });
 function play(i) {
   if (i < 0 || i >= songs.length) return;
   cur = i;
   const s = songs[i];
   $('nt').textContent = s.title; $('na').textContent = s.artist + (s.album ? ' · ' + s.album : '');
   $('ncover').src = base + '/cover/' + s.n + '?s=300';
-  $('audio').src = base + '/stream/' + s.n;
-  $('audio').play().catch(() => {});
+  au.src = base + '/stream/' + s.n;
+  applyLevel();
+  au.play().catch(() => {});
   document.querySelectorAll('.row').forEach((r, k) => r.classList.toggle('on', k === i));
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({ title: s.title, artist: s.artist, album: s.album,
@@ -85,7 +114,7 @@ fetch(base + '/state').then(r => r.ok ? r.json() : Promise.reject(r.status)).the
     list.append(row);
   });
   $('list').classList.remove('hide'); $('player').classList.remove('hide');
-  if (songs.length) { cur = 0; $('nt').textContent = songs[0].title; $('na').textContent = songs[0].artist; $('ncover').src = base + '/cover/' + songs[0].n + '?s=300'; $('audio').src = base + '/stream/' + songs[0].n; }
+  if (songs.length) { cur = 0; $('nt').textContent = songs[0].title; $('na').textContent = songs[0].artist; $('ncover').src = base + '/cover/' + songs[0].n + '?s=300'; $('audio').src = base + '/stream/' + songs[0].n; applyLevel(); }
 }).catch(() => { $('ended').classList.remove('hide'); $('by').textContent = ''; });
 </script>
 </body>

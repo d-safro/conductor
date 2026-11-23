@@ -116,6 +116,7 @@
   <symbol id="i-add" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
   <symbol id="i-next-up" viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm13 0v6l5-3z"/></symbol>
   <symbol id="i-queue" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h12v2H3z"/></symbol>
+  <symbol id="i-level" viewBox="0 0 24 24"><path d="M3 10h2v4H3zm4-3h2v10H7zm4-4h2v18h-2zm4 4h2v10h-2zm4 3h2v4h-2z"/></symbol>
   <symbol id="i-vol" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/></symbol>
 </svg>
@@ -163,6 +164,7 @@
     </div>
     <div class="side">
       <a class="icon" href="#/queue" title="Queue"><svg><use href="#i-queue"/></svg></a>
+      <button class="icon" id="level" type="button" title="Sound levelling: on"><svg><use href="#i-level"/></svg></button>
       <svg style="color:var(--dim)"><use href="#i-vol"/></svg>
       <input type="range" id="vol" min="0" max="1" step="0.01" value="1" aria-label="Volume">
     </div>
@@ -386,6 +388,46 @@ function toast(msg) {
 // ---- queue and playback
 const au = $('au');
 let Q = [], I = -1, orig = null, shuffle = false, repeat = 0, played = 0, lastT = 0, scrobbled = false;
+
+// ---- sound levelling: every song at the same loudness, from its ReplayGain (the file's tags, or what Conductor
+// measured), never past what the song's peak allows (nothing clips). Through Web Audio (a gain, so a quiet song is
+// turned up too), set up on the first click or key (browsers start sound only after one); before that, or without
+// Web Audio, only ever quieter, through the volume.
+const LKEY = 'recital-level';
+let levelOn = store.get(LKEY) !== false, vol = 1, actx = null, gainNode = null;
+function levelFactor(s) {
+  const rg = s && s.replayGain;
+  if (!levelOn || !rg) return 1;
+  // an album played in order: the album's gain (its quiet songs stay quieter than its loud ones); else the song's
+  const inOrder = !shuffle && s.albumId && [Q[I - 1], Q[I + 1]].some(o => o && o.albumId === s.albumId);
+  const num = x => typeof x === 'number' && isFinite(x);
+  const g = inOrder && num(rg.albumGain) ? rg.albumGain : num(rg.trackGain) ? rg.trackGain : rg.albumGain;
+  if (!num(g)) return 1;
+  const peak = num(rg.trackPeak) && rg.trackPeak > 0 ? rg.trackPeak : num(rg.albumPeak) && rg.albumPeak > 0 ? rg.albumPeak : 0;
+  return Math.min(10 ** (g / 20), peak ? 1 / peak : 1); // no peak known: never louder than it is
+}
+function applyLevel() {
+  const f = levelFactor(Q[I]);
+  if (gainNode) { au.volume = 1; gainNode.gain.value = vol * f }
+  else au.volume = Math.min(1, vol * Math.min(1, f));
+}
+function startAudio() {
+  if (actx || !levelOn) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    const c = new AC(), g = c.createGain();
+    c.createMediaElementSource(au).connect(g).connect(c.destination);
+    actx = c; gainNode = g; applyLevel();
+  } catch { actx = gainNode = null }
+}
+document.addEventListener('pointerdown', startAudio, true);
+document.addEventListener('keydown', startAudio, true);
+au.addEventListener('play', () => { if (actx && actx.state !== 'running') actx.resume().catch(() => {}) });
+function setVol(v) { vol = Math.max(0, Math.min(1, v)); $('vol').value = vol; applyLevel() }
+function showLevel() { $('level').classList.toggle('on', levelOn); $('level').title = 'Sound levelling: ' + (levelOn ? 'on' : 'off') }
+$('level').onclick = () => { levelOn = !levelOn; store.set(LKEY, levelOn); showLevel(); startAudio(); applyLevel() };
+showLevel();
 const NATIVE = /^(mp3|flac|ogg|oga|opus|m4a|mp4|aac|wav|webm)$/i;
 const copy = list => list.filter(Boolean).map(s => ({ ...s }));
 
@@ -423,6 +465,7 @@ function setShuffle(on) {
   if (on) { orig = Q.slice(); if (I >= 0) shuffleUpcoming() }
   else if (orig) { const cur = Q[I]; Q = orig; I = Q.indexOf(cur); orig = null }
   $('shuffle').classList.toggle('on', on);
+  applyLevel(); // (an album in order is levelled as an album)
   save();
 }
 function setRepeat(r) {
@@ -439,6 +482,7 @@ function load(play, at = 0) {
   const p = { id: s.id };
   if (s.suffix && !NATIVE.test(s.suffix)) { p.format = 'mp3'; p.maxBitRate = 320 }
   au.src = url('stream', p);
+  applyLevel();
   if (at) au.addEventListener('loadedmetadata', () => { au.currentTime = at }, { once: true });
   played = 0; lastT = at; scrobbled = false;
   if (play) au.play().catch(() => {});
@@ -540,7 +584,7 @@ function position(force) {
 }
 $('pos').oninput = () => { dragging = true; $('cur').textContent = fmt($('pos').value / 1000 * dur()) };
 $('pos').onchange = () => { dragging = false; if (Q[I]) au.currentTime = $('pos').value / 1000 * dur() };
-$('vol').oninput = () => { au.volume = +$('vol').value; store.set(VKEY, au.volume) };
+$('vol').oninput = () => { setVol(+$('vol').value); store.set(VKEY, vol) };
 $('play').onclick = toggle;
 $('next').onclick = () => next(false);
 $('prev').onclick = prev;
@@ -565,7 +609,7 @@ document.addEventListener('keydown', e => {
   const k = e.key;
   if (k === ' ') { if (e.target.closest('button, a')) return; toggle() }
   else if (k === 'ArrowLeft' || k === 'ArrowRight') { if (!Q[I]) return; au.currentTime = Math.max(0, Math.min(dur(), au.currentTime + (k === 'ArrowLeft' ? -10 : 10))) }
-  else if (k === 'ArrowUp' || k === 'ArrowDown') { au.volume = Math.max(0, Math.min(1, au.volume + (k === 'ArrowUp' ? 0.05 : -0.05))); $('vol').value = au.volume; store.set(VKEY, au.volume) }
+  else if (k === 'ArrowUp' || k === 'ArrowDown') { setVol(vol + (k === 'ArrowUp' ? 0.05 : -0.05)); store.set(VKEY, vol) }
   else return;
   e.preventDefault();
 });
@@ -574,7 +618,7 @@ addEventListener('pagehide', () => { if (S) save() });
 function start() {
   $('login').classList.add('hide'); $('app').classList.remove('hide');
   const v = store.get(VKEY);
-  if (typeof v === 'number') { au.volume = v; $('vol').value = v }
+  if (typeof v === 'number') setVol(v);
   const saved = store.get(QKEY);
   if (saved && Array.isArray(saved.q)) {
     Q = saved.q; I = Math.min(saved.i, Q.length - 1);
