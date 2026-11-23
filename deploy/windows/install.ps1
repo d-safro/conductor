@@ -50,8 +50,20 @@ icacls $data /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(C
 if ($LASTEXITCODE -ne 0) { throw "couldn't make $data private" }
 if (Get-ChildItem -Force $data) { icacls "$data\*" /reset /T /C /Q | Out-Null }
 $svc = Get-Service -Name Conductor -ErrorAction SilentlyContinue
-if ($svc) { & (Join-Path $dir "conductor.exe") service stop 2>$null; Start-Sleep 2 }
-Copy-Item (Join-Path $here "conductor.exe") $dir -Force
+# An upgrade: the service is stopped and waited for (Stop-Service returns once it has stopped), and only if it runs.
+# Before, `conductor service stop` was asked and two seconds given: one slower to stop kept conductor.exe locked, the
+# copy below failed and the service was left stopped, with nothing to start it again (and one already stopped made
+# `service stop` fail, which Windows PowerShell can stop the script on).
+if ($svc -and $svc.Status -ne 'Stopped') { Stop-Service -Name Conductor -Force }
+try {
+  for ($i = 0; ; $i++) {
+    # the program can stay locked for a moment after the service stops
+    try { Copy-Item (Join-Path $here "conductor.exe") $dir -Force; break } catch { if ($i -ge 15) { throw }; Start-Sleep 1 }
+  }
+} catch {
+  if ($svc) { Start-Service -Name Conductor -ErrorAction SilentlyContinue } # the version that was there, running again
+  throw
+}
 if (Test-Path (Join-Path $here "ffmpeg.exe")) { Copy-Item (Join-Path $here "ffmpeg.exe") $dir -Force }
 $cfg = Join-Path $data "config.toml"
 if (-not (Test-Path $cfg)) {

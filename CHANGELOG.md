@@ -34,6 +34,46 @@ What changed in each release, newest first. The full notes for each are on the
 - **Docs**: the settings reference (also Podium's Settings help) described `deezer_url`, `info_lang`, `wikidata_url`,
   `musicbrainz_url` and `coverart_url` with another setting's text; the `encore.*` specs left out the JSON parameters
   (`state`, `command`, `value`, `login`); FEATURES.md now says `musicFolderId` isn't used (every call covers all folders).
+- **Setting up the Linux package's service** (`sudo -u conductor conductor --config /var/lib/conductor/config.toml
+  setup`) put the database in the conductor user's `~/.local/share/conductor`, while the service reads
+  `/var/lib/conductor`: the admin made in setup wasn't there and couldn't sign in. A new settings file given with
+  `--config` now keeps its data beside it (an existing one keeps what it has). If you set it up this way with 1.0.0,
+  stop the service, move the files from `/var/lib/conductor/.local/share/conductor` into `/var/lib/conductor`, and
+  set `data_dir = "/var/lib/conductor"` in its config.toml.
+- **A backup from 1.0.0-rc.1** was refused by 1.0.0 as "newer than this one": the prerelease was read as 1.0.0.1.
+  A prerelease now comes before its release when a backup's version is checked.
+- **`conductor restore --force`** of a backup without settings in it (a server set up with environment settings only,
+  as in Docker) moved the config.toml in use aside and put nothing back: the server came up without its music
+  folders. The settings in use are now only replaced by the backup's own.
+- **Commands run with sudo on the Linux package's data** (`sudo conductor --config /var/lib/conductor/config.toml
+  restore …`, `setup`, `user add`, …) left the database and key owned by root, and the service, running as the
+  conductor user, stopped with "attempt to write a readonly database". What a command run as root makes in a data
+  folder that belongs to someone else is now given to that folder's owner.
+- **A podcast feed or cover of any size** was read into memory whole, and feeds are read again every 2 hours: a broken
+  or hostile feed could run the server out of memory. Feeds stop at 64 MB and covers at 16 MB.
+  An episode saved on the server stops at 8 GB (a live stream as an episode filled the disk for an hour), and a
+  download that fails no longer leaves its `.part` file behind.
+- **Upgrading on Windows with install.ps1** gave the service two seconds to stop before replacing conductor.exe; one
+  slower to stop kept the file locked, the copy failed, and the service was left stopped. It now waits for the
+  service to stop (only if it runs), tries the copy again for a while, and starts the old version again if it
+  still can't.
+- **A Soulseek file name with `..` in it** (the name is the peer's) made Conductor look for the finished download
+  beside the downloads folder instead of in it, and move a file of that name from there into the music folder.
+- **`conductor setup` without a terminal** (`< /dev/null`, a script, a service) asked for the admin's password (or a
+  music folder) forever, writing hundreds of MB a second. When its input ends it now stops and points to `--yes`.
+- **The Docker image's health check** always asked port 4533: with `-e CONDUCTOR_LISTEN=0.0.0.0:8080` the container
+  was "unhealthy" for good. It now asks the port in `CONDUCTOR_LISTEN`. The image's license label also says
+  AGPL-3.0-or-later now, as the project does (it said AGPL-3.0-only).
+- **Upgrading the Arch package** left the old version running: pacman runs the install script only on a first
+  install. An upgrade now restarts a running service, as the .deb and .rpm do.
+- **A restore where only the database's journal was left** (`conductor.db-wal` without `conductor.db`, deleted by
+  hand) kept that journal, which SQLite would play into the restored database it doesn't belong to. It's moved aside
+  with the rest now.
+- **The Windows service with settings it can't read** (a typo in config.toml) stopped without writing why anywhere,
+  while install.ps1 says to look in conductor.log. The error is now written to conductor.log beside config.toml.
+- **A backup stopped halfway** (Conductor stopped or the computer went off during one) left a whole copy of the
+  database in `<data>/.backup-…` and an unfinished `.zip.part`, for good. The daily backup now clears ones over an
+  hour old.
 
 ## 1.0.0 (2026-11-22)
 

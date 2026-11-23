@@ -600,6 +600,36 @@ async fn encore_extensions() {
 }
 
 #[tokio::test]
+async fn a_huge_podcast_feed_is_refused() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not found");
+        return;
+    }
+    // a "feed" far bigger than any real one (a broken or hostile server): it was read into memory whole, however
+    // big, at every refresh; now it stops at 64 MB
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        c.podcast_local = true;
+    })
+    .await;
+    let fl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fbase = format!("http://{}", fl.local_addr().unwrap());
+    let feed = format!(
+        "<?xml version=\"1.0\"?><rss><channel><title>Huge</title><!-- {} --></channel></rss>",
+        "x".repeat(70 << 20)
+    );
+    let feed = axum::body::Bytes::from(feed);
+    let app = axum::Router::new().route("/feed.xml", axum::routing::get(move || {
+        let f = feed.clone();
+        async move { f }
+    }));
+    tokio::spawn(async move { axum::serve(fl, app).await.unwrap() });
+    let r = s.call("createPodcastChannel", &[("url", &format!("{fbase}/feed.xml"))]).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("too big"), "{r}");
+}
+
+#[tokio::test]
 async fn podcasts() {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not found");
@@ -3994,6 +4024,66 @@ async fn backup_and_restore() {
     let mut left: Vec<String> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     left.sort();
     assert_eq!(left, ["conductor-20260102-000000.zip", "conductor-20260103-000000.zip", "conductor-backup-mine.zip", "notes.txt"]);
+}
+
+#[tokio::test]
+async fn restore_keeps_the_settings_a_backup_has_none_of() {
+    // a backup from a server set up only with environment settings (Docker) has no config.toml in it; restored with
+    // --force where there is one, that config.toml stayed moved aside and the server came up with no music folders
+    let tmp = tempfile::tempdir().unwrap();
+    let from = Config { data_dir: tmp.path().join("from"), ..Config::default() };
+    std::fs::create_dir_all(&from.data_dir).unwrap();
+    let pool = db::open(&from.data_dir.join("conductor.db")).await.unwrap();
+    let out = tmp.path().join("b.zip");
+    conductor::backup::make(&from, &pool, &out).await.unwrap();
+    pool.close().await;
+
+    let data = tmp.path().join("here");
+    std::fs::create_dir_all(&data).unwrap();
+    let config = data.join("config.toml");
+    std::fs::write(&config, "[[libraries]]\nname = \"Music\"\npath = \"/music\"\n").unwrap();
+    std::fs::write(data.join("secrets.toml"), "slskd_api_key = \"k\"\n").unwrap();
+    std::fs::write(data.join("conductor.db"), b"old").unwrap();
+    let cfg = Config { data_dir: data.clone(), config_path: Some(config.clone()), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    let r = conductor::backup::restore(&cfg, &out, true).unwrap();
+    assert!(r.moved_aside.as_ref().unwrap().join("conductor.db").is_file(), "{r:?}");
+    assert!(std::fs::read_to_string(&config).unwrap().contains("/music"), "config.toml is still there");
+    assert!(data.join("secrets.toml").is_file(), "and its secrets");
+}
+
+#[tokio::test]
+async fn a_restore_on_another_computer_uses_the_data_it_restored() {
+    // the backup's config.toml names the old computer's data folder (another user's home, or C:\ProgramData on
+    // Windows): restored as it was, the next start looked there, and the database just restored went unused
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("old");
+    std::fs::create_dir_all(&old).unwrap();
+    let old_config = old.join("config.toml");
+    std::fs::write(&old_config, format!("# mine\ndata_dir = {:?}\nlisten = \"0.0.0.0:4533\"\n\n[[libraries]]\nname = \"Music\"\npath = \"/music\"\n", old.to_str().unwrap()))
+        .unwrap();
+    let from = Config::load(Some(old_config)).unwrap();
+    let pool = db::open(&from.data_dir.join("conductor.db")).await.unwrap();
+    let out = tmp.path().join("b.zip");
+    conductor::backup::make(&from, &pool, &out).await.unwrap();
+    pool.close().await;
+
+    let new = tmp.path().join("new place");
+    let config = new.join("config.toml");
+    let cfg = Config { data_dir: new.clone(), config_path: Some(config.clone()), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    conductor::backup::restore(&cfg, &out, false).unwrap();
+    let back = Config::load(Some(config.clone())).unwrap();
+    assert_eq!(back.data_dir, new, "{}", std::fs::read_to_string(&config).unwrap());
+    assert!(back.data_dir.join("conductor.db").is_file());
+    assert_eq!(back.libraries.len(), 1, "the rest of the settings came back as they were");
+    assert!(std::fs::read_to_string(&config).unwrap().starts_with("# mine"));
+
+    // a journal left without its database (deleted by hand) isn't played into the one restored
+    let third = tmp.path().join("third");
+    std::fs::create_dir_all(&third).unwrap();
+    std::fs::write(third.join("conductor.db-wal"), b"someone else's").unwrap();
+    let cfg = Config { data_dir: third.clone(), listen: "127.0.0.1:0".parse().unwrap(), ..Config::default() };
+    let r = conductor::backup::restore(&cfg, &out, false).unwrap();
+    assert!(!third.join("conductor.db-wal").exists() && r.moved_aside.unwrap().join("conductor.db-wal").is_file());
 }
 
 #[tokio::test]

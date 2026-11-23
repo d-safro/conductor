@@ -333,6 +333,48 @@ fn icacls_private(sid: &str) -> Vec<String> {
     ["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F"].iter().map(|s| s.to_string()).chain([format!("*{sid}:F")]).collect()
 }
 
+/// A command run as root (`sudo conductor restore …`, `sudo conductor user add …`) on a data folder that belongs to
+/// someone else, such as the Linux package's /var/lib/conductor (the conductor user's): what it made there is given
+/// to the folder's owner. Left root's, the service running as that user couldn't write its own database (or even
+/// open it, with root's -shm file beside it) and didn't start. Not root, or root's own folder: nothing to do.
+pub fn give_to_data_owner(cfg: &Config) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions and can't fail
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let Ok(dir) = std::fs::metadata(&cfg.data_dir) else { return };
+        if dir.uid() == 0 {
+            return;
+        }
+        let mut paths: Vec<PathBuf> = ["conductor.db", "conductor.db-wal", "conductor.db-shm", "secret.key", "playlist-images"]
+            .iter()
+            .map(|n| cfg.data_dir.join(n))
+            .collect();
+        if let Ok(rd) = std::fs::read_dir(cfg.data_dir.join("playlist-images")) {
+            paths.extend(rd.flatten().map(|e| e.path()));
+        }
+        // the settings too, when they're in a folder of the same owner (config.toml in the data folder)
+        if let Some(p) = &cfg.config_path
+            && p.parent().and_then(|d| std::fs::metadata(d).ok()).is_some_and(|m| m.uid() == dir.uid())
+        {
+            paths.extend([p.clone(), secrets_path(p)]);
+        }
+        for p in paths {
+            // only what root made: anything else keeps its owner
+            if std::fs::symlink_metadata(&p).is_ok_and(|m| m.uid() == 0 && !m.file_type().is_symlink())
+                && let Err(e) = std::os::unix::fs::chown(&p, Some(dir.uid()), Some(dir.gid()))
+            {
+                tracing::warn!("couldn't give {} to the data folder's owner: {e}", p.display());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = cfg;
+}
+
 /// secrets.toml beside a config file.
 pub fn secrets_path(config: &std::path::Path) -> PathBuf {
     config.with_file_name("secrets.toml")

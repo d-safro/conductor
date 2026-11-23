@@ -137,7 +137,10 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
     if std::net::TcpListener::bind(cfg.listen).is_err() {
         bail!("Conductor seems to be running ({} is in use): stop it first", cfg.listen);
     }
-    let settings: Vec<(String, PathBuf)> = settings_files(cfg);
+    // the settings files in use are replaced only when the backup has settings: one made with environment settings
+    // alone (Docker) has no config.toml, and moving this one aside left the server without its music folders
+    let has_settings = z.by_name("config.toml").is_ok();
+    let settings: Vec<(String, PathBuf)> = if has_settings { settings_files(cfg) } else { vec![] };
     let dest = |name: &str| -> Option<PathBuf> {
         if let Some((_, p)) = settings.iter().find(|(n, _)| n == name) {
             return Some(p.clone());
@@ -180,6 +183,19 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
             moved.push((p, to));
         }
         out.moved_aside = Some(aside);
+    } else {
+        // no database, but its journal left from one (deleted by hand, or lost): SQLite would play that journal into
+        // the database restored here, which it doesn't belong to. Moved aside too.
+        let stale: Vec<PathBuf> = ["conductor.db-wal", "conductor.db-shm"].iter().map(|n| cfg.data_dir.join(n)).filter(|p| p.exists()).collect();
+        if !stale.is_empty() {
+            let aside = cfg.data_dir.join(format!("before-restore-{}", stamp()));
+            std::fs::create_dir_all(&aside)?;
+            for p in stale {
+                let to = aside.join(p.file_name().map(|n| n.to_owned()).unwrap_or_default());
+                rename_patiently(&p, &to).with_context(|| format!("moving {} aside", p.display()))?;
+            }
+            out.moved_aside = Some(aside);
+        }
     }
     std::fs::create_dir_all(&cfg.data_dir)?;
     for i in 0..z.len() {
@@ -190,7 +206,13 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
             std::fs::create_dir_all(d)?;
         }
         let mut f = if name == "secret.key" || name == "secrets.toml" { private_file(&to)? } else { std::fs::File::create(&to)? };
-        std::io::copy(&mut e, &mut f).with_context(|| format!("writing {}", to.display()))?;
+        if name == "config.toml" {
+            let mut text = String::new();
+            e.read_to_string(&mut text).context("reading the backup's config.toml")?;
+            f.write_all(with_data_dir(&text, &cfg.data_dir).as_bytes()).with_context(|| format!("writing {}", to.display()))?;
+        } else {
+            std::io::copy(&mut e, &mut f).with_context(|| format!("writing {}", to.display()))?;
+        }
         out.files.push(name);
     }
     // settings from another data folder (another computer, or a folder that moved) keep this one, where the database
@@ -204,6 +226,29 @@ pub fn restore(cfg: &Config, zip_path: &Path, force: bool) -> Result<Restored> {
         d.save()?;
     }
     Ok(out)
+}
+
+/// The backup's config.toml with its `data_dir` pointing where the data is restored to. It named the folder of the
+/// computer the backup was made on (another user's home, C:\ProgramData…): kept, the next start looked there and the
+/// database just restored went unused. The rest stays as it was, comments too.
+fn with_data_dir(text: &str, data_dir: &Path) -> String {
+    let quoted = toml::Value::String(data_dir.to_string_lossy().to_string()).to_string();
+    let mut out = String::new();
+    let mut top = true; // before the first [table]: where data_dir is
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[') {
+            top = false;
+        }
+        let key = t.strip_prefix("data_dir").map(str::trim_start);
+        if top && key.is_some_and(|k| k.starts_with('=')) {
+            let end = &line[line.trim_end_matches(['\r', '\n']).len()..]; // its line ending, as it was
+            out += &format!("data_dir = {quoted}{end}");
+        } else {
+            out += line;
+        }
+    }
+    out
 }
 
 /// A rename, tried for a few seconds: on Windows a file another program just let go of (or a virus scanner is
@@ -222,10 +267,45 @@ fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Is version `a` newer than `b` (x.y.z)?
+/// Is version `a` newer than `b` (x.y.z, or a prerelease x.y.z-rc.1, which comes before x.y.z)? Read as plain
+/// dotted numbers, 1.0.0-rc.1 was 1.0.0.1, after 1.0.0: its backups were refused by 1.0.0 itself.
 fn newer(a: &str, b: &str) -> bool {
-    let p = |v: &str| v.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    p(a) > p(b)
+    use std::cmp::Ordering;
+    fn parts(v: &str) -> (Vec<u64>, Option<&str>) {
+        let (core, pre) = v.split_once('-').map_or((v, None), |(c, p)| (c, Some(p)));
+        (core.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect(), pre)
+    }
+    let ((ca, pa), (cb, pb)) = (parts(a), parts(b));
+    let pre = |a: &str, b: &str| -> Ordering {
+        // semver: dot-separated, numbers as numbers, a number before a word, more parts after fewer
+        let (mut x, mut y) = (a.split('.'), b.split('.'));
+        loop {
+            match (x.next(), y.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(p), Some(q)) => {
+                    let o = match (p.parse::<u64>(), q.parse::<u64>()) {
+                        (Ok(m), Ok(n)) => m.cmp(&n),
+                        (Ok(_), Err(_)) => Ordering::Less,
+                        (Err(_), Ok(_)) => Ordering::Greater,
+                        _ => p.cmp(q),
+                    };
+                    if o != Ordering::Equal {
+                        return o;
+                    }
+                }
+            }
+        }
+    };
+    match ca.cmp(&cb) {
+        Ordering::Equal => match (pa, pb) {
+            (Some(_), None) | (None, None) => false,
+            (None, Some(_)) => true,
+            (Some(p), Some(q)) => pre(p, q) == Ordering::Greater,
+        },
+        o => o == Ordering::Greater,
+    }
 }
 
 /// Once a day, a backup in the backups folder; the newest `backup_keep` kept.
@@ -234,6 +314,7 @@ pub async fn worker(cfg: Config, db: Db) {
         return;
     }
     tokio::time::sleep(Duration::from_secs(10 * 60)).await;
+    leftovers(&cfg);
     loop {
         let d = dir(&cfg);
         let out = d.join(format!("conductor-{}.zip", stamp()));
@@ -243,6 +324,23 @@ pub async fn worker(cfg: Config, db: Db) {
         }
         prune(&d, cfg.backup_keep);
         tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+    }
+}
+
+/// What a backup stopped halfway (Conductor stopped or the computer went off during one) left: the database's copy
+/// in `<data>/.backup-…` and the unfinished `….zip.part`. Never cleared before, each was a whole database's size,
+/// for good. Only ones over an hour old: one being made now (`conductor backup`) is left alone.
+pub fn leftovers(cfg: &Config) {
+    let old = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|e| e > Duration::from_secs(3600)));
+    for (d, dirs) in [(cfg.data_dir.clone(), true), (dir(cfg), false)] {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let (p, n) = (e.path(), e.file_name().to_string_lossy().to_string());
+            if dirs && n.starts_with(".backup-") && p.is_dir() && old(&p) {
+                let _ = std::fs::remove_dir_all(&p);
+            } else if !dirs && n.ends_with(".zip.part") && p.is_file() && old(&p) {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
     }
 }
 
@@ -268,9 +366,37 @@ pub fn prune(d: &Path, keep: usize) {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg(unix)] // (a folder's time can't be set this way on Windows)
+    fn what_a_stopped_backup_left_is_cleared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config { data_dir: tmp.path().to_path_buf(), ..Default::default() };
+        let (copy, part, now) = (tmp.path().join(".backup-abc"), super::dir(&cfg).join("conductor-1.zip.part"), tmp.path().join(".backup-now"));
+        for d in [&copy, &now, &super::dir(&cfg)] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(copy.join("conductor.db"), b"x").unwrap();
+        std::fs::write(&part, b"x").unwrap();
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        for p in [&copy, &part] {
+            std::fs::File::open(p).unwrap().set_modified(day_ago).unwrap();
+        }
+        std::fs::write(super::dir(&cfg).join("conductor-2.zip"), b"x").unwrap();
+        super::leftovers(&cfg);
+        assert!(!copy.exists() && !part.exists(), "a day old: gone");
+        assert!(now.exists(), "one being made now stays");
+        assert!(super::dir(&cfg).join("conductor-2.zip").exists(), "backups stay");
+    }
+
+    #[test]
     fn versions() {
         assert!(super::newer("0.10.0", "0.9.9"));
         assert!(!super::newer("0.2.1", "0.3.0"));
         assert!(!super::newer("0.3.0", "0.3.0"));
+        // a prerelease comes before its release: a backup from 1.0.0-rc.1 restores on 1.0.0
+        assert!(!super::newer("1.0.0-rc.1", "1.0.0"));
+        assert!(super::newer("1.0.0", "1.0.0-rc.1"));
+        assert!(super::newer("1.0.0-rc.2", "1.0.0-rc.1"));
+        assert!(!super::newer("0.1.0-rc1", "0.1.0"));
+        assert!(super::newer("1.0.1-rc.1", "1.0.0"));
     }
 }

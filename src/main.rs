@@ -97,7 +97,10 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     }
     // Prelude: `conductor setup`, and the first start in a terminal with nothing set up yet
     if let ["setup" | "prelude", rest @ ..] = a.as_slice() {
-        conductor::prelude::cli(config_path, rest).await?;
+        let path = conductor::prelude::cli(config_path, rest).await?;
+        if let Ok(cfg) = Config::load(Some(path)) {
+            conductor::config::give_to_data_owner(&cfg);
+        }
         return Ok(());
     }
     // a mistyped command says so before anything is opened or made (no database in the default folder)
@@ -132,6 +135,7 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     // before the database is opened: it's what gets replaced
     if let ["restore", file, rest @ ..] = a.as_slice() {
         let r = conductor::backup::restore(&cfg, std::path::Path::new(file), rest.contains(&"--force"))?;
+        conductor::config::give_to_data_owner(&cfg);
         if let Some(d) = &r.moved_aside {
             println!("What was here is in {}", d.display());
         }
@@ -143,6 +147,9 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     let pool = db::open(&cfg.data_dir.join("conductor.db")).await?;
     let secrets = Secrets::load_or_create(&cfg.data_dir.join("secret.key"))?;
     let libs = library::ensure_libraries(&pool, &cfg.libraries).await?;
+    if !matches!(a.as_slice(), [] | ["serve"]) {
+        conductor::config::give_to_data_owner(&cfg); // a command run with sudo: the service's files stay its own
+    }
 
     match a.as_slice() {
         [] | ["serve"] => serve(cfg, pool, secrets, libs, shutdown).await,

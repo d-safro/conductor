@@ -12,5 +12,7 @@ COPY --from=build /src/target/release/conductor /usr/local/bin/conductor
 ENV CONDUCTOR_DATA_DIR=/data CONDUCTOR_MUSIC=/music CONDUCTOR_LISTEN=0.0.0.0:4533
 VOLUME ["/data"]
 EXPOSE 4533
-HEALTHCHECK --interval=60s --timeout=5s CMD wget -qO- http://127.0.0.1:4533/health >/dev/null || exit 1
+# on the port Conductor listens on (CONDUCTOR_LISTEN, e.g. -e CONDUCTOR_LISTEN=0.0.0.0:8080), not always 4533: there
+# it was "unhealthy" for good, or asked whatever else answered on 4533 (with network_mode: host)
+HEALTHCHECK --interval=60s --timeout=5s CMD p=${CONDUCTOR_LISTEN##*:}; wget -qO- "http://127.0.0.1:${p:-4533}/health" >/dev/null || exit 1
 ENTRYPOINT ["/sbin/tini", "--", "conductor"]

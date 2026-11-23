@@ -354,11 +354,11 @@ fn safe(s: &str) -> String {
     if o.is_empty() { "_".into() } else { o }
 }
 
-/// The finished file in slskd's downloads folder.
+/// The finished file in slskd's downloads folder. The name is the peer's: a ".." in it never leads outside.
 pub(crate) fn locate(downloads: &Path, remote: &str) -> Option<PathBuf> {
     let parts: Vec<&str> = remote.split(['\\', '/']).collect();
-    let name = parts.last()?;
-    if parts.len() > 1 {
+    let name = parts.last().filter(|n| !matches!(**n, "" | "." | ".."))?;
+    if parts.len() > 1 && !matches!(parts[parts.len() - 2], "" | "." | "..") {
         let p = downloads.join(parts[parts.len() - 2]).join(name);
         if p.is_file() {
             return Some(p);
@@ -930,5 +930,20 @@ mod tests {
         assert!(!better(&r, Some(true), "mp3", other_flac), "not a different version");
         assert!(!better(&r, Some(true), "flac", album_flac), "nothing to gain");
         assert!(artist_in(&["Аквариум".into()], "Akvarium - Album/01.flac"));
+    }
+
+    #[test]
+    fn a_finished_download_is_only_looked_for_in_the_downloads() {
+        // the name is a peer's: "..\\Song.flac" made it the file of that name beside the downloads folder (with the
+        // downloads in the data folder, as Prelude suggests, that's Conductor's own data), which was then moved
+        // into the music folder
+        let tmp = tempfile::tempdir().unwrap();
+        let downloads = tmp.path().join("downloads");
+        std::fs::create_dir_all(downloads.join("Album")).unwrap();
+        std::fs::write(tmp.path().join("Song.flac"), b"not a download").unwrap();
+        assert_eq!(locate(&downloads, r"Music\..\Song.flac"), None);
+        std::fs::write(downloads.join("Album/Song.flac"), b"x").unwrap();
+        assert_eq!(locate(&downloads, r"Music\..\Song.flac"), Some(downloads.join("Album/Song.flac")));
+        assert_eq!(locate(&downloads, r"Music\Album\Song.flac"), Some(downloads.join("Album/Song.flac")));
     }
 }

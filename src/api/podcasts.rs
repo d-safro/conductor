@@ -185,9 +185,33 @@ fn get(st: &AppState, url: &str) -> Result<reqwest::RequestBuilder> {
     Ok(b.build()?.get(url))
 }
 
+/// The most a feed is read (the biggest real ones are a few MB) and a cover. Feeds come from anyone and are read
+/// again every 2 hours: without a limit, a broken or hostile one was taken into memory whole, however big.
+const MAX_FEED: usize = 64 << 20;
+const MAX_COVER: usize = 16 << 20;
+/// The most an episode saved on the server may be (the longest video episodes are a few GB).
+const MAX_EPISODE: u64 = 8 << 30;
+
+async fn read_capped(r: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    let too_big = || anyhow!("too big (over {} MB)", max >> 20);
+    if r.content_length().is_some_and(|n| n > max as u64) {
+        return Err(too_big());
+    }
+    let mut out = Vec::new();
+    let mut body = r.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk?;
+        if out.len() + chunk.len() > max {
+            return Err(too_big());
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 async fn fetch_text(st: &AppState, url: &str) -> Result<String> {
     let r = get(st, url)?.timeout(Duration::from_secs(30)).send().await?.error_for_status()?;
-    Ok(r.text().await?)
+    Ok(String::from_utf8_lossy(&read_capped(r, MAX_FEED).await?).into_owned())
 }
 
 /// Save a feed: new episodes added, known ones updated.
@@ -326,15 +350,30 @@ async fn download(st: &AppState, e: &EpRow) -> Result<()> {
         tokio::fs::create_dir_all(d).await?;
     }
     let part = dst.with_extension("part");
-    let r = get(st, &e.url)?.timeout(Duration::from_secs(3600)).send().await?.error_for_status()?;
-    let mut f = tokio::fs::File::create(&part).await?;
-    let mut body = r.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        f.write_all(&chunk?).await?;
+    let saved = async {
+        let r = get(st, &e.url)?.timeout(Duration::from_secs(3600)).send().await?.error_for_status()?;
+        let mut f = tokio::fs::File::create(&part).await?;
+        let mut body = r.bytes_stream();
+        let mut total = 0u64;
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk?;
+            total += chunk.len() as u64;
+            // an "episode" that never ends (a live stream as the enclosure) filled the disk for an hour
+            if total > MAX_EPISODE {
+                bail!("bigger than {} GB: not an episode", MAX_EPISODE >> 30);
+            }
+            f.write_all(&chunk).await?;
+        }
+        f.flush().await?;
+        drop(f);
+        tokio::fs::rename(&part, &dst).await?;
+        anyhow::Ok(())
     }
-    f.flush().await?;
-    drop(f);
-    tokio::fs::rename(&part, &dst).await?;
+    .await;
+    if saved.is_err() {
+        let _ = tokio::fs::remove_file(&part).await; // a broken download isn't left behind
+    }
+    saved?;
     let size = tokio::fs::metadata(&dst).await.map(|m| m.len() as i64).unwrap_or(0);
     sqlx::query("UPDATE episode SET file = ?, size = ? WHERE id = ?").bind(&rel).bind(size).bind(&e.id).execute(&st.db).await?;
     info!(show = %e.show_title, episode = %e.title, "podcast episode downloaded");
@@ -764,7 +803,7 @@ pub async fn cover_bytes(st: &AppState, id: &str) -> Result<Option<Vec<u8>>> {
         return Ok(Some(b));
     }
     let r = get(st, &url)?.timeout(Duration::from_secs(20)).send().await?.error_for_status()?;
-    let b = r.bytes().await?.to_vec();
+    let b = read_capped(r, MAX_COVER).await?;
     if image::guess_format(&b).is_err() {
         bail!("not a picture");
     }
