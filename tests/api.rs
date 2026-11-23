@@ -109,7 +109,7 @@ impl Server {
         let libs = library::ensure_libraries(&pool, &cfg.libraries).await.unwrap();
         let st = Arc::new(AppState::new(pool, secrets, cfg, libs));
         let rep = library::scan(&st.db, &st.libs, &st.scan, false).await.unwrap();
-        assert_eq!(rep.added, 3);
+        assert!(rep.added >= 3, "{}", rep.added); // (more when a test adds a music folder)
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = api::router(st.clone());
@@ -5470,4 +5470,87 @@ async fn a_backup_restored_into_another_data_folder_is_used_there() {
     assert_eq!(after.data_dir, new.path().join("data"), "where the database was restored");
     assert!(after.data_dir.join("conductor.db").is_file());
     assert!(!after.lyrics_online, "the rest of the settings came back");
+}
+
+#[tokio::test]
+async fn a_music_folder_picked_in_the_app_shows_only_its_music() {
+    if !have_ffmpeg() {
+        return;
+    }
+    // a second music folder, "Talks", with one album
+    let s = Server::start_with(|c| {
+        c.catalog = false;
+        let talks = c.data_dir.parent().unwrap().join("talks");
+        tone(&talks.join("Gamma/Third/01 Four.flac"), "Four", "Gamma", "Third", 1, 2);
+        c.libraries.push(LibraryConfig { name: "Talks".into(), path: talks, sentinel: None, scan_threads: None });
+    })
+    .await;
+    let folders = s.ok("getMusicFolders", &[]).await["musicFolders"]["musicFolder"].as_array().unwrap().clone();
+    let fid = |name: &str| folders.iter().find(|f| f["name"] == name).unwrap()["id"].to_string();
+    let (music, talks) = (fid("Music"), fid("Talks"));
+    let names = |v: &Value, key: &str| -> Vec<String> {
+        let mut n: Vec<String> = v.as_array().map(|a| a.iter().map(|x| x[key].as_str().unwrap().to_string()).collect()).unwrap_or_default();
+        n.sort();
+        n
+    };
+    let index_names = |v: &Value| -> Vec<String> {
+        let mut n: Vec<String> = v["index"].as_array().unwrap().iter().flat_map(|i| names(&i["artist"], "name")).collect();
+        n.sort();
+        n
+    };
+    // without one: everything
+    assert_eq!(index_names(&s.ok("getArtists", &[]).await["artists"]), ["Alpha", "Gamma", "The Beta Band"]);
+    assert_eq!(index_names(&s.ok("getArtists", &[("musicFolderId", &talks)]).await["artists"]), ["Gamma"]);
+    assert_eq!(index_names(&s.ok("getIndexes", &[("musicFolderId", &music)]).await["indexes"]), ["Alpha", "The Beta Band"]);
+
+    // every list type
+    let all = s.ok("search3", &[("query", "")]).await["searchResult3"]["song"].as_array().unwrap().clone();
+    for x in &all {
+        let id = x["id"].as_str().unwrap();
+        s.ok("star", &[("id", id), ("albumId", x["albumId"].as_str().unwrap()), ("artistId", x["artistId"].as_str().unwrap())]).await;
+        s.ok("setRating", &[("id", x["albumId"].as_str().unwrap()), ("rating", "4")]).await;
+        s.ok("scrobble", &[("id", id)]).await;
+    }
+    for ty in ["random", "newest", "frequent", "recent", "starred", "highest", "alphabeticalByName", "alphabeticalByArtist", "byYear", "byGenre"] {
+        fn p<'a>(ty: &'a str, f: &'a str) -> Vec<(&'a str, &'a str)> {
+            vec![("type", ty), ("musicFolderId", f), ("fromYear", "2000"), ("toYear", "2030"), ("genre", "Test")]
+        }
+        let r = s.ok("getAlbumList2", &p(ty, &talks)).await;
+        assert_eq!(names(&r["albumList2"]["album"], "name"), ["Third"], "{ty}: {r}");
+        let r = s.ok("getAlbumList", &p(ty, &music)).await;
+        assert_eq!(names(&r["albumList"]["album"], "name"), ["First Album", "Second"], "{ty}: {r}");
+    }
+    let r = s.ok("getRandomSongs", &[("musicFolderId", &talks), ("size", "50")]).await;
+    assert_eq!(names(&r["randomSongs"]["song"], "title"), ["Four"]);
+    let r = s.ok("getSongsByGenre", &[("genre", "Test"), ("musicFolderId", &music)]).await;
+    assert_eq!(names(&r["songsByGenre"]["song"], "title"), ["One", "Three", "Two"]);
+    for (m, key) in [("getStarred2", "starred2"), ("getStarred", "starred")] {
+        let r = s.ok(m, &[("musicFolderId", &talks)]).await;
+        assert_eq!(
+            (names(&r[key]["artist"], "name"), names(&r[key]["album"], "name"), names(&r[key]["song"], "title")),
+            (vec!["Gamma".to_string()], vec!["Third".to_string()], vec!["Four".to_string()]),
+            "{m}: {r}"
+        );
+    }
+    for (m, key) in [("search3", "searchResult3"), ("search2", "searchResult2")] {
+        let r = s.ok(m, &[("query", ""), ("musicFolderId", &talks)]).await;
+        assert_eq!(
+            (names(&r[key]["artist"], "name"), names(&r[key]["album"], "name"), names(&r[key]["song"], "title")),
+            (vec!["Gamma".to_string()], vec!["Third".to_string()], vec!["Four".to_string()]),
+            "{m}: {r}"
+        );
+    }
+    let r = s.ok("getGenres", &[("musicFolderId", &talks)]).await;
+    assert_eq!((r["genres"]["genre"][0]["songCount"].as_i64(), r["genres"]["genre"][0]["albumCount"].as_i64()), (Some(1), Some(1)), "{r}");
+    // both folders, given twice
+    let r = s.ok("getAlbumList2", &[("type", "alphabeticalByName"), ("musicFolderId", &talks), ("musicFolderId", &music)]).await;
+    assert_eq!(names(&r["albumList2"]["album"], "name"), ["First Album", "Second", "Third"]);
+
+    // a folder that isn't there: not found, as in Navidrome
+    for bad in ["999", "abc"] {
+        let r = s.call("getAlbumList2", &[("type", "newest"), ("musicFolderId", bad)]).await;
+        assert_eq!((r["status"].as_str(), r["error"]["code"].as_i64()), (Some("failed"), Some(70)), "{r}");
+    }
+    let r = s.call("getArtists", &[("musicFolderId", "999")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
 }

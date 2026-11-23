@@ -64,7 +64,8 @@ pub async fn augment(c: &Ctx, method: &str, r: Result<Reply, ApiError>) -> Resul
         return Ok(Reply::Ok(v));
     }
     match method {
-        "search3" => search(c, &mut v).await,
+        // songs you don't have are in no music folder: not in a search of one
+        "search3" if super::browse::Folders::of(c).is_ok_and(|f| f.all()) => search(c, &mut v).await,
         "getAlbum" => complete_album(c, &mut v).await,
         "getArtist" => missing_albums(c, &mut v).await,
         "getPlaylist" => pending(c, &mut v).await,

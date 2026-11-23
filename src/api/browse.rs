@@ -20,6 +20,62 @@ pub async fn music_folders(c: &Ctx) -> Result<Reply, ApiError> {
     ok(json!({ "musicFolders": { "musicFolder": f } }))
 }
 
+/// The music folders an app picked (`musicFolderId`, once or more), or all of them. A folder that isn't there is
+/// "not found" (code 70), as in Navidrome, rather than a list of everything that looks like the folder's.
+pub(crate) struct Folders(Option<String>);
+
+impl Folders {
+    pub(crate) fn of(c: &Ctx) -> Result<Self, ApiError> {
+        let asked: Vec<&str> = c.p.all("musicFolderId").into_iter().map(str::trim).filter(|v| !v.is_empty()).collect();
+        if asked.is_empty() {
+            return Ok(Self(None));
+        }
+        let mut ids = vec![];
+        for a in asked {
+            match a.parse::<i64>().ok().filter(|id| c.st.libs.iter().any(|(l, _)| l == id)) {
+                Some(id) => ids.push(id.to_string()),
+                None => return Err(ApiError::new(70, format!("Music folder {a} not found"))),
+            }
+        }
+        // (numbers checked against the folders: safe in the SQL)
+        Ok(Self(Some(ids.join(","))))
+    }
+
+    /// A song (`t`) in the folders.
+    pub(crate) fn tracks(&self) -> String {
+        match &self.0 {
+            None => "1".into(),
+            Some(ids) => format!("t.library_id IN ({ids})"),
+        }
+    }
+
+    /// An album (`al`) with a song in the folders.
+    pub(crate) fn albums(&self) -> String {
+        match &self.0 {
+            None => "1".into(),
+            Some(ids) => format!(
+                "EXISTS (SELECT 1 FROM track f WHERE f.album_id = al.id AND f.missing_since IS NULL AND f.library_id IN ({ids}))"
+            ),
+        }
+    }
+
+    /// An artist (`ar`) with an album or a song in the folders.
+    pub(crate) fn artists(&self) -> String {
+        match &self.0 {
+            None => "1".into(),
+            Some(ids) => format!(
+                "(EXISTS (SELECT 1 FROM album fa JOIN track f ON f.album_id = fa.id
+                   WHERE fa.artist_id = ar.id AND f.missing_since IS NULL AND f.library_id IN ({ids}))
+                  OR EXISTS (SELECT 1 FROM track f WHERE f.artist_id = ar.id AND f.missing_since IS NULL AND f.library_id IN ({ids})))"
+            ),
+        }
+    }
+
+    pub(crate) fn all(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
 fn index_letter(sort: &str) -> String {
     match sort.chars().next() {
         Some(ch) if ch.is_alphabetic() => ch.to_uppercase().collect(),
@@ -28,7 +84,8 @@ fn index_letter(sort: &str) -> String {
 }
 
 pub async fn artists(c: &Ctx, old_style: bool) -> Result<Reply, ApiError> {
-    let rows = items::artists_where(c, "ar.album_count > 0", &[], "ORDER BY ar.sort_name").await?;
+    let folders = Folders::of(c)?;
+    let rows = items::artists_where(c, &format!("ar.album_count > 0 AND {}", folders.artists()), &[], "ORDER BY ar.sort_name").await?;
     let mut groups: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for a in &rows {
         groups.entry(index_letter(&a.sort_name)).or_default().push(artist_json(a));
@@ -111,43 +168,37 @@ pub async fn album_list(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
     let ty = c.p.req("type")?;
     let size = clamp(c.p.int("size"), 10, 500);
     let offset = c.p.int("offset").unwrap_or(0).max(0);
-    let page = format!("LIMIT {size} OFFSET {offset}");
     let (from, to) = (c.p.int("fromYear").unwrap_or(0), c.p.int("toYear").unwrap_or(9999));
     let years = (from.to_string(), to.to_string());
-    let rows = match ty {
-        "random" => items::albums_where(c, "1", &[], &format!("ORDER BY RANDOM() {page}")).await?,
-        "newest" => items::albums_where(c, "1", &[], &format!("ORDER BY al.created_at DESC, al.id {page}")).await?,
-        "frequent" => items::albums_where(c, "an.play_count > 0", &[], &format!("ORDER BY an.play_count DESC {page}")).await?,
-        "recent" => {
-            items::albums_where(c, "an.last_played IS NOT NULL", &[], &format!("ORDER BY an.last_played DESC {page}")).await?
-        }
-        "starred" => {
-            items::albums_where(c, "an.starred_at IS NOT NULL", &[], &format!("ORDER BY an.starred_at DESC {page}")).await?
-        }
-        "highest" => items::albums_where(c, "an.rating > 0", &[], &format!("ORDER BY an.rating DESC {page}")).await?,
-        "alphabeticalByName" => items::albums_where(c, "1", &[], &format!("ORDER BY al.sort_name {page}")).await?,
-        "alphabeticalByArtist" => {
-            items::albums_where(c, "1", &[], &format!("ORDER BY al.artist_name COLLATE NOCASE, al.year {page}")).await?
-        }
+    let genre_cond;
+    let (cond, binds, order): (&str, Vec<&str>, &str) = match ty {
+        "random" => ("1", vec![], "RANDOM()"),
+        "newest" => ("1", vec![], "al.created_at DESC, al.id"),
+        "frequent" => ("an.play_count > 0", vec![], "an.play_count DESC"),
+        "recent" => ("an.last_played IS NOT NULL", vec![], "an.last_played DESC"),
+        "starred" => ("an.starred_at IS NOT NULL", vec![], "an.starred_at DESC"),
+        "highest" => ("an.rating > 0", vec![], "an.rating DESC"),
+        "alphabeticalByName" => ("1", vec![], "al.sort_name"),
+        "alphabeticalByArtist" => ("1", vec![], "al.artist_name COLLATE NOCASE, al.year"),
         "byYear" => {
-            let order = if from > to { "DESC" } else { "ASC" };
             let (lo, hi) = if from > to { (&years.1, &years.0) } else { (&years.0, &years.1) };
-            items::albums_where(c, "al.year BETWEEN ? AND ?", &[lo, hi], &format!("ORDER BY al.year {order} {page}")).await?
+            ("al.year BETWEEN ? AND ?", vec![lo.as_str(), hi.as_str()], if from > to { "al.year DESC" } else { "al.year ASC" })
         }
         "byGenre" => {
-            let g = c.p.req("genre")?;
-            let cond = format!("al.id IN (SELECT t.album_id FROM track t WHERE {})", crate::library::has_genre_sql("t.genre"));
-            items::albums_where(c, &cond, &[g], &format!("ORDER BY al.sort_name {page}")).await?
+            genre_cond = format!("al.id IN (SELECT t.album_id FROM track t WHERE {})", crate::library::has_genre_sql("t.genre"));
+            (genre_cond.as_str(), vec![c.p.req("genre")?], "al.sort_name")
         }
         other => return Err(ApiError::new(0, format!("Unknown list type: {other}"))),
     };
+    let cond = format!("{cond} AND {}", Folders::of(c)?.albums());
+    let rows = items::albums_where(c, &cond, &binds, &format!("ORDER BY {order} LIMIT {size} OFFSET {offset}")).await?;
     let list: Vec<Value> = rows.iter().map(album_json).collect();
     if id3 { ok(json!({ "albumList2": { "album": list } })) } else { ok(json!({ "albumList": { "album": list } })) }
 }
 
 pub async fn random_songs(c: &Ctx) -> Result<Reply, ApiError> {
     let size = clamp(c.p.int("size"), 10, 500);
-    let mut cond = vec!["1".to_string()];
+    let mut cond = vec![Folders::of(c)?.tracks()];
     let mut binds: Vec<String> = vec![];
     if let Some(g) = c.p.get("genre").filter(|g| !g.is_empty()) {
         cond.push(crate::library::has_genre_sql("t.genre"));
@@ -172,7 +223,7 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
     let offset = c.p.int("offset").unwrap_or(0).max(0);
     let rows = items::tracks_where(
         c,
-        &crate::library::has_genre_sql("t.genre"),
+        &format!("{} AND {}", crate::library::has_genre_sql("t.genre"), Folders::of(c)?.tracks()),
         &[g],
         &format!("ORDER BY t.album_name, t.disc, t.number LIMIT {count} OFFSET {offset}"),
     )
@@ -183,10 +234,12 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
 pub async fn genres(c: &Ctx) -> Result<Reply, ApiError> {
     // each genre of a song counts ("Pop; Rock" is in Pop and in Rock); counted per genre value and album in SQL,
     // then split (a few thousand rows, not one per song)
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT genre, album_id, COUNT(*) FROM track WHERE genre IS NOT NULL AND genre != '' AND missing_since IS NULL
-         GROUP BY genre, album_id",
-    )
+    // (Navidrome counts in the folders an app picked, too)
+    let in_folders = Folders::of(c)?.tracks();
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT genre, album_id, COUNT(*) FROM track t WHERE genre IS NOT NULL AND genre != '' AND missing_since IS NULL
+         AND {in_folders} GROUP BY genre, album_id"
+    )))
     .fetch_all(&c.st.db)
     .await?;
     let mut by: std::collections::BTreeMap<String, (String, i64, std::collections::HashSet<String>)> = Default::default();
@@ -230,11 +283,12 @@ pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
     let page = |count: &str, offset: &str, def: i64| {
         format!("LIMIT {} OFFSET {}", clamp(c.p.int(count), def, 500), c.p.int(offset).unwrap_or(0).max(0))
     };
+    let folders = Folders::of(c)?;
     let (ac, ab) = word_conditions(q, "ar.name");
     let ab: Vec<&str> = ab.iter().map(String::as_str).collect();
     let artists = items::artists_where(
         c,
-        &format!("ar.album_count > 0 AND {ac}"),
+        &format!("ar.album_count > 0 AND {ac} AND {}", folders.artists()),
         &ab,
         &format!("ORDER BY ar.sort_name, ar.id {}", page("artistCount", "artistOffset", 20)),
     )
@@ -242,7 +296,7 @@ pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
     let (lc, lb) = word_conditions(q, "al.name || ' ' || al.artist_name");
     let lb: Vec<&str> = lb.iter().map(String::as_str).collect();
     let albums =
-        items::albums_where(c, &lc, &lb, &format!("ORDER BY al.sort_name, al.id {}", page("albumCount", "albumOffset", 20))).await?;
+        items::albums_where(c, &format!("{lc} AND {}", folders.albums()), &lb, &format!("ORDER BY al.sort_name, al.id {}", page("albumCount", "albumOffset", 20))).await?;
     let (sc, sb) = word_conditions(q, "t.title || ' ' || t.artist_name || ' ' || t.album_name");
     let sb: Vec<&str> = sb.iter().map(String::as_str).collect();
     // the page's ids first (from the name-order index), then only those songs in full: apps that fetch the whole
@@ -250,7 +304,8 @@ pub async fn search(c: &Ctx, version: u8) -> Result<Reply, ApiError> {
     let songs = items::tracks_where(
         c,
         &format!(
-            "t.id IN (SELECT t.id FROM track t WHERE t.missing_since IS NULL AND ({sc}) ORDER BY t.sort_title, t.id {})",
+            "t.id IN (SELECT t.id FROM track t WHERE t.missing_since IS NULL AND ({sc}) AND {} ORDER BY t.sort_title, t.id {})",
+            folders.tracks(),
             page("songCount", "songOffset", 20)
         ),
         &sb,
@@ -271,9 +326,13 @@ pub async fn starred(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
         format!("{col} IN (SELECT item_id FROM annotation WHERE user_id = ? AND item_kind = '{kind}' AND starred_at IS NOT NULL)")
     };
     let me = [c.user.id.as_str()];
-    let artists = items::artists_where(c, &mine("artist", "ar.id"), &me, "ORDER BY an.starred_at DESC").await?;
-    let albums = items::albums_where(c, &mine("album", "al.id"), &me, "ORDER BY an.starred_at DESC").await?;
-    let songs = items::tracks_where(c, &mine("track", "t.id"), &me, "ORDER BY an.starred_at DESC").await?;
+    let f = Folders::of(c)?;
+    let artists =
+        items::artists_where(c, &format!("{} AND {}", mine("artist", "ar.id"), f.artists()), &me, "ORDER BY an.starred_at DESC").await?;
+    let albums =
+        items::albums_where(c, &format!("{} AND {}", mine("album", "al.id"), f.albums()), &me, "ORDER BY an.starred_at DESC").await?;
+    let songs =
+        items::tracks_where(c, &format!("{} AND {}", mine("track", "t.id"), f.tracks()), &me, "ORDER BY an.starred_at DESC").await?;
     let body = json!({
         "artist": artists.iter().map(artist_json).collect::<Vec<_>>(),
         "album": albums.iter().map(album_json).collect::<Vec<_>>(),

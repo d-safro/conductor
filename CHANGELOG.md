@@ -4,6 +4,15 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **Picking a music folder in your app** (Symfonium, Tempus, Ultrasonic, DSub, Feishin…) now shows only that
+  folder's music: `musicFolderId` is used by artists, album lists of every kind, random songs, songs by genre, genre
+  counts, starred items and search. A folder that doesn't exist is "not found" (code 70), as in Navidrome.
+
+### Fixed
+
 ## 1.0.0 (2026-11-22)
 
 1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with the fixes

@@ -131,6 +131,9 @@
   "songsByGenre.song[].playCount": [
     "number"
   ],
+  "songsByGenre.song[].played": [
+    "string"
+  ],
   "songsByGenre.song[].replayGain": [
     "object"
   ],
@@ -144,6 +147,9 @@
     "number"
   ],
   "songsByGenre.song[].sortName": [
+    "string"
+  ],
+  "songsByGenre.song[].starred": [
     "string"
   ],
   "songsByGenre.song[].suffix": [

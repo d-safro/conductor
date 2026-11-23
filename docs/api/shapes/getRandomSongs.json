@@ -131,6 +131,9 @@
   "randomSongs.song[].playCount": [
     "number"
   ],
+  "randomSongs.song[].played": [
+    "string"
+  ],
   "randomSongs.song[].replayGain": [
     "object"
   ],
@@ -144,6 +147,9 @@
     "number"
   ],
   "randomSongs.song[].sortName": [
+    "string"
+  ],
+  "randomSongs.song[].starred": [
     "string"
   ],
   "randomSongs.song[].suffix": [

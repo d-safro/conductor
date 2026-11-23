@@ -131,6 +131,39 @@
   "starred2.artist": [
     "array"
   ],
+  "starred2.artist[]": [
+    "object"
+  ],
+  "starred2.artist[].albumCount": [
+    "number"
+  ],
+  "starred2.artist[].coverArt": [
+    "string"
+  ],
+  "starred2.artist[].id": [
+    "string"
+  ],
+  "starred2.artist[].musicBrainzId": [
+    "string"
+  ],
+  "starred2.artist[].name": [
+    "string"
+  ],
+  "starred2.artist[].roles": [
+    "array"
+  ],
+  "starred2.artist[].roles[]": [
+    "string"
+  ],
+  "starred2.artist[].sortName": [
+    "string"
+  ],
+  "starred2.artist[].starred": [
+    "string"
+  ],
+  "starred2.artist[].userRating": [
+    "number"
+  ],
   "starred2.song": [
     "array"
   ],
