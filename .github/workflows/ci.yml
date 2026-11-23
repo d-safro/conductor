@@ -163,6 +163,21 @@ jobs:
           # a restart (stop and start through Windows) comes back
           Restart-Service Conductor
           Wait-Healthy
+          # a failure says so (a service-specific exit code, not 0), and Windows starts it again by itself
+          if ((sc.exe qfailureflag Conductor | Out-String) -notmatch 'TRUE') { throw "Windows won't restart it after a failure" }
+          $cfg = "C:\ProgramData\conductor\config.toml"
+          Stop-Service Conductor
+          Copy-Item $cfg "$cfg.ok"
+          Add-Content $cfg "`nlisten = 1"
+          Start-Service Conductor -ErrorAction SilentlyContinue
+          $failed = $false
+          for ($i = 0; $i -lt 40 -and -not $failed; $i++) {
+            $q = sc.exe query Conductor | Out-String
+            if ($q -match 'SERVICE_EXIT_CODE\s+:\s+1\s') { $failed = $true } else { Start-Sleep -Milliseconds 250 }
+          }
+          if (-not $failed) { throw "a failed start wasn't reported as one: $q" }
+          Move-Item -Force "$cfg.ok" $cfg
+          Wait-Healthy
           Write-Host "service OK"
       - name: Conductor's log
         if: always()

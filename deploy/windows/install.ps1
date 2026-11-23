@@ -88,6 +88,11 @@ $exe = Join-Path $dir "conductor.exe"
 if (-not $svc) {
   & $exe --config $cfg service install
   if ($LASTEXITCODE -ne 0) { throw "couldn't install the service" }
+} else {
+  # a service installed by an older version: Windows starts it again when it fails (as `service install` sets now),
+  # 10 s later, then 30 s, then every minute, also when it stops with an error of its own
+  sc.exe failure Conductor reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+  sc.exe failureflag Conductor 1 | Out-Null
 }
 try {
   # an admin that's there already (an upgrade) is left as it is

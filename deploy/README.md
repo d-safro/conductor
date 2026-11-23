@@ -35,7 +35,7 @@ On the Windows PC: put `conductor.exe` and `ffmpeg.exe` (from ffmpeg.org builds)
 next to them (see `config.example.toml`; paths like `D:\\Music`), and run `conductor.exe --config config.toml`.
 Data goes to `%ProgramData%\conductor` unless `data_dir` says otherwise. If slskd / Lidarr run in Docker Desktop, set
 `slskd_downloads` to the folder as Windows sees it and `lidarr_downloads` to the folder as Lidarr sees it.
-**As a service** (starts with Windows, log in `<data_dir>\conductor.log`): from the release zip, in PowerShell as
+**As a service** (starts with Windows and again if it fails, log in `<data_dir>\conductor.log`): from the release zip, in PowerShell as
 administrator, `powershell -ExecutionPolicy Bypass -File install.ps1 -Music "D:\Music"` (add `-OpenFirewall` for the
 local network). Or by hand: `conductor.exe --config C:\ProgramData\conductor\config.toml service install`, then
 `service start` / `service stop` / `service uninstall`. `uninstall.ps1` removes it (data kept unless `-RemoveData`).

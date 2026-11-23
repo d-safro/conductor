@@ -47,6 +47,10 @@ What changed in each release, newest first. The full notes for each are on the
   doing; only Ctrl-C stopped it cleanly. Both now stop it the same way, as does stopping the Windows service: it
   stops taking new connections, gives songs playing and other requests under way a few seconds to finish, stops its
   background work and closes the database.
+- **The Windows service is started again when it fails.** It told Windows it had stopped cleanly (exit code 0) even
+  when it failed, so Windows' restart-on-failure never happened. It now reports a failure as one, and the service is
+  set to be started again 10 s after a failure, then 30 s, then every minute (`install.ps1` sets this on a service
+  installed by 1.0.0 too).
 
 ## 1.0.0 (2026-11-22)
 
