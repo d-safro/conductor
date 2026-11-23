@@ -24,7 +24,7 @@ The detailed list. The [README](../README.md) has the short version.
   pictures; both looked up once when first asked, then kept; `info_online`, `info_lang`),
   playlists (all; an admin may list another user's with `getPlaylists?username=`), play queue, `getUser`, internet radio (all), `getScanStatus`, `startScan`, `stream`
   (direct with HTTP Range, or transcoded to mp3/opus/ogg/aac with `maxBitRate`, `format`, `timeOffset`),
-  `download`, `getCoverArt` (folder images, then embedded; resized and cached), `getLyrics`, `getLyricsBySongId`
+  `download` (a song's file; an album's or artist's files as a zip, made as it's sent), `getCoverArt` (folder images, then embedded; resized and cached), `getLyrics`, `getLyricsBySongId`
   (`.lrc` files next to the song, embedded lyrics, else **LRCLIB** online, remembered; synced when timed).
 - **Covers into album folders**: every 6 hours, album folders (`Albums/Artist/Album`, holding just that album) with no
   picture get a `cover.jpg` from iTunes, then Deezer; nothing is ever overwritten (`covers_fetch`).

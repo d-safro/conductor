@@ -5742,3 +5742,43 @@ async fn podcast_episodes_are_converted_when_the_app_asks() {
     let (status, _, mark, _, body) = get(&[("id", &id), ("format", "mp3")], "download").await;
     assert_eq!((status, mark.as_str(), body == original), (200, "", true));
 }
+
+#[tokio::test]
+async fn downloading_an_album_or_artist_sends_a_zip_of_its_files() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let one = s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"][0].clone();
+    let (album, artist) = (one["albumId"].as_str().unwrap().to_string(), one["artistId"].as_str().unwrap().to_string());
+    let get = async |id: &str| {
+        let r = s.http.get(s.url("download", &[("id", id)])).send().await.unwrap();
+        let h = |k: &str| r.headers().get(k).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        let (ct, cd) = (h("content-type"), h("content-disposition"));
+        (r.status().as_u16(), ct, cd, r.bytes().await.unwrap().to_vec())
+    };
+    let original = |rel: &str| std::fs::read(s.music.join(rel)).unwrap();
+    for (id, name, files) in [
+        (&album, "Alpha - First Album.zip", [("01 One.flac", "Alpha/First Album/01 One.flac"), ("02 Two.flac", "Alpha/First Album/02 Two.flac")]),
+        (&artist, "Alpha.zip", [("First Album/01 One.flac", "Alpha/First Album/01 One.flac"), ("First Album/02 Two.flac", "Alpha/First Album/02 Two.flac")]),
+    ] {
+        let (status, ct, cd, body) = get(id).await;
+        assert_eq!((status, ct.as_str()), (200, "application/zip"), "{}", String::from_utf8_lossy(&body));
+        assert!(cd.contains(&format!("filename=\"{name}\"")), "{cd}");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(body)).unwrap();
+        let mut names: Vec<String> = z.file_names().map(|n| n.unwrap().to_string()).collect();
+        names.sort();
+        assert_eq!(names, files.iter().map(|f| f.0.to_string()).collect::<Vec<_>>());
+        for (inside, rel) in files {
+            let mut got = vec![];
+            std::io::Read::read_to_end(&mut z.by_name(inside).unwrap(), &mut got).unwrap();
+            assert!(got == original(rel), "{inside}: the original file");
+        }
+    }
+    // a song is still the song itself
+    let (status, ct, _, body) = get(one["id"].as_str().unwrap()).await;
+    assert_eq!((status, ct.as_str(), body == original("Alpha/First Album/01 One.flac")), (200, "audio/flac", true));
+    // an id that's nothing
+    let r = s.call("download", &[("id", "nothing-here")]).await;
+    assert_eq!(r["error"]["code"], 70, "{r}");
+}

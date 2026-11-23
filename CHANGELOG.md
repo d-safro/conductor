@@ -10,6 +10,9 @@ What changed in each release, newest first. The full notes for each are on the
 - **Picking a music folder in your app** (Symfonium, Tempus, Ultrasonic, DSub, Feishin…) now shows only that
   folder's music: `musicFolderId` is used by artists, album lists of every kind, random songs, songs by genre, genre
   counts, starred items and search. A folder that doesn't exist is "not found" (code 70), as in Navidrome.
+- **Downloading a whole album** (or an artist) from an app: `download` with an album or artist id sends a zip of the
+  original files ("01 Title.flac", each album in its own folder for an artist), made as it's sent. It said "Song
+  not found" before.
 
 ### Fixed
 - **Two apps asking for the same conversion at once** (two devices, an app that asks twice) each started their own
