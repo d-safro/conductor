@@ -41,12 +41,15 @@ const WAIT_FOR_SLOT: Duration = Duration::from_secs(30);
 /// How long it waits for one of the usual slots before it starts anyway (under the hard limit).
 const WAIT_FOR_USUAL: Duration = Duration::from_millis(500);
 
+/// The conversions being made into the cache: cache file → (its part file, its state).
+type Running = HashMap<PathBuf, (PathBuf, Arc<AtomicU8>)>;
+
 /// The ffmpegs that may run: the usual number, and the most there may be (for memory); and the conversions being
 /// made for the cache now (cache file → its part file and state), for a second request to follow.
 pub struct Slots {
     usual: Arc<tokio::sync::Semaphore>,
     most: Arc<tokio::sync::Semaphore>,
-    running: Arc<Mutex<HashMap<PathBuf, (PathBuf, Arc<AtomicU8>)>>>,
+    running: Arc<Mutex<Running>>,
     started: AtomicUsize,
 }
 
@@ -223,7 +226,7 @@ pub async fn convert(cfg: &Config, slots: &Slots, src: &Path, x: Target, kbps: i
 #[allow(clippy::too_many_arguments)]
 fn start(
     cfg: &Config,
-    running: &mut HashMap<PathBuf, (PathBuf, Arc<AtomicU8>)>,
+    running: &mut Running,
     slots: &Slots,
     permit: Place,
     src: &Path,
