@@ -243,6 +243,7 @@ pub async fn tick(st: &AppState) -> Result<()> {
             }
             sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&mut *tx).await?;
             tx.commit().await?;
+            st.live.playlist_changed(&user, &pid, false);
         }
         for r in &stay {
             if !r.listed {

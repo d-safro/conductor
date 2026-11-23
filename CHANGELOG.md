@@ -4,6 +4,18 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### Changed
+- **Every playlist change is heard live** (`encore.events`' `playlist` event): also when an import fills or makes a
+  playlist (and when it's undone), when ListenBrainz's discovery playlists or Spotify sync fill theirs, when "On trial"
+  changes, and when a song that was asked for arrives and joins its playlist. As before, only the playlist's owner
+  hears.
+
+### Fixed
+- **searchRequestFiles on a read-only server** (and Podium's search) is refused at once with a clear message instead
+  of searching Soulseek for files that couldn't be picked there.
+
 ## 1.4.0 (2026-11-23)
 
 ### New

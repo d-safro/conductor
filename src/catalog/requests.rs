@@ -133,6 +133,10 @@ async fn request(st: &AppState, key: &str) -> Option<acquire::Req> {
 /// Search Soulseek for a song in an admin's own words: every audio file found, the likeliest first (at most 120),
 /// each with what fits (title, artist, album, the automatic search's own score). `{results, total}`.
 pub async fn search_files(st: &AppState, key: &str, q: &str) -> Result<Value, Refusal> {
+    if st.cfg.read_only {
+        // nothing found could be picked (pick_file refuses too), so Soulseek isn't asked
+        return Err(Refusal::Conflict("read-only: nothing is downloaded, so there's nothing to search for".into()));
+    }
     let Some(r) = request(st, key).await else { return Err(Refusal::NotFound("unknown song".into())) };
     let q = q.trim();
     if q.chars().count() < 3 {

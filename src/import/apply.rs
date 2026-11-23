@@ -583,6 +583,7 @@ pub async fn apply(st: &AppState, batch: &str, user: &str, plan: &Plan, opts: &O
         }
         sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&id).execute(&mut *tx).await?;
         tx.commit().await?;
+        st.live.playlist_changed(user, &id, false);
         list_ids.insert(l.name.clone(), id);
     }
     done += plan.playlists.len() as f64;
@@ -766,6 +767,8 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
     let lists: HashSet<&str> = changes.iter().filter(|c| c.0 == "playlist" || c.0 == "playlist_songs").map(|c| c.1.as_str()).collect();
     let mut unfollow = HashSet::new();
     let mut podcasts = vec![];
+    // the playlists this put back or deleted, for the owner's apps once it's all undone
+    let mut changed_lists: Vec<(String, bool)> = vec![];
     for (kind, item, before) in &changes {
         match kind.as_str() {
             "star" | "album_star" => {
@@ -777,6 +780,7 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
             }
             "playlist" => {
                 sqlx::query("DELETE FROM playlist WHERE id = ? AND owner_id = ?").bind(item).bind(&user).execute(&mut *tx).await?;
+                changed_lists.push((item.clone(), true));
             }
             "playlist_songs" => {
                 let there: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM playlist WHERE id = ?").bind(item).fetch_one(&mut *tx).await?;
@@ -788,6 +792,7 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
                 for (i, t) in ids.iter().enumerate() {
                     sqlx::query("INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES (?, ?, ?)").bind(item).bind(i as i64).bind(t).execute(&mut *tx).await?;
                 }
+                changed_lists.push((item.clone(), false));
             }
             "rating" => {
                 let b: i64 = before.as_deref().and_then(|b| b.parse().ok()).unwrap_or(0);
@@ -834,6 +839,9 @@ pub async fn undo(st: &AppState, batch: &str) -> Result<()> {
     sqlx::query("DELETE FROM import_change WHERE batch_id = ?").bind(batch).execute(&mut *tx).await?;
     sqlx::query("UPDATE import_batch SET status = 'undone', done_at = ? WHERE id = ?").bind(now()).bind(batch).execute(&mut *tx).await?;
     tx.commit().await?;
+    for (id, deleted) in &changed_lists {
+        st.live.playlist_changed(&user, id, *deleted);
+    }
     // shows (and their saved files) last, once the rest is undone
     for id in podcasts {
         let _ = crate::api::podcasts::unsubscribe(st, &id).await;

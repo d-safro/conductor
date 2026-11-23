@@ -340,6 +340,7 @@ pub async fn sync_once(st: &AppState) -> Result<(usize, usize, usize)> {
             }
         }
         tx.commit().await?;
+        st.live.playlist_changed(&owner, &pid, false);
         info!(playlist = %name, have = ids.len(), of = songs.len(), "Spotify playlist synced");
     }
     Ok((lists.len(), have_n, asked_n))

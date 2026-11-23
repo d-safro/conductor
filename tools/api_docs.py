@@ -115,7 +115,8 @@ EXTENSIONS = {
                       "`command` (`device`, `seq`: a command waits; take it with devicePoll), `jam` (a guest did "
                       "something or came: jamPoll), `sync` (`key`, `by`, `at`: syncGet), `nowPlaying` "
                       "(getNowPlaying), `scan` (`state` started / progress / finished, `scanning`, `count`), "
-                      "`playlist` (`id`, `deleted`: one of yours), `requests` (what you asked for changed: a song "
+                      "`playlist` (`id`, `deleted`: one of yours, changed by an app, a friend, an import or its undo, "
+                      "ListenBrainz or Spotify sync, On trial, a mix, or a song that arrived for it), `requests` (what you asked for changed: a song "
                       "found, its download's progress by 10%, arrived, kept; an admin hears of any change, Lidarr's "
                       "albums too: getRequests; looked at every 3 s, so at most that often).\n"
                       "- A keep-alive comment (`: keep-alive`, with the newest `id:`) every 20 s, so proxies keep "
@@ -145,7 +146,8 @@ EXTENSIONS = {
                          ("searchRequestFiles", "Admins. `id`, `query` (at least 3 letters; by default the request's "
                           "own `query`): search Soulseek your own way. Every audio file found, the likeliest first (at "
                           "most 120 of `total`), with what fits: `match` (what the automatic search would take), "
-                          "`titleOk`, `artistOk`, `sameAlbum`. Waits for the search (10–40 s; one at a time)."),
+                          "`titleOk`, `artistOk`, `sameAlbum`. Waits for the search (10–40 s; one at a time). Refused on a "
+                          "read-only server (nothing found could be picked)."),
                          ("pickRequestFile", "Admins. `id`, `user`, `file`, `size` (a search result's `user`, "
                           "`filename` and `size`): download that file for a song waiting for one (searching, not "
                           "found, failed or set aside); it's filed, scanned and hearted / added like any download. "
