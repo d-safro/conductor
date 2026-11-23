@@ -4,7 +4,7 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased
+## 1.4.0 (2026-11-23)
 
 ### New
 - **Live news of what you asked for** (`encore.events`' `requests` event): an app with the event stream open hears
