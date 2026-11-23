@@ -18,6 +18,10 @@ What changed in each release, newest first. The full notes for each are on the
 - **`conductor restore --force`** of a backup without settings in it (a server set up with environment settings only,
   as in Docker) moved the config.toml in use aside and put nothing back: the server came up without its music
   folders. The settings in use are now only replaced by the backup's own.
+- **Commands run with sudo on the Linux package's data** (`sudo conductor --config /var/lib/conductor/config.toml
+  restore …`, `setup`, `user add`, …) left the database and key owned by root, and the service, running as the
+  conductor user, stopped with "attempt to write a readonly database". What a command run as root makes in a data
+  folder that belongs to someone else is now given to that folder's owner.
 
 ## 1.0.0 (2026-11-22)
 
