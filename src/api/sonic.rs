@@ -1,7 +1,9 @@
 //! AudioMuse-AI (optional; its analysis is an AI app, off unless set up): sound-alike songs and paths
 //! between two sounds, and the read-only recommendation calls Encore makes at `/rest/audiomuse/<endpoint>`.
 //! AudioMuse knows songs by the ids the server gave them (Navidrome's, kept by the import), so its answers map
-//! straight onto the library. When it isn't set up or doesn't answer, these say "not available" and apps fall back.
+//! straight onto the library. When it isn't set up or doesn't answer, Conductor's own analysis answers
+//! (crate::audio, `audio_analysis`); when that hasn't analysed the song either, these say "not available" and apps
+//! fall back.
 //!
 //! AudioMuse's API (as documented for its Jellyfin plugin): similar_tracks?item_id=&n=&eliminate_duplicates= → a list
 //! of {item_id, title, author, distance}; find_path?start_song_id=&end_song_id=&max_steps= → {path: [...], total_distance}.
@@ -88,7 +90,7 @@ pub async fn passthrough(State(st): State<Shared>, Path(endpoint): Path<String>,
 fn not_available() -> ApiError {
     ApiError {
         http: StatusCode::OK,
-        ..ApiError::not_found("Sound-alike songs (AudioMuse-AI isn't set up or hasn't analysed this song)")
+        ..ApiError::not_found("Sound-alike songs (this song hasn't been analysed yet)")
     }
 }
 
@@ -105,8 +107,28 @@ async fn am_get(c: &Ctx, endpoint: &str, q: &[(&str, String)]) -> Result<Value, 
     resp.json().await.map_err(|_| not_available())
 }
 
-/// Library songs that sound like this one, by AudioMuse (None when it isn't set up or answering).
+/// Library songs that sound like this one: AudioMuse's, else from Conductor's own analysis (mostly the sound). None
+/// when neither knows the song.
 pub async fn similar_ids(st: &super::AppState, id: &str, n: usize) -> Option<Vec<String>> {
+    either(st, id, n, crate::audio::SOUNDS_LIKE).await
+}
+
+/// The same for songs that go with this one (song radio): AudioMuse's, else the sound blended with which artists go
+/// with which (crate::similar).
+pub async fn similar_songs(st: &super::AppState, id: &str, n: usize) -> Option<Vec<String>> {
+    either(st, id, n, crate::audio::GOES_WITH).await
+}
+
+async fn either(st: &super::AppState, id: &str, n: usize, sound: f32) -> Option<Vec<String>> {
+    if let Some(ids) = audiomuse_ids(st, id, n).await.filter(|v| !v.is_empty()) {
+        return Some(ids);
+    }
+    let found = crate::audio::sounds_like(st, id, n, sound).await?;
+    Some(found.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Library songs that sound like this one, by AudioMuse (None when it isn't set up or answering).
+async fn audiomuse_ids(st: &super::AppState, id: &str, n: usize) -> Option<Vec<String>> {
     let base = st.cfg.audiomuse_url.clone()?;
     let mut r = client().get(format!("{}/api/similar_tracks", base.trim_end_matches('/'))).query(&[
         ("item_id", id),
@@ -159,27 +181,43 @@ async fn entries(c: &Ctx, found: Vec<(String, Option<f64>)>, skip: &[&str]) -> V
     out
 }
 
-/// getSonicSimilarTracks?id=&count= → {"sonicMatch": [{"entry": song, "similarity": 0.9}, …]}
+/// getSonicSimilarTracks?id=&count= → {"sonicMatch": [{"entry": song, "similarity": 0.9}, …]}: AudioMuse's, else
+/// Conductor's own (crate::audio).
 pub async fn similar(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("id")?.to_string();
     let count = c.p.int("count").unwrap_or(50).clamp(1, 500);
-    let v = am_get(
-        c,
-        "similar_tracks",
-        &[("item_id", id.clone()), ("n", count.to_string()), ("eliminate_duplicates", "true".into())],
-    )
-    .await?;
-    let list = entries(c, songs_in(&v), &[&id]).await;
+    if c.st.cfg.audiomuse_url.is_some()
+        && let Ok(v) =
+            am_get(c, "similar_tracks", &[("item_id", id.clone()), ("n", count.to_string()), ("eliminate_duplicates", "true".into())])
+                .await
+    {
+        let list = entries(c, songs_in(&v), &[&id]).await;
+        if !list.is_empty() {
+            return ok(json!({ "sonicMatch": list }));
+        }
+    }
+    let found = crate::audio::sounds_like(&c.st, &id, count as usize, crate::audio::SOUNDS_LIKE).await.ok_or_else(not_available)?;
+    let list = entries(c, found.into_iter().map(|(x, s)| (x, Some(1.0 - s as f64))).collect(), &[&id]).await;
     if list.is_empty() {
         return Err(not_available());
     }
     ok(json!({ "sonicMatch": list }))
 }
 
-/// findSonicPath?startSongId=&endSongId=&count= → {"sonicPath": [{"entry": song}, …]}
+/// findSonicPath?startSongId=&endSongId=&count= → {"sonicPath": [{"entry": song}, …]}: AudioMuse's, else Conductor's
+/// own (crate::audio).
 pub async fn path(c: &Ctx) -> Result<Reply, ApiError> {
     let (a, b) = (c.p.req("startSongId")?.to_string(), c.p.req("endSongId")?.to_string());
     let count = c.p.int("count").unwrap_or(25).clamp(2, 200);
-    let v = am_get(c, "find_path", &[("start_song_id", a), ("end_song_id", b), ("max_steps", count.to_string())]).await?;
-    ok(json!({ "sonicPath": entries(c, songs_in(&v), &[]).await }))
+    if c.st.cfg.audiomuse_url.is_some()
+        && let Ok(v) =
+            am_get(c, "find_path", &[("start_song_id", a.clone()), ("end_song_id", b.clone()), ("max_steps", count.to_string())]).await
+    {
+        let list = entries(c, songs_in(&v), &[]).await;
+        if !list.is_empty() {
+            return ok(json!({ "sonicPath": list }));
+        }
+    }
+    let found = crate::audio::path(&c.st, &a, &b, count as usize).await.ok_or_else(not_available)?;
+    ok(json!({ "sonicPath": entries(c, found.into_iter().map(|x| (x, None)).collect(), &[]).await }))
 }

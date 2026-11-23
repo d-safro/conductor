@@ -63,7 +63,9 @@ each ended, and what comes next.
 ## After 1.0
 - ~~Live updates (an event stream) instead of long-polls.~~ Done: `encore.events`, and Encore uses it (its long-polls
   and timers stay for other servers). Still to do: Discord presence from it.
-- "Sounds like" from the audio itself, without AudioMuse-AI.
+- ~~"Sounds like" from the audio itself, without AudioMuse-AI.~~ Done: every song is analysed once in the background
+  (tempo, beat, brightness, timbre, key, dynamics, from a minute of it), and similar songs, Instant Mix, sonic paths and
+  the mixes go by how songs sound, blended with which artists go together (`audio_analysis`).
 - ~~Loudness levelling on the server.~~ Done: songs without ReplayGain tags are measured in the background and the
   apps get the measured gain as their ReplayGain; Recital and share links level songs too; and conversions are
   levelled for apps that can't level themselves (`level_conversions`).

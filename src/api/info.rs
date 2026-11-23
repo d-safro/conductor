@@ -1,6 +1,7 @@
 //! Artist and album info and similar songs, from what the server knows: Deezer (the artist's picture and related
 //! artists, when the catalog is on), Wikipedia through MusicBrainz (biographies, album notes, album pictures from
-//! the Cover Art Archive; see wiki.rs) and AudioMuse (songs that sound alike, when it's set up). Without either,
+//! the Cover Art Archive; see wiki.rs) and AudioMuse (songs that sound alike, when it's set up; else Conductor's own
+//! analysis of the audio, crate::audio). Without any of them,
 //! similar songs come from the same artist and genre.
 //!
 //!   getArtistInfo2?id=&count=&includeNotPresent=   biography, images, MusicBrainz id, similar artists (yours;
@@ -176,9 +177,10 @@ pub async fn similar_songs(c: &Ctx, id3: bool) -> Result<Reply, ApiError> {
             ids.push(x);
         }
     };
-    // 1. songs that sound like it (AudioMuse)
+    // 1. songs that sound like it and go with it (AudioMuse, else Conductor's own analysis blended with the artists
+    //    that go with it: crate::audio)
     if let Some(t) = &seed_track
-        && let Some(found) = super::sonic::similar_ids(&c.st, t, count).await
+        && let Some(found) = super::sonic::similar_songs(&c.st, t, count).await
     {
         for x in found {
             push(&mut ids, x);

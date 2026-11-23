@@ -193,7 +193,7 @@ pub struct Measurement {
 }
 
 /// ffmpeg at the lowest priority there is: below everything else on the computer, conversions too.
-fn ffmpeg(cfg: &Config) -> tokio::process::Command {
+pub(crate) fn ffmpeg(cfg: &Config) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(cfg.ffmpeg());
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(unix)]
@@ -483,9 +483,11 @@ pub async fn pass(st: &AppState) -> Result<Pass> {
     Ok(rep)
 }
 
-/// Started with the server: a pass now and then, while `loudness_analysis` is on.
+/// Started with the server: a pass now and then, while `loudness_analysis` is on; then, in the same round and as
+/// gently, what songs sound like (`audio_analysis`, crate::audio), at most `audio::ROUND` at a time so that new songs
+/// are levelled first. One after the other, never both at once.
 pub async fn worker(st: Arc<AppState>) {
-    if !st.cfg.loudness_analysis {
+    if !st.cfg.loudness_analysis && !st.cfg.audio_analysis {
         return;
     }
     tokio::time::sleep(START_DELAY).await;
@@ -493,12 +495,22 @@ pub async fn worker(st: Arc<AppState>) {
         while st.scan.scanning.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        if let Err(e) = pass(&st).await {
+        let mut rest = LOOK_EVERY;
+        if st.cfg.loudness_analysis
+            && let Err(e) = pass(&st).await
+        {
             warn!("{e:#}");
             // (ffmpeg missing: look again in an hour, it may have been installed)
-            tokio::time::sleep(Duration::from_secs(3600)).await;
+            rest = Duration::from_secs(3600);
         }
-        tokio::time::sleep(LOOK_EVERY).await;
+        let round = crate::audio::Budget { songs: usize::MAX, time: crate::audio::ROUND };
+        if rest == LOOK_EVERY
+            && let Err(e) = crate::audio::pass(&st, round).await
+        {
+            warn!("{e:#}");
+            rest = Duration::from_secs(3600);
+        }
+        tokio::time::sleep(rest).await;
     }
 }
 

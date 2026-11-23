@@ -140,6 +140,14 @@ anything:
 - `loudness_threads`: 1. The first pass over songs without ReplayGain tags takes a while (about 10 s a 4-minute song
   on a Pi 4 with its rest; 10,000 songs in a day or so), at the lowest priority, once. 2 finishes it twice as fast on
   a 4-core Pi with nothing else to do.
+- `audio_analysis` ("sounds like" from the audio): leave it on. Each song is analysed once, after the levelling pass
+  and as gently: a 4-minute song takes about 2.4 s on a Pi 4 core (2.1 s for ffmpeg to decode a minute of it, 0.3 s
+  for the numbers), then a rest of half that, so 10,000 songs take about 10 hours, once. On a desktop it's 0.14 s a
+  song (0.12 s + 0.03 s). While it works: ffmpeg about 70 MB, Conductor about 12 MB more. The index for finding
+  sound-alikes takes about 2 MB for 3,000 songs (60-80 MB at 100,000, built in 0.1 s), and a song's nearest take
+  4 ms to work out at 100,000 songs on a desktop, then they're kept. (Measured with a Pi 4 core stood in for by a
+  CPU quota of 10%, at which a 4-minute FLAC converts to mp3 in 17 s, a little slower than a Pi 4; held to 4 cores at
+  88% in all, a song took 0.24 s.) `loudness_threads` sets how many songs are analysed at once too.
 - `scan_threads` (per music folder): 1 for a USB hard disk or an SD card (a spinning disk is slower with more), 2 (the
   default) for an SSD.
 - Apps: let them play the original files on Wi-Fi (no conversion at all), and convert only on mobile data.

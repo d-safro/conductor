@@ -31,8 +31,11 @@ pub struct Config {
     /// Sound levelling: measure the loudness of songs whose files have no ReplayGain tags, in the background (ffmpeg
     /// at the lowest priority), so the apps can play every song at the same loudness. See src/loudness.rs.
     pub loudness_analysis: bool,
-    /// how many songs are measured at the same time
+    /// how many songs are measured at the same time (and analysed, for audio_analysis)
     pub loudness_threads: usize,
+    /// "Sounds like" from the audio itself: analyse what each song sounds like, in the background (after sound
+    /// levelling, as gently), for similar songs and mixes without AudioMuse-AI. See src/audio/.
+    pub audio_analysis: bool,
     /// Levelling in conversions, for apps that don't level songs themselves: off, track or album (the album's gain
     /// where the song has one, else its own). See `level_conversions` in src/api/media.rs.
     pub level_conversions: Levelling,
@@ -197,6 +200,7 @@ impl Default for Config {
             transcode_cache_mb: 1000,
             loudness_analysis: true,
             loudness_threads: 1,
+            audio_analysis: true,
             level_conversions: Levelling::Off,
             level_conversions_clients: vec![],
             jam_listen: "127.0.0.1:4535".into(),

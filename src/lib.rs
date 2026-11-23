@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod api;
+pub mod audio;
 pub mod auth;
 pub mod backup;
 pub mod brand;

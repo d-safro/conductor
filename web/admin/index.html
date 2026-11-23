@@ -92,7 +92,7 @@
     <section id="status">
       <div class="grid" id="tiles"></div>
       <div class="card"><h2>Music folders</h2><table id="libs"></table>
-        <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p><p class="muted" id="levelNote"></p></div>
+        <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p><p class="muted" id="levelNote"></p><p class="muted" id="soundNote"></p></div>
       <div class="card"><h2>Connected services</h2><div id="vpnLine"></div><div id="services"></div></div>
     </section>
     <section id="downloads" hidden>
@@ -175,6 +175,9 @@ async function loadStatus() {
   // sound levelling: songs without ReplayGain tags measured so far
   const lv = s.levelling || {};
   $('levelNote').textContent = !lv.songs ? '' : `Sound levelling: ${lv.measured < lv.songs ? `measured ${lv.measured} of ${lv.songs} songs without ReplayGain tags${lv.on ? '' : ' (off: loudness_analysis)'}` : `all ${lv.songs} songs without ReplayGain tags measured`}${lv.unreadable ? ` · ${lv.unreadable} couldn't be read` : ''}`;
+  // sounds like: songs whose sound is analysed so far
+  const sd = s.sound || {};
+  $('soundNote').textContent = !sd.songs ? '' : `Sounds like: ${sd.analysed < sd.songs ? `analysed ${sd.analysed} of ${sd.songs} songs${sd.on ? '' : ' (off: audio_analysis)'}` : `all ${sd.songs} songs analysed`}${sd.unreadable ? ` · ${sd.unreadable} couldn't be analysed` : ''}`;
   const v = s.vpn || {};
   $('vpnLine').innerHTML = s.downloadsPaused
     ? `<p class="err"><b>Downloads paused: the VPN is down.</b> ${esc(v.problem || '')} Checked again every few minutes.</p>`
