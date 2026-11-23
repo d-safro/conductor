@@ -63,6 +63,9 @@ What changed in each release, newest first. The full notes for each are on the
 - **The one-time `/setup` link is no longer written to the logs** (the journal, `docker logs`, conductor.log): its
   token lets whoever has it make the first admin. Conductor still prints it when it runs in a terminal; the logs say
   where to find it, and `conductor setup link` shows it (in Docker: `docker exec conductor conductor setup link`).
+- **Removing the Linux package** (.deb, .rpm) left systemd still listing a `conductor.service` whose file was gone,
+  until the next reboot or `systemctl daemon-reload`; that's now run on removal. The guide says how to remove the
+  `conductor` user and `/var/lib/conductor` by hand, which removing the package keeps on purpose.
 
 ## 1.0.0 (2026-11-22)
 

@@ -22,6 +22,16 @@ service that runs as its own `conductor` user with its data in `/var/lib/conduct
 `sudo -u conductor conductor --config /var/lib/conductor/config.toml setup`, then `sudo systemctl enable --now
 conductor`; that user needs to be able to read your music). It recommends ffmpeg.
 
+Removing the package (`apt remove conductor`, `dnf remove conductor`, `pacman -R conductor`) stops the service and
+takes the program and the service away, but keeps the `conductor` user and `/var/lib/conductor` (the database, the
+settings, the daily backups), so installing it again carries on where it was. If you don't want them any more,
+remove them by hand (the data can't be brought back afterwards, except from a backup kept elsewhere):
+
+```sh
+sudo userdel conductor            # its group of the same name goes with it
+sudo rm -rf /var/lib/conductor
+```
+
 **Windows:** download `conductor-<version>-windows-x86_64.zip`, unpack it, and in PowerShell as administrator:
 
 ```powershell
