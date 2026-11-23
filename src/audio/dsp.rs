@@ -82,7 +82,7 @@ pub fn to_bytes(v: &[f32]) -> Vec<u8> {
 
 /// The numbers back from the database (None when they aren't `DIMS` of them).
 pub fn from_bytes(b: &[u8]) -> Option<Vec<f32>> {
-    (b.len() == DIMS * 4).then(|| b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    (b.len() == DIMS * 4).then(|| b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
 /// A mean and a spread, added to one value at a time.

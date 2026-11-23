@@ -2,7 +2,7 @@
 
 <!-- Written by tools/api_docs.py from its EXTENSIONS, the handlers in src/ and docs/api/shapes/: edit those, then run it. -->
 
-AudioMuse-AI's sound-alikes, and Encore's own AudioMuse calls passed through (`/rest/audiomuse/<endpoint>`, an allow-list, read-only; the login is never passed on).
+Sound-alikes: AudioMuse-AI's when it's set up, else from Conductor's own analysis of the audio (`audio_analysis`; "not available" for a song not analysed yet), and Encore's own AudioMuse calls passed through (`/rest/audiomuse/<endpoint>`, an allow-list, read-only; the login is never passed on).
 
 ## `getSonicSimilarTracks`
 

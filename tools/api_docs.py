@@ -51,8 +51,10 @@ EXTENSIONS = {
                          "fetch=true asks for them."),
                         ("getDiscoveries", "Songs you might like that you don't have."),
                         ("getSongDiscoveries", "The same, around one song.")], ""),
-    "encore.sonic": ("AudioMuse-AI's sound-alikes, and Encore's own AudioMuse calls passed through "
-                     "(`/rest/audiomuse/<endpoint>`, an allow-list, read-only; the login is never passed on).",
+    "encore.sonic": ("Sound-alikes: AudioMuse-AI's when it's set up, else from Conductor's own analysis of the audio "
+                     "(`audio_analysis`; \"not available\" for a song not analysed yet), and Encore's own AudioMuse "
+                     "calls passed through (`/rest/audiomuse/<endpoint>`, an allow-list, read-only; the login is "
+                     "never passed on).",
                      [("getSonicSimilarTracks", "Songs that sound like this one."),
                       ("findSonicPath", "A path of songs from one to another.")], ""),
     "encore.collabPlaylists": ("Chorus: friends add songs to your playlist through a link on the Jam listener "

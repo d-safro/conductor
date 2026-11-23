@@ -61,8 +61,11 @@ pub struct Index {
     z: Vec<f32>,
     /// the median distance between two songs: what "far" is in this library
     typical: f32,
-    near: Mutex<HashMap<usize, Arc<Vec<(usize, f32)>>>>,
+    near: Mutex<HashMap<usize, Nearest>>,
 }
+
+/// A song's nearest: (song, distance), nearest first.
+pub type Nearest = Arc<Vec<(usize, f32)>>;
 
 fn same_song_key(artist: &str, title: &str) -> String {
     let t = title.split(['(', '[']).next().unwrap_or(title).trim().to_lowercase();
@@ -162,7 +165,7 @@ impl Index {
     }
 
     /// A song's `KEPT` nearest (itself not among them), nearest first; worked out once.
-    pub fn nearest(&self, i: usize) -> Arc<Vec<(usize, f32)>> {
+    pub fn nearest(&self, i: usize) -> Nearest {
         if let Some(v) = self.near.lock().unwrap_or_else(|e| e.into_inner()).get(&i) {
             return v.clone();
         }

@@ -277,7 +277,7 @@ impl Lib {
         count.into_iter().take(n).map(|(a, _)| a).collect()
     }
 
-    /// Library songs that sound like this one (AudioMuse), else ones of the same genre.
+    /// Library songs that sound like this one (AudioMuse, else Conductor's own analysis), else ones of the same genre.
     async fn sounds_like(&self, st: &AppState, i: usize, n: usize) -> Vec<usize> {
         let s = &self.songs[i];
         if let Some(ids) = crate::api::sonic::similar_ids(st, &s.id, n).await {

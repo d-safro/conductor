@@ -143,7 +143,7 @@ async fn decode_from(cfg: &Config, path: &Path, start: f64) -> Result<Vec<f32>, 
         (Ok(s), _) => return Err(Failed::File(format!("ffmpeg {s}: {last}"))),
         (Err(e), _) => return Err(Failed::File(e.to_string())),
     }
-    Ok(pcm.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    Ok(pcm.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
 /// Run `f` on a thread of its own at the lowest priority (Linux: nice 19 for that thread only), so the numbers are
