@@ -4,6 +4,14 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.1.2 (2026-11-23)
+
+### Fixed
+- **Albums still completed from a deluxe edition** (for real this time; checked against Deezer itself): an edition
+  with two takes of one of your songs counted it twice ("Sticky Fingers (Super Deluxe)" has "Wild Horses (2009 Mix)"
+  and "(Acoustic Version)"), so it looked like the better match. Each of your songs now counts once, and both of
+  Deezer's searches are always looked at. "Sticky Fingers" shows its 10 songs. Albums are matched again.
+
 ## 1.1.1 (2026-11-22)
 
 ### Fixed

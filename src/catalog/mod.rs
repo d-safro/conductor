@@ -352,7 +352,6 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     }
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
-    let mine = edition_tier(name);
     for q in [format!(r#"artist:"{artist}" album:"{clean}""#), format!("{artist} {clean}")] {
         let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
             // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless the
@@ -367,13 +366,12 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
                 cands.push(a);
             }
         }
-        // the exact search can find only a bigger edition ("Sticky Fingers (Super Deluxe)") while the album itself
-        // ("Sticky Fingers (Remastered)") comes up only in the plain one: look there too unless it's here already
-        if cands.iter().any(|c| edition_tier(s(c, "title")) <= mine.max(1)) {
-            break;
-        }
+        // both searches, always: the exact one can find only a bigger edition ("Sticky Fingers (Super Deluxe)", and
+        // a live album that isn't a match) while the album itself ("Sticky Fingers (Remastered)") comes up only in
+        // the plain one. (One more request per album; the match is kept for a week.)
     }
     let want = alk(name);
+    let mine = edition_tier(name);
     let mut scored: Vec<(f64, Value)> = vec![];
     for a in cands {
         let sim = ratio(&want, &alk(s(&a, "title")));
@@ -396,7 +394,10 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
     let mut best: Option<(f64, String)> = None;
     for (sc, a) in scored.into_iter().take(4) {
         let tracks = album_tracks(st, &n(&a, "id").to_string()).await;
-        let cover = tracks.iter().filter(|t| have.contains(&tk(s(t, "title")))).count() as f64 / have.len().max(1) as f64;
+        // how many of your songs it has, each counted once: a deluxe edition with two takes of one of them ("Wild
+        // Horses (2009 Mix)" and "(Acoustic Version)") isn't a better match for it
+        let keys: HashSet<String> = tracks.iter().map(|t| tk(s(t, "title"))).collect();
+        let cover = have.iter().filter(|h| keys.contains(*h)).count() as f64 / have.len().max(1) as f64;
         // (all else the same: the one with fewer songs, nearer the album as it came out)
         let total = sc + cover * 3.0 - tracks.len() as f64 * 0.001;
         if best.as_ref().is_none_or(|(b, _)| total > *b) {

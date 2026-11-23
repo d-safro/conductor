@@ -832,9 +832,9 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                 // only a remaster and a super deluxe edition: the remaster
                 // as Deezer does: its exact search (artist:"…" album:"…") finds only the Super Deluxe; the remaster
                 // comes up only in the plain one
-                "/search/album" if q.contains("sticky") && (q.contains("artist:") || q.contains("artist%3a")) => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5)] }),
+                "/search/album" if q.contains("sticky") && (q.contains("artist:") || q.contains("artist%3a")) => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5), ed(77, "Sticky Fingers Live At The Fonda Theatre", 4)] }),
                 "/search/album" if q.contains("sticky") => json!({ "data": [ed(70, "Sticky Fingers (Super Deluxe)", 5), ed(71, "Sticky Fingers (Remastered)", 3)] }),
-                "/album/70/tracks" => side(7000, &["Brown Sugar", "Sway", "Wild Horses", "Midnight Jam", "Roundhouse Encore"]),
+                "/album/70/tracks" => side(7000, &["Brown Sugar", "Sway", "Wild Horses", "Brown Sugar (Live)", "Sway (Alternate Version)"]),
                 "/album/71/tracks" => side(7100, &["Brown Sugar", "Sway", "Wild Horses"]),
                 // the plain album and an anniversary edition: the plain one
                 "/search/album" if q.contains("bleed") => json!({ "data": [ed(73, "Let It Bleed (50th Anniversary Edition)", 4), ed(74, "Let It Bleed", 3)] }),
