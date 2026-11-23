@@ -75,6 +75,11 @@ The detailed list. The [README](../README.md) has the short version.
   listening stats (`getListeningStats`: week / month / year / all, local time), the year / month in review
   (`getListeningReview`: top fives, genres, first song, longest streak, peak hour, discoveries) and real folders
   (`getFolder`).
+- **Live updates** (`encore.events`): one event stream per app (`eventStream`, server-sent events) says at once
+  what changed for its account (its devices and the commands sent to them, its Jam, its synced settings, its
+  playlists) and what everyone sees (now playing, the library scan), so Encore needn't long-poll or ask on a timer.
+  Resumes with `Last-Event-ID` (or says "resync"), a keep-alive every 20 s for proxies, at most 20 streams per
+  account, and an app that doesn't read is dropped instead of buffered.
 - **Chorus** (collaborative playlists): `playlistShareStart/End`, `playlistShares`; friends open the link (on the Jam
   listener, `/jam/pl/<token>`), search your library and add songs to the real playlist; they can take out only
   their own. Links last 30 days.

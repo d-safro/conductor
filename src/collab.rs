@@ -351,7 +351,7 @@ async fn action(
     if kind != "add" && kind != "remove" {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some((pid, _)) = live(&st.db, &token).await else { return ended() };
+    let Some((pid, owner)) = live(&st.db, &token).await else { return ended() };
     if limited(&token, &crate::jam::client_ip(&h, peer), 30) {
         return err(StatusCode::TOO_MANY_REQUESTS, "Slow down a little");
     }
@@ -408,6 +408,7 @@ async fn action(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong");
         }
         let _ = sqlx::query("UPDATE playlist SET updated_at = ? WHERE id = ?").bind(now()).bind(&pid).execute(&st.db).await;
+        st.live.playlist_changed(&owner, &pid, false); // a friend added a song: the owner's apps show it at once
         // it wasn't in the playlist: whoever added it through the link before (the owner took it out since) no
         // longer owns it
         let _ = sqlx::query("DELETE FROM playlist_share_add WHERE token = ? AND track_id = ?").bind(&token).bind(&sid).execute(&st.db).await;
@@ -442,6 +443,7 @@ async fn action(
     if set_entries(&st, &pid, &keep).await.is_err() {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong");
     }
+    st.live.playlist_changed(&owner, &pid, false);
     let _ = sqlx::query("DELETE FROM playlist_share_add WHERE token = ? AND track_id = ? AND guest = ?")
         .bind(&token)
         .bind(&sid)

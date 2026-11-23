@@ -4,6 +4,14 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **Live updates** (`encore.events`): an app keeps one event stream open and hears at once what changed for its
+  account: a command from your other device, a device starting or stopping a song, a friend in your Jam or adding to
+  your playlist, a setting changed on another device, what's playing, the library scan. Encore uses it instead of
+  asking every few seconds. Only what the account may see; resumes after a dropped connection; works behind Caddy.
+
 ## 1.1.2 (2026-11-23)
 
 ### Fixed

@@ -6,6 +6,7 @@ pub(crate) use browse::word_conditions;
 mod catalog_api;
 mod dj;
 mod encore;
+pub mod events;
 mod imports;
 mod info;
 mod for_you;
@@ -428,6 +429,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.mixes", "versions": [1] },
             { "name": "encore.scrobbling", "versions": [1] },
             { "name": "encore.forYou", "versions": [1] },
+            { "name": "encore.events", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -527,6 +529,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "jamState" => encore::jam_state(c).await,
         "jamPoll" => encore::jam_poll(c).await,
         "jamEnd" => encore::jam_end(c).await,
+        "eventStream" => events::stream(c).await,
         "getPodcasts" => podcasts::get_podcasts(c).await,
         "getNewestPodcasts" => podcasts::newest(c).await,
         "getPodcastEpisode" => podcasts::get_episode(c).await,

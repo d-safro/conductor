@@ -199,6 +199,7 @@ async fn create(State(st): State<Shared>, h: HeaderMap, Json(b): Json<Body>) -> 
         return err(StatusCode::INTERNAL_SERVER_ERROR, "database");
     }
     let _ = smart::refresh(&st, &id, 0).await;
+    st.live.playlist_changed(&u.id, &id, false);
     match load(&st, &id).await {
         Some(r) => Json(to_json(&r)).into_response(),
         None => err(StatusCode::INTERNAL_SERVER_ERROR, "database"),
@@ -240,6 +241,7 @@ async fn update(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>, 
         return err(StatusCode::INTERNAL_SERVER_ERROR, "database");
     }
     let _ = smart::refresh(&st, &id, 0).await;
+    st.live.playlist_changed(&cur.owner_id, &id, false);
     match load(&st, &id).await {
         Some(r) => Json(to_json(&r)).into_response(),
         None => err(StatusCode::NOT_FOUND, "not found"),
@@ -256,6 +258,7 @@ async fn remove(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String>) 
         let _ = tokio::fs::remove_file(p).await;
     }
     let _ = sqlx::query("DELETE FROM playlist WHERE id = ?").bind(&id).execute(&st.db).await;
+    st.live.playlist_changed(&cur.owner_id, &id, true);
     Json(json!({ "id": id })).into_response()
 }
 
@@ -294,6 +297,7 @@ async fn set_image(State(st): State<Shared>, h: HeaderMap, Path(id): Path<String
     if let Some(old) = cur.image_path.and_then(|p| st.cfg.own_playlist_image(&p)) {
         let _ = tokio::fs::remove_file(old).await;
     }
+    st.live.playlist_changed(&cur.owner_id, &id, false);
     Json(json!({ "id": id })).into_response()
 }
 
@@ -311,5 +315,6 @@ async fn delete_image(State(st): State<Shared>, h: HeaderMap, Path(id): Path<Str
         .bind(&id)
         .execute(&st.db)
         .await;
+    st.live.playlist_changed(&cur.owner_id, &id, false);
     Json(json!({ "id": id })).into_response()
 }

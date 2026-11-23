@@ -87,7 +87,7 @@ pub async fn device_hello(c: &Ctx) -> Result<Reply, ApiError> {
         d.seen_ms = now_ms();
         listing(&mut g, &c.user.id)
     };
-    c.st.live.bump();
+    devices_changed(c, id);
     ok(json!({ "devices": { "device": devices } }))
 }
 
@@ -104,8 +104,13 @@ pub async fn device_state(c: &Ctx) -> Result<Reply, ApiError> {
         d.state = state;
         d.seen_ms = now_ms();
     }
-    c.st.live.bump();
+    devices_changed(c, id);
     empty()
+}
+
+/// The account's devices changed (`id` said hello, changed what it plays, or went): long-polls and event streams.
+fn devices_changed(c: &Ctx, id: &str) {
+    c.st.live.publish("devices", live::Audience::User(c.user.id.clone()), json!({ "device": id }));
 }
 
 fn gone() -> ApiError {
@@ -146,7 +151,7 @@ pub async fn device_command(c: &Ctx) -> Result<Reply, ApiError> {
         }
         json!({ "seq": d.seq, "online": now_ms() - d.seen_ms < live::ONLINE_SECS * 1000 })
     };
-    c.st.live.bump();
+    c.st.live.publish_command(&c.user.id, target, json!({ "device": target, "seq": out["seq"] }));
     ok(json!({ "deviceCommand": out }))
 }
 
@@ -183,8 +188,12 @@ pub async fn device_poll(c: &Ctx) -> Result<Reply, ApiError> {
 
 pub async fn device_bye(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.get("id").unwrap_or("").to_string();
-    c.st.live.lock().devices.remove(&(c.user.id.clone(), id));
-    c.st.live.bump();
+    let had = c.st.live.lock().devices.remove(&(c.user.id.clone(), id.clone())).is_some();
+    if had {
+        devices_changed(c, &id);
+    } else {
+        c.st.live.bump();
+    }
     empty()
 }
 
@@ -249,6 +258,8 @@ pub async fn sync_set(c: &Ctx) -> Result<Reply, ApiError> {
         .bind(&by)
         .execute(&c.st.db)
         .await?;
+        // the account's other devices fetch it at once (encore.events)
+        c.st.live.publish("sync", live::Audience::User(c.user.id.clone()), json!({ "key": key, "by": by, "at": at }));
         json!({ "value": value, "at": at, "by": by })
     } else {
         let (v, a, b) = cur.unwrap();

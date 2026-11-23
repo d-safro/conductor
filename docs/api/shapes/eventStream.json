@@ -1,0 +1,74 @@
+{
+  "command": [
+    "object"
+  ],
+  "command.device": [
+    "string"
+  ],
+  "command.seq": [
+    "number"
+  ],
+  "devices": [
+    "object"
+  ],
+  "devices.device": [
+    "string"
+  ],
+  "hello": [
+    "object"
+  ],
+  "hello.events": [
+    "array"
+  ],
+  "hello.events[]": [
+    "string"
+  ],
+  "hello.keepalive": [
+    "number"
+  ],
+  "hello.resumed": [
+    "boolean"
+  ],
+  "jam": [
+    "object"
+  ],
+  "nowPlaying": [
+    "object"
+  ],
+  "playlist": [
+    "object"
+  ],
+  "playlist.deleted": [
+    "boolean"
+  ],
+  "playlist.id": [
+    "string"
+  ],
+  "resync": [
+    "object"
+  ],
+  "scan": [
+    "object"
+  ],
+  "scan.count": [
+    "number"
+  ],
+  "scan.scanning": [
+    "boolean"
+  ],
+  "scan.state": [
+    "string"
+  ],
+  "sync": [
+    "object"
+  ],
+  "sync.at": [
+    "number"
+  ],
+  "sync.by": [
+    "string"
+  ],
+  "sync.key": [
+    "string"
+  ]
+}
