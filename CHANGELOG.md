@@ -4,6 +4,14 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **Live news of what you asked for** (`encore.events`' `requests` event): an app with the event stream open hears
+  within a few seconds when what its account asked for (`encore.requests`) changes: a song found, its download moving
+  on (by 10%), arrived, kept or set aside; an admin hears of any change, Lidarr's albums too. A hint, as the other
+  events are: the app fetches the list with getRequests. Nothing is looked at while no stream is open.
+
 ## 1.3.0 (2026-11-23)
 
 ### New

@@ -468,3 +468,82 @@ pub async fn list(st: &AppState, viewer: &User, f: &Filter<'_>, offset: usize, c
         "downloadsPaused": crate::vpn::paused(st), "canPick": can_pick, "request": page,
     }))
 }
+
+// ───────────── what changed (encore.events) ─────────────
+
+#[derive(sqlx::FromRow)]
+struct PrintRow {
+    key: String,
+    status: String,
+    found: bool,
+    trial: bool,
+    keep: bool,
+    mix: Option<String>,
+    folder: String,
+    local_id: Option<String>,
+    arrived_at: Option<i64>,
+    trial_user: Option<String>,
+    slsk_user: Option<String>,
+    slsk_file: Option<String>,
+    up_user: Option<String>,
+    up_file: Option<String>,
+}
+
+/// What each account's list (`list`) shows, as one number per account (user id → it), to tell when it changed
+/// without sending the list: a song's state, its progress in steps of 10%, why it was asked for, on trial or kept,
+/// here or not. An admin's covers every song and Lidarr's albums; anyone else's only what they asked for. Asks
+/// slskd how its downloads are going only while one is under way.
+pub async fn fingerprints(st: &AppState) -> Result<HashMap<String, u64>> {
+    use std::hash::{Hash, Hasher};
+    fn hash(v: impl Hash) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+    let rows: Vec<PrintRow> = sqlx::query_as(
+        "SELECT key, status, found, trial, keep, mix, folder, local_id, arrived_at, trial_user, slsk_user, slsk_file,
+                up_user, up_file FROM request",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    let albums: Vec<(i64, String)> = sqlx::query_as("SELECT album_id, status FROM lidarr_grab").fetch_all(&st.db).await?;
+    let mut wants: HashMap<String, Vec<(String, bool, String)>> = HashMap::new();
+    for (key, uid, star, pl) in sqlx::query_as::<_, (String, String, bool, String)>("SELECT key, user_id, star, playlist_id FROM request_want")
+        .fetch_all(&st.db)
+        .await?
+    {
+        wants.entry(key).or_default().push((uid, star, pl));
+    }
+    let users: Vec<(String, bool)> = sqlx::query_as("SELECT id, is_admin FROM user").fetch_all(&st.db).await?;
+    let busy = rows.iter().any(|r| r.status == "queued" || r.status == "upgrading") || albums.iter().any(|a| a.1 == "downloading");
+    let live = if busy { transfers(st).await } else { HashMap::new() };
+
+    // (the sum of the rows' numbers: the same whatever order they come in)
+    let mut all = 0u64;
+    let mut mine: HashMap<&str, u64> = HashMap::new();
+    for r in &rows {
+        let (u, f) = if r.status == "upgrading" { (&r.up_user, &r.up_file) } else { (&r.slsk_user, &r.slsk_file) };
+        let (state, pc, _) = song_state(&r.status, r.found, live.get(&(u.clone().unwrap_or_default(), f.clone().unwrap_or_default())));
+        let w = wants.get(&r.key).map(Vec::as_slice).unwrap_or(&[]);
+        let why = (w.iter().any(|x| x.1), w.iter().any(|x| !x.2.is_empty()), r.mix.as_deref(), r.folder.as_str());
+        let n = hash((&r.key, state, (pc / 10.0) as i64, r.status == "upgrading", why, r.trial, r.keep, &r.local_id, r.arrived_at));
+        all = all.wrapping_add(n);
+        let mut who: Vec<&str> = r.trial_user.as_deref().into_iter().chain(w.iter().map(|x| x.0.as_str())).collect();
+        who.sort_unstable();
+        who.dedup();
+        for id in who {
+            let e = mine.entry(id).or_default();
+            *e = e.wrapping_add(n);
+        }
+    }
+    for a in &albums {
+        all = all.wrapping_add(hash(("lidarr", a.0, &a.1)));
+    }
+    Ok(users
+        .into_iter()
+        .map(|(id, admin)| {
+            let n = if admin { all } else { mine.get(id.as_str()).copied().unwrap_or(0) };
+            (id, n)
+        })
+        .collect())
+}

@@ -14,6 +14,8 @@
 //!   keep-alive still not taken at the next, the stream is closed (the app reconnects and resumes).
 //! - At most `live::MAX_STREAMS` per account; a stream from the same device (`id`) replaces its older one.
 //! - The login is checked again at every keep-alive: a changed password or a deleted API key ends the stream.
+//! - `requests`: what an account asked for (`encore.requests`) changed. Those change in many places (the downloads
+//!   worker, slskd's progress, Podium, trials ending), so a watcher compares each account's list every few seconds.
 
 use std::{
     convert::Infallible,
@@ -41,7 +43,7 @@ const MAX_BATCH: usize = 32;
 /// How long an app waits before reconnecting (the SSE `retry:` field), ms.
 const RETRY_MS: u64 = 5000;
 /// What the stream may send.
-pub const KINDS: &[&str] = &["hello", "resync", "devices", "command", "jam", "sync", "nowPlaying", "scan", "playlist"];
+pub const KINDS: &[&str] = &["hello", "resync", "devices", "command", "jam", "sync", "nowPlaying", "scan", "playlist", "requests"];
 
 fn device_ok(id: &str) -> bool {
     (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -116,6 +118,7 @@ pub async fn stream(c: &Ctx) -> Result<Reply, ApiError> {
         return Err(ApiError { http: StatusCode::TOO_MANY_REQUESTS, ..ApiError::new(0, "Too many event streams open for this account") });
     };
     watch_scans(&c.st);
+    watch_requests(&c.st);
     let last = live.last_event();
     // where to start: after what the app saw, when that's still kept; else from now, and the app fetches anew
     let (start, resumed, resync) = match resume.as_deref().map(|r| live.parse_event_id(r)) {
@@ -272,6 +275,41 @@ fn watch_scans(st: &Shared) {
             } else {
                 woken.await;
             }
+        }
+    });
+}
+
+/// `requests` events: each account's list of requests (`encore.requests`) is looked at every few seconds while
+/// any stream is open, and an account whose list changed hears (an admin: any change). Its changes come from many
+/// places (the downloads worker, slskd's progress, Podium, the API, trials ending), so the lists themselves are
+/// compared rather than each place telling. One watcher per server, from the first stream on.
+fn watch_requests(st: &Shared) {
+    if st.live.requests_watch.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let weak = Arc::downgrade(st);
+    tokio::spawn(async move {
+        let mut was: Option<std::collections::HashMap<String, u64>> = None;
+        loop {
+            let every = match weak.upgrade() {
+                Some(st) => st.live.requests_every(),
+                None => return,
+            };
+            tokio::time::sleep(every).await;
+            let Some(st) = weak.upgrade() else { return };
+            if st.live.stream_count(None) == 0 {
+                was = None; // nobody listening: start afresh when someone is
+                continue;
+            }
+            let Ok(now) = crate::catalog::requests::fingerprints(&st).await else { continue };
+            if let Some(was) = &was {
+                for (user, n) in &now {
+                    if was.get(user).is_some_and(|w| w != n) {
+                        st.live.publish("requests", Audience::User(user.clone()), json!({}));
+                    }
+                }
+            }
+            was = Some(now);
         }
     });
 }
