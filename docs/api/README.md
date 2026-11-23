@@ -31,3 +31,4 @@ from 1.0 a field can be added but never dropped or changed ([STABILITY.md](../ST
 | [`encore.automix`](encore.automix.md) | `getMixInfo?id=&id=…` | done (needs `mixinfo_dir`) |
 | [`encore.forYou`](encore.forYou.md) | `getForYou?count=` | done (Conductor's own "sounds like"; no AudioMuse needed) |
 | [`encore.scrobbling`](encore.scrobbling.md) | `getScrobbling`, `setListenBrainz?token=` (empty unlinks), `lastfmLinkStart` → `{url, token}`, `lastfmLinkFinish?token=` → `waiting \| linked \| expired`, `lastfmUnlink` | done (per user; Last.fm needs `lastfm_api_key` and `lastfm_secret`; see `src/api/scrobbling.rs`) |
+| [`encore.events`](encore.events.md) | `eventStream?id=&lastEventId=` → `text/event-stream`: devices, commands, Jam, sync, now playing, scan, playlists | done (Conductor's own; replaces Encore's long-polls and timers) |

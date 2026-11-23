@@ -37,7 +37,8 @@ each ended, and what comes next.
     sign-in on phones and its tab marking, names for screen readers, a landmark on the share page.
 
 ## After 1.0
-- Live updates (an event stream) instead of long-polls; Discord presence from it.
+- ~~Live updates (an event stream) instead of long-polls.~~ Done: `encore.events`, and Encore uses it (its long-polls
+  and timers stay for other servers). Still to do: Discord presence from it.
 - "Sounds like" from the audio itself, without AudioMuse-AI.
 - ~~Loudness levelling on the server.~~ Done: songs without ReplayGain tags are measured in the background and the
   apps get the measured gain as their ReplayGain; Recital and share links level songs too. Still to do: levelling
