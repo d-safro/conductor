@@ -4,6 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+- **"Sounds like" from the audio itself**, without AudioMuse-AI (`audio_analysis`, on): every song is analysed once
+  in the background, after sound levelling and as gently (a minute of it: tempo and beat, brightness, timbre, key,
+  dynamics), and Instant Mix (`getSonicSimilarTracks`, `findSonicPath`), song radio (`getSimilarSongs`, blended with
+  which artists go together) and the mixes go by how songs sound. AudioMuse-AI still comes first when it's set up.
+  A rescan keeps the analysis, a changed file is analysed again, and Podium shows how far it is. The answers are the
+  same shape as before; apps need no change.
+
 ## 1.4.0 (2026-11-23)
 
 ### New

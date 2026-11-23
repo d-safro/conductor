@@ -35,6 +35,16 @@ The detailed list. The [README](../README.md) has the short version.
   the same sittings, related artists from online info (when on), the same genres and genres sharing a word ("Russian
   Rock" and "Rock"), the script of names and titles (Cyrillic with Cyrillic…), and the era. Kept for ten minutes and
   after each scan; ~10-20 ms an answer. Songs you've hearted or played come first.
+- **Sounds like, from the audio itself** (`audio_analysis`, no AudioMuse-AI needed): every song is analysed once in
+  the background, after sound levelling and as gently (a minute from its middle, decoded by ffmpeg at the lowest
+  priority and worked out in Conductor at the lowest priority, one song at a time with a rest after each, never during
+  a scan, played songs first). 53 numbers a song: tempo and how clear the beat is, how percussive, the spectrum's
+  brightness, spread, rolloff and flatness, zero crossings, level and dynamics, a chroma profile (the key, roughly) and
+  MFCCs (the timbre). Songs are compared by their numbers as z-scores across the library, weighed; each song's nearest
+  are worked out once and kept. `getSonicSimilarTracks` (Instant Mix) and `findSonicPath` answer from it, mostly the
+  sound; `getSimilarSongs` (song radio) blends the sound with which artists go together; the mixes (Daily Mix, Discover
+  Weekly…) use it for "sounds like". One of each song, not too many by one artist. Kept in its own table, so a rescan
+  keeps it; a changed file is analysed again; after a restart it goes on where it stopped. Progress in Podium.
 - **Conversions** (ffmpeg, for apps asking for mp3 / opus / ogg / aac or a lower bitrate): written to a cache while
   the app is sent them, so each takes ffmpeg a second or two whatever the app's speed; played again (and seeking) from
   the cache (`transcode_cache_mb`, least recently used out first; a changed file is converted again). `transcode_slots`
@@ -164,7 +174,8 @@ The detailed list. The [README](../README.md) has the short version.
   Set `lidarr_url`, `lidarr_api_key`, and `lidarr_downloads` when Lidarr sees the downloads folder at another path.
 - **AudioMuse-AI** (optional; set `audiomuse_url` / `audiomuse_token`): `getSonicSimilarTracks` and `findSonicPath`
   from AudioMuse's analysis, and Encore's read-only recommendation calls at `/rest/audiomuse/<endpoint>` (an
-  allow-list, logins never passed on). Without it these say "not available" and apps fall back.
+  allow-list, logins never passed on). AudioMuse comes first; without it (or for a song it doesn't know) Conductor's
+  own analysis answers, and only for a song not analysed yet do these say "not available" (apps fall back).
 - **Scrobbling, for everyone** (`encore.scrobbling`): each user links their own **ListenBrainz** (their token,
   checked with ListenBrainz) and **Last.fm** (approved on Last.fm's own page; the server needs `lastfm_api_key` and
   `lastfm_secret`), in Encore's settings. Plays and "playing now" go to every service they linked; plays a service
