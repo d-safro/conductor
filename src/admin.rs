@@ -709,6 +709,10 @@ async fn set_setting(State(st): State<Shared>, h: HeaderMap, Json(b): Json<SetSe
     let Some(s) = reference().into_iter().find(|s| s.name == b.name) else {
         return err(StatusCode::BAD_REQUEST, "That isn't a setting that can be changed here (music folders and the data folder: conductor setup)");
     };
+    // one save at a time, from reading the files to writing them (and putting them back): two admins saving at once
+    // each kept the other's change out
+    static SAVING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _saving = SAVING.lock().await;
     let path = config_file(&st);
     let (before, mut d) = match (crate::prelude::Draft::load(&path), crate::prelude::Draft::load(&path)) {
         (Ok(a), Ok(b)) => (a, b),

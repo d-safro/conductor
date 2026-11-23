@@ -148,3 +148,76 @@ fn sigterm_stops_it_cleanly() {
     assert_eq!(wal(&s.data), 0, "the database was closed: everything is in conductor.db");
     assert!(get(s.port, "/health", &[]).is_none(), "nothing listens any more");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn settings_saved_at_once_are_all_kept() {
+    // two admins saving in Podium at the same moment: each save read config.toml, changed one thing and wrote it all
+    // back (truncated first), so one change could be lost, or a save could read a file half written
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, format!("data_dir = {:?}\njam_listen = \"\"\ncatalog = false\n", data.to_str().unwrap())).unwrap();
+    let cfg = conductor::config::Config::load(Some(config.clone())).unwrap();
+    let pool = conductor::db::open(&data.join("conductor.db")).await.unwrap();
+    let secrets = conductor::auth::Secrets::load_or_create(&data.join("secret.key")).unwrap();
+    conductor::auth::create_user(&pool, &secrets, "boss", "boss-pass-1", true).await.unwrap();
+    let st = std::sync::Arc::new(conductor::api::AppState::new(pool, secrets, cfg, vec![]));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = conductor::api::router(st);
+    tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+    let http = reqwest::Client::builder().cookie_store(true).build().unwrap();
+    let r = http
+        .post(format!("{base}/admin/api/login"))
+        .header("x-conductor", "1")
+        .json(&serde_json::json!({"username": "boss", "password": "boss-pass-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let numbers = [
+        "scan_interval_min",
+        "transcode_slots",
+        "transcode_cache_mb",
+        "backup_keep",
+        "podcast_keep",
+        "podcast_clean_days",
+        "trial_per_day",
+        "lidarr_interval_min",
+        "lidarr_albums_per_run",
+        "vpn_check_secs",
+    ];
+    let secrets = ["lastfm_api_key", "listenbrainz_token", "audiomuse_token"];
+    let mut saves = vec![];
+    for round in 0..4 {
+        for (i, name) in numbers.iter().chain(&secrets).enumerate() {
+            let value = if secrets.contains(name) { serde_json::json!(format!("key-{round}-{i}")) } else { serde_json::json!(round * 100 + i + 1) };
+            let rq = http
+                .post(format!("{base}/admin/api/settings"))
+                .header("x-conductor", "1")
+                .json(&serde_json::json!({"name": name, "value": value}));
+            saves.push(tokio::spawn(async move { rq.send().await.unwrap() }));
+        }
+        for s in saves.drain(..) {
+            let r = s.await.unwrap();
+            let code = r.status();
+            assert!(code.is_success(), "{code} {}", r.text().await.unwrap());
+        }
+        let c = conductor::config::Config::load(Some(config.clone())).unwrap();
+        let t: toml::Table = toml::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        for (i, name) in numbers.iter().enumerate() {
+            assert_eq!(t.get(*name).and_then(|v| v.as_integer()), Some((round * 100 + i + 1) as i64), "{name} kept (round {round})");
+        }
+        assert_eq!(c.lastfm_api_key.as_deref(), Some(format!("key-{round}-{}", numbers.len()).as_str()), "a secret kept");
+        assert_eq!(c.data_dir, data, "what was there stays");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let sp = conductor::config::secrets_path(&config);
+        assert_eq!(std::fs::metadata(&sp).unwrap().permissions().mode() & 0o777, 0o600, "secrets.toml stays private");
+    }
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).filter(|n| n.to_string_lossy().ends_with(".tmp")).collect();
+    assert!(left.is_empty(), "no temporary files left: {left:?}");
+}

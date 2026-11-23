@@ -53,6 +53,10 @@ What changed in each release, newest first. The full notes for each are on the
   installed by 1.0.0 too).
 - **`install.ps1 -OpenFirewall` run again** (an upgrade) added another firewall rule each time. It now replaces the
   one it made, so there's one rule, for the port given last.
+- **Podium's Settings, saved by two admins at once**, could lose one of the changes, or fail with an error about
+  secrets.toml (both saves wrote the same temporary file). Saves now take turns, and config.toml is written whole
+  under another name and then put in place, as secrets.toml already was (which stays readable only by Conductor), so
+  nothing ever reads half a file.
 
 ## 1.0.0 (2026-11-22)
 
