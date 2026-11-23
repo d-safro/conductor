@@ -39,7 +39,9 @@ each ended, and what comes next.
 ## After 1.0
 - Live updates (an event stream) instead of long-polls; Discord presence from it.
 - "Sounds like" from the audio itself, without AudioMuse-AI.
-- Loudness levelling on the server (ReplayGain applied when converting).
+- ~~Loudness levelling on the server.~~ Done: songs without ReplayGain tags are measured in the background and the
+  apps get the measured gain as their ReplayGain; Recital and share links level songs too. Still to do: levelling
+  baked into conversions, for apps that can't level themselves.
 - Jukebox mode (the server plays on its own speakers).
 
 ## Done on the way (0.4.0, 0.5.0)

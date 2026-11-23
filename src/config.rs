@@ -28,6 +28,11 @@ pub struct Config {
     pub transcode_slots: usize,
     /// the most the conversions kept in the cache may take, in MB
     pub transcode_cache_mb: u64,
+    /// Sound levelling: measure the loudness of songs whose files have no ReplayGain tags, in the background (ffmpeg
+    /// at the lowest priority), so the apps can play every song at the same loudness. See src/loudness.rs.
+    pub loudness_analysis: bool,
+    /// how many songs are measured at the same time
+    pub loudness_threads: usize,
     /// Address of the Jam guest page (the only thing to put on the internet). Empty string: no Jam listener.
     pub jam_listen: String,
     /// The guest page's public address (e.g. https://music.example.com:8443). Without it, Jam can't start.
@@ -175,6 +180,8 @@ impl Default for Config {
             ffmpeg: None,
             transcode_slots: 0,
             transcode_cache_mb: 1000,
+            loudness_analysis: true,
+            loudness_threads: 1,
             jam_listen: "127.0.0.1:4535".into(),
             jam_public_url: None,
             podcast_dir: None,

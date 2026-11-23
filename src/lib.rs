@@ -14,6 +14,7 @@ pub mod db;
 pub mod import_nd;
 pub mod jam;
 pub mod library;
+pub mod loudness;
 pub mod net;
 pub mod listenbrainz;
 pub mod live;

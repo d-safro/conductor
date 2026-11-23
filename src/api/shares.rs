@@ -293,7 +293,8 @@ async fn state(
         .ok()
         .flatten();
         if let Some((title, artist, album, ms)) = t {
-            songs.push(json!({ "n": n, "title": title, "artist": artist, "album": album, "duration": ms / 1000 }));
+            let rg = crate::loudness::replay_gain_of(&st.db, id).await; // (the page levels songs with it)
+            songs.push(json!({ "n": n, "title": title, "artist": artist, "album": album, "duration": ms / 1000, "replayGain": rg }));
         }
     }
     (StatusCode::OK, [(header::CACHE_CONTROL, "no-store")], Json(json!({ "owner": owner, "description": description, "song": songs })))

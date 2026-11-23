@@ -92,7 +92,7 @@
     <section id="status">
       <div class="grid" id="tiles"></div>
       <div class="card"><h2>Music folders</h2><table id="libs"></table>
-        <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p></div>
+        <p><button class="act primary" id="scan">Scan now</button> <span class="muted" id="scanNote"></span></p><p class="muted" id="levelNote"></p></div>
       <div class="card"><h2>Connected services</h2><div id="vpnLine"></div><div id="services"></div></div>
     </section>
     <section id="downloads" hidden>
@@ -172,6 +172,9 @@ async function loadStatus() {
   $('libs').innerHTML = '<tr><th>Name</th><th>Folder</th><th>State</th></tr>' + s.libraries.map((l) =>
     `<tr><td>${esc(l.name)}</td><td><code>${esc(l.path)}</code></td><td>${l.connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>'}</td></tr>`).join('');
   $('scanNote').textContent = s.scanning ? 'Scanning…' : `Last scan: ${when(s.lastScan)}`;
+  // sound levelling: songs without ReplayGain tags measured so far
+  const lv = s.levelling || {};
+  $('levelNote').textContent = !lv.songs ? '' : `Sound levelling: ${lv.measured < lv.songs ? `measured ${lv.measured} of ${lv.songs} songs without ReplayGain tags${lv.on ? '' : ' (off: loudness_analysis)'}` : `all ${lv.songs} songs without ReplayGain tags measured`}${lv.unreadable ? ` · ${lv.unreadable} couldn't be read` : ''}`;
   const v = s.vpn || {};
   $('vpnLine').innerHTML = s.downloadsPaused
     ? `<p class="err"><b>Downloads paused: the VPN is down.</b> ${esc(v.problem || '')} Checked again every few minutes.</p>`

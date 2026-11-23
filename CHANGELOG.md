@@ -4,6 +4,18 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## Unreleased
+
+### New
+
+- **Sound levelling for every song.** Songs whose files have no ReplayGain tags (most downloads) are measured in the
+  background, gently (ffmpeg at the lowest priority, one at a time, never during a scan), and the apps get the
+  measured gain as their ReplayGain, so Encore, Symfonium and Feishin play every song at the same loudness. Tags in
+  the file always win; a rescan keeps what was measured; a changed file is measured again. Podium shows how far it
+  is ("measured 812 of 1676"). Settings: `loudness_analysis` (on), `loudness_threads` (1).
+- **Recital and share links level songs too**, with the same gains, never past a song's peak (nothing clips). A
+  button beside Recital's volume turns it off.
+
 ## 1.0.0 (2026-11-22)
 
 1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with the fixes
