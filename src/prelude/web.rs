@@ -1,6 +1,7 @@
 //! The web side of Prelude: /setup makes the first admin from a browser. It's open only while there's no admin,
-//! and then only from this computer or with the one-time token Conductor prints when it starts (like Jupyter's), so
-//! nobody else on the network can claim the server first. Once an admin exists it's closed for good. Everything
+//! and then only from this computer or with the one-time token Conductor makes when it starts (like Jupyter's: shown
+//! on its terminal, and by `conductor setup link`; never in a log), so nobody else on the network can claim the
+//! server first. Once an admin exists it's closed for good. Everything
 //! else is set up with `conductor setup` on the server.
 
 use axum::{
@@ -16,6 +17,10 @@ use serde_json::{Value, json};
 use crate::api::Shared;
 
 const PAGE: &str = include_str!("../../web/setup/index.html");
+
+/// The token of the server running now without an admin, kept in its data folder (readable only by Conductor) for
+/// `conductor setup link`: it isn't written to the logs.
+pub const SETUP_TOKEN: &str = "setup-token";
 
 /// Open: there's no admin yet, and the request is from this computer or has the token.
 pub fn allowed(no_users: bool, local: bool, given: Option<&str>, token: &str) -> bool {
@@ -102,6 +107,7 @@ async fn admin(State(st): State<Shared>, req: Request) -> Response {
     match crate::auth::create_first_admin(&st.db, &st.secrets, name, pw).await {
         Ok(Some(_)) => {
             tracing::info!(user = name, "first admin made at /setup; /setup is closed now");
+            let _ = std::fs::remove_file(st.cfg.data_dir.join(SETUP_TOKEN));
             Json(json!({ "ok": true })).into_response()
         }
         Ok(None) => closed(),

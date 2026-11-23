@@ -49,7 +49,8 @@ jobs:
       - run: cargo audit
   packages:
     # The Linux packages (.deb, .rpm, Arch) from the static program, each installed in a container of its system:
-    # the program runs, the service's user, folder and unit are there, and removing it takes the program away.
+    # the program runs, the service's user, folder and unit are there, and removing it takes the program away and has
+    # systemd forget the unit (a stand-in systemctl writes down what it's asked).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +73,8 @@ jobs:
             got=$(dpkg-query -W -f="\${Version}" conductor); echo "installed $got"
             case $VERSION in *-*) dpkg --compare-versions "$got" lt "${VERSION%%-*}";; *) test "$got" = "$VERSION";; esac
             conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
-            apt-get remove -y -qq conductor >/dev/null; test ! -e /usr/bin/conductor'
+            mkdir -p /run/systemd/system; printf "#!/bin/sh\necho \"\$*\" >> /tmp/systemctl.log\n" > /usr/bin/systemctl; chmod +x /usr/bin/systemctl
+            apt-get remove -y -qq conductor >/dev/null; test ! -e /usr/bin/conductor; grep -q "daemon-reload$" /tmp/systemctl.log'
       - name: Fedora
         run: |
           docker run --rm -e VERSION -v "$PWD/dist:/dist" fedora:latest sh -euc '
@@ -80,7 +82,8 @@ jobs:
             got=$(rpm -q --qf "%{VERSION}" conductor); echo "installed $got"
             case $VERSION in *-*) test "$(rpm --eval "%{lua: print(rpm.vercmp(\"$got\", \"${VERSION%%-*}\"))}")" = -1;; *) test "$got" = "$VERSION";; esac
             conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
-            dnf remove -y -q conductor >/dev/null; test ! -e /usr/bin/conductor'
+            mkdir -p /run/systemd/system; printf "#!/bin/sh\necho \"\$*\" >> /tmp/systemctl.log\n" > /usr/bin/systemctl; chmod +x /usr/bin/systemctl
+            dnf remove -y -q conductor >/dev/null; test ! -e /usr/bin/conductor; grep -q "daemon-reload$" /tmp/systemctl.log'
       - name: Arch
         run: |
           docker run --rm -e VERSION -v "$PWD/dist:/dist" archlinux:latest sh -euc '
@@ -88,7 +91,8 @@ jobs:
             got=$(pacman -Q conductor | cut -d" " -f2); echo "installed $got"
             case $VERSION in *-*) test "$(vercmp "$got" "${VERSION%%-*}-1")" = -1;; *) test "$got" = "$VERSION-1";; esac
             conductor setup --help | head -1; id conductor; test -d /var/lib/conductor; test -f /usr/lib/systemd/system/conductor.service
-            pacman -R --noconfirm conductor >/dev/null; test ! -e /usr/bin/conductor'
+            mkdir -p /run/systemd/system; printf "#!/bin/sh\necho \"\$*\" >> /tmp/systemctl.log\n" > /usr/bin/systemctl; chmod +x /usr/bin/systemctl
+            pacman -R --noconfirm conductor >/dev/null; test ! -e /usr/bin/conductor; grep -q "daemon-reload$" /tmp/systemctl.log'
   windows-service:
     # The release build installed as a Windows service with install.ps1 (as a user would, no questions asked),
     # checked from outside, restarted, then removed with uninstall.ps1.
@@ -130,6 +134,13 @@ jobs:
           Copy-Item target/release/conductor.exe, deploy/windows/install.ps1, deploy/windows/uninstall.ps1 pkg/
           powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -Admin ci
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+          # run again (an upgrade), twice, opening the firewall: one rule, not one per run
+          foreach ($run in 1, 2) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File pkg/install.ps1 -Music C:\ci-music -Listen 127.0.0.1:4533 -SkipAdmin -OpenFirewall
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 run again failed" }
+          }
+          $rules = @(Get-NetFirewallRule -DisplayName "Conductor (music server)" -ErrorAction SilentlyContinue).Count
+          if ($rules -ne 1) { throw "$rules firewall rules after three runs" }
       - name: it runs, starts with Windows, answers /health and a ping, scans and streams the song
         shell: pwsh
         run: |
@@ -162,6 +173,21 @@ jobs:
           if (-not (Test-Path C:\ProgramData\conductor\conductor.log)) { throw "no log file" }
           # a restart (stop and start through Windows) comes back
           Restart-Service Conductor
+          Wait-Healthy
+          # a failure says so (a service-specific exit code, not 0), and Windows starts it again by itself
+          if ((sc.exe qfailureflag Conductor | Out-String) -notmatch 'TRUE') { throw "Windows won't restart it after a failure" }
+          $cfg = "C:\ProgramData\conductor\config.toml"
+          Stop-Service Conductor
+          Copy-Item $cfg "$cfg.ok"
+          Add-Content $cfg "`nlisten = 1"
+          Start-Service Conductor -ErrorAction SilentlyContinue
+          $failed = $false
+          for ($i = 0; $i -lt 40 -and -not $failed; $i++) {
+            $q = sc.exe query Conductor | Out-String
+            if ($q -match 'SERVICE_EXIT_CODE\s+:\s+1\s') { $failed = $true } else { Start-Sleep -Milliseconds 250 }
+          }
+          if (-not $failed) { throw "a failed start wasn't reported as one: $q" }
+          Move-Item -Force "$cfg.ok" $cfg
           Wait-Healthy
           Write-Host "service OK"
       - name: Conductor's log

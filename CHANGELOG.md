@@ -43,6 +43,29 @@ What changed in each release, newest first. The full notes for each are on the
 - **Recording the API contract** (`CONDUCTOR_BLESS=1`) with only some tests running wrote each answer's shape from
   just those tests, so `search3.json` lost fields. Recording now only adds fields; one a whole run never sees is
   listed in `target/tmp/contract-unseen/`, and CI fails on it.
+- **Stopping with systemd or `docker stop`** (SIGTERM) killed Conductor at once, in the middle of whatever it was
+  doing; only Ctrl-C stopped it cleanly. Both now stop it the same way, as does stopping the Windows service: it
+  stops taking new connections, gives songs playing and other requests under way a few seconds to finish, stops its
+  background work and closes the database.
+- **The Windows service is started again when it fails.** It told Windows it had stopped cleanly (exit code 0) even
+  when it failed, so Windows' restart-on-failure never happened. It now reports a failure as one, and the service is
+  set to be started again 10 s after a failure, then 30 s, then every minute (`install.ps1` sets this on a service
+  installed by 1.0.0 too).
+- **`install.ps1 -OpenFirewall` run again** (an upgrade) added another firewall rule each time. It now replaces the
+  one it made, so there's one rule, for the port given last.
+- **Podium's Settings, saved by two admins at once**, could lose one of the changes, or fail with an error about
+  secrets.toml (both saves wrote the same temporary file). Saves now take turns, and config.toml is written whole
+  under another name and then put in place, as secrets.toml already was (which stays readable only by Conductor), so
+  nothing ever reads half a file.
+- **Docker's health check with the address only in config.toml** (Prelude's compose file) asked port 4533, so a
+  server listening elsewhere was "unhealthy" for good. The image now checks with `conductor health`, which reads the
+  settings as the server does and asks its own address (exit 0 or 1; it opens nothing else).
+- **The one-time `/setup` link is no longer written to the logs** (the journal, `docker logs`, conductor.log): its
+  token lets whoever has it make the first admin. Conductor still prints it when it runs in a terminal; the logs say
+  where to find it, and `conductor setup link` shows it (in Docker: `docker exec conductor conductor setup link`).
+- **Removing the Linux package** (.deb, .rpm) left systemd still listing a `conductor.service` whose file was gone,
+  until the next reboot or `systemctl daemon-reload`; that's now run on removal. The guide says how to remove the
+  `conductor` user and `/var/lib/conductor` by hand, which removing the package keeps on purpose.
 
 ## 1.0.0 (2026-11-22)
 

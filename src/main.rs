@@ -2,7 +2,9 @@
 //!
 //!   conductor [--config FILE] [serve]          run the server (default; the first time in a terminal: Prelude first)
 //!   conductor [--config FILE] setup [PART] [--yes …]  Prelude, the setup wizard (also `prelude`; see src/prelude)
+//!   conductor [--config FILE] setup link        the one-time /setup link of the server running without an admin
 //!   conductor [--config FILE] scan [--full]     scan the libraries once and exit
+//!   conductor [--config FILE] health            is the server answering? (exit 0 / 1; Docker's health check)
 //!   conductor [--config FILE] user add NAME [--admin] [--if-missing]   password from CONDUCTOR_PASSWORD or stdin
 //!                                                         (--if-missing: a user that's there is left as it is)
 //!   conductor [--config FILE] user passwd NAME
@@ -40,7 +42,9 @@ mod winsvc;
 const USAGE: &str = "\
 conductor [--config FILE] [serve]           run the server (the first time in a terminal, Prelude first)
 conductor setup [PART] [--yes ...]          Prelude, the setup wizard (conductor setup --help)
+conductor setup link                        the one-time link to make the first admin in a browser
 conductor scan [--full]                     scan the music folders once
+conductor health                            is the server answering? (exit 0 / 1, for health checks)
 conductor user add NAME [--admin] [--if-missing]   (password from CONDUCTOR_PASSWORD or typed)
 conductor user passwd NAME
 conductor apikey NAME [LABEL]               print a new API key
@@ -52,7 +56,7 @@ conductor import <export|folder|spotify|lastfm:USER|deezer:ID> [--dry-run] [--to
 conductor service install|uninstall|start|stop   (Windows)
 ";
 
-/// Stops the server when it completes (Ctrl+C, or the Windows service being stopped).
+/// Stops the server when it completes (Ctrl+C, SIGTERM, or the Windows service being stopped).
 pub type Shutdown = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub fn init_logs(file: Option<std::fs::File>) {
@@ -80,17 +84,42 @@ fn main() -> Result<()> {
     }
     init_logs(None);
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run(
-        args,
-        config_path,
-        Box::pin(async {
-            let _ = tokio::signal::ctrl_c().await;
-        }),
-    ))
+    let res = rt.block_on(run(args, config_path, Box::pin(stop_asked())));
+    // what's still running (a request past its time, a scan's file reads) isn't waited for long
+    rt.shutdown_timeout(Duration::from_secs(1));
+    res
 }
+
+/// Ctrl+C, or SIGTERM: what systemd, `docker stop` and `kill` send. Both stop the server the same way (before, SIGTERM
+/// killed it at once, in the middle of whatever it was doing).
+async fn stop_asked() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+/// How long requests under way (a song playing, a download) get to finish once Conductor is asked to stop. `docker
+/// stop` waits 10 s before it kills; this, then closing the database, fits in that.
+const STOP_GRACE: Duration = Duration::from_secs(4);
 
 pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shutdown) -> Result<()> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Docker's health check, every minute: only the settings are read (no database opened, nothing made)
+    if a.as_slice() == ["health"] {
+        return health(&Config::load(config_path)?).await;
+    }
+    if matches!(a.as_slice(), ["setup" | "prelude", "link"]) {
+        return setup_link(&Config::load(config_path)?);
+    }
     // an older install's default folder (and its config.toml) gets the new name before anything looks for them
     if config_path.is_none() && conductor::config::var_os("CONFIG").is_none() {
         conductor::config::move_old_data_dir();
@@ -235,6 +264,24 @@ pub async fn run(args: Vec<String>, config_path: Option<PathBuf>, shutdown: Shut
     }
 }
 
+/// Asks the server at the address its settings give (the same settings and environment as `serve`: config.toml,
+/// CONDUCTOR_CONFIG, CONDUCTOR_LISTEN). Before, Docker's health check assumed 4533, or CONDUCTOR_LISTEN's port, and a
+/// server whose address was only in config.toml was "unhealthy" for good.
+async fn health(cfg: &Config) -> Result<()> {
+    let mut addr = cfg.listen;
+    if addr.ip().is_unspecified() {
+        addr.set_ip(if addr.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() });
+    }
+    let url = format!("http://{addr}/health");
+    let http = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(4)).build()?;
+    let r = http.get(&url).send().await.with_context(|| format!("nothing answers at {url}"))?;
+    if !r.status().is_success() {
+        bail!("{url}: {}", r.status());
+    }
+    println!("{}", r.text().await.unwrap_or_default());
+    Ok(())
+}
+
 fn read_password() -> Result<String> {
     if let Ok(p) = conductor::config::var("PASSWORD") {
         return Ok(p);
@@ -271,41 +318,106 @@ async fn serve(cfg: Config, pool: db::Db, secrets: Secrets, libs: Vec<(i64, Libr
     let addr = cfg.listen;
     let state = Arc::new(AppState::new(pool, secrets, cfg, libs));
     conductor::import::jobs::recover(&state).await;
-    tokio::spawn(scan_loop(state.clone()));
+    // the background workers, stopped when Conductor is
+    let mut workers = vec![tokio::spawn(scan_loop(state.clone()))];
     conductor::jam::load(&state).await;
-    tokio::spawn(conductor::api::podcasts::worker(state.clone()));
-    tokio::spawn(conductor::catalog::acquire::worker(state.clone()));
-    tokio::spawn(conductor::online::worker(state.clone()));
-    tokio::spawn(conductor::vpn::worker(state.clone()));
-    tokio::spawn(conductor::listenbrainz::worker(state.clone()));
-    tokio::spawn(conductor::scrobble::worker(state.clone()));
+    workers.push(tokio::spawn(conductor::api::podcasts::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::catalog::acquire::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::online::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::vpn::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::listenbrainz::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::scrobble::worker(state.clone())));
     conductor::transcode::clean_parts(&state.cfg);
-    tokio::spawn(conductor::spotify::worker(state.clone()));
-    tokio::spawn(conductor::concerts::worker(state.clone()));
-    tokio::spawn(conductor::mixes::worker(state.clone()));
-    tokio::spawn(conductor::loudness::worker(state.clone()));
-    tokio::spawn(conductor::backup::worker(state.cfg.clone(), state.db.clone()));
+    workers.push(tokio::spawn(conductor::spotify::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::concerts::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::mixes::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::loudness::worker(state.clone())));
+    workers.push(tokio::spawn(conductor::backup::worker(state.cfg.clone(), state.db.clone())));
     if !state.cfg.jam_listen.is_empty() {
         let jam_addr: std::net::SocketAddr = state.cfg.jam_listen.parse().context("jam_listen")?;
         let st = state.clone();
-        tokio::spawn(async move {
+        workers.push(tokio::spawn(async move {
             if let Err(e) = conductor::jam::serve(st, jam_addr).await {
                 warn!("Jam guest page: {e:#}");
             }
-        });
+        }));
     }
 
-    let admins: i64 = auth::admin_count(&state.db).await.unwrap_or(1);
-    if admins == 0 {
-        let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
-        let link = format!("http://{host}:{}/setup?token={}", addr.port(), state.setup_token);
-        info!("No admin yet. Make the first admin at {link} (or run `conductor setup` here)");
-        println!("No admin yet. Make the first admin at {link}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", addr.port());
-    }
-    let app = api::router(state).layer(api::trace_layer());
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("listening on {addr}"))?;
+    let admins: i64 = auth::admin_count(&state.db).await.unwrap_or(1);
+    let token_file = state.cfg.data_dir.join(conductor::prelude::web::SETUP_TOKEN);
+    let _ = std::fs::remove_file(&token_file); // the last start's
+    if admins == 0 {
+        // The link's token lets whoever has it make the first admin: shown on a terminal, never written to a log (the
+        // journal, docker logs, conductor.log). It's kept, readable only by Conductor, for `conductor setup link`.
+        if let Err(e) = conductor::config::write_private(&token_file, state.setup_token.as_bytes()) {
+            warn!("couldn't keep the setup link for `conductor setup link`: {e}");
+        }
+        info!(
+            "No admin yet. Make the first admin at http://127.0.0.1:{}/setup from this computer, from elsewhere with the \
+             one-time link `conductor setup link` shows, or with `conductor setup`",
+            addr.port()
+        );
+        if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            println!("No admin yet. Make the first admin at {}\n(from this computer: http://127.0.0.1:{}/setup; or run `conductor setup`)", setup_url(addr, &state.setup_token), addr.port());
+        }
+    }
+    let db = state.db.clone();
+    let app = api::router(state).layer(api::trace_layer());
     info!(%addr, "Conductor listening");
-    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(shutdown).await?;
+    // asked to stop: no new connections; the requests under way get STOP_GRACE to finish
+    let (stopping_tx, mut stopping) = tokio::sync::watch::channel(false);
+    let asked = async move {
+        shutdown.await;
+        info!("stopping");
+        let _ = stopping_tx.send(true);
+    };
+    let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(asked);
+    let res = tokio::select! {
+        r = std::future::IntoFuture::into_future(server) => r.map_err(anyhow::Error::from),
+        _ = async {
+            if stopping.wait_for(|s| *s).await.is_err() {
+                std::future::pending::<()>().await; // (the server ended by itself: the branch above)
+            }
+            tokio::time::sleep(STOP_GRACE).await;
+        } => {
+            warn!("requests still under way after {} s were cut off", STOP_GRACE.as_secs());
+            Ok(())
+        }
+    };
+    for w in &workers {
+        w.abort();
+    }
+    // everything written goes into conductor.db itself, and the database is closed
+    let close = async {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&db).await;
+        db.close().await;
+    };
+    if tokio::time::timeout(Duration::from_secs(3), close).await.is_err() {
+        warn!("the database took too long to close (it's checked when Conductor starts again)");
+    }
+    let _ = std::fs::remove_file(&token_file); // its link works only while this server runs
+    info!("Conductor stopped");
+    res
+}
+
+fn setup_url(addr: std::net::SocketAddr, token: &str) -> String {
+    let host = if addr.ip().is_unspecified() { "THIS-COMPUTER".to_string() } else { addr.ip().to_string() };
+    format!("http://{host}:{}/setup?token={token}", addr.port())
+}
+
+/// `conductor setup link`: the link to make the first admin in a browser on another computer, of the server running
+/// now with these settings (in Docker: `docker exec conductor conductor setup link`).
+fn setup_link(cfg: &Config) -> Result<()> {
+    let token = std::fs::read_to_string(cfg.data_dir.join(conductor::prelude::web::SETUP_TOKEN)).map(|t| t.trim().to_string()).unwrap_or_default();
+    if token.is_empty() {
+        bail!(
+            "no setup link: Conductor isn't running with these settings, or it has an admin already (sign in at /admin; \
+             `conductor user add NAME --admin` makes another)"
+        );
+    }
+    println!("Make the first admin at {}", setup_url(cfg.listen, &token));
+    println!("(from this computer: http://127.0.0.1:{}/setup; it works until there's an admin)", cfg.listen.port());
     Ok(())
 }
 

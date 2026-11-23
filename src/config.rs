@@ -284,13 +284,37 @@ pub fn default_config_path() -> PathBuf {
 /// a moment, and never half written. On Windows (no modes) its ACL is set instead, as well as it can be: this
 /// account, SYSTEM and administrators only.
 pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_whole(path, bytes, true)
+}
+
+/// Write a file whole (config.toml): under a temporary name beside it, then renamed over the old one, so whoever reads
+/// it meanwhile (a save from Podium at the same moment, Conductor starting) gets the old file or the new one, never
+/// half of one. The old file's permissions (and owner, as root) are kept, and a link is written through, as before.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let real = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    match write_whole(&real, bytes, false) {
+        Ok(()) => Ok(()),
+        // a file that can't be replaced, only written into (one file mounted on its own into a container)
+        Err(e) if real.is_file() => std::fs::write(&real, bytes).map_err(|_| e),
+        Err(e) => Err(e),
+    }
+}
+
+fn write_whole(path: &std::path::Path, bytes: &[u8], private: bool) -> std::io::Result<()> {
     use std::io::Write;
+    // (a name of its own for each write: two at the same moment in one process don't share a temporary file)
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
+    let old = std::fs::metadata(path).ok();
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    {
+    if private {
         use std::os::unix::fs::OpenOptionsExt;
         o.mode(0o600);
     }
@@ -298,11 +322,23 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
         let mut f = o.open(&tmp)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // a leftover temporary file had others' modes
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            if private {
+                f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // a leftover temporary file had others' modes
+            } else if let Some(m) = &old {
+                f.set_permissions(m.permissions())?;
+                // SAFETY: geteuid has no preconditions and can't fail
+                if unsafe { libc::geteuid() } == 0 && m.uid() != 0 {
+                    let _ = std::os::unix::fs::fchown(&f, Some(m.uid()), Some(m.gid()));
+                }
+            }
         }
         #[cfg(windows)]
-        restrict(&tmp); // before anything is written into it
+        if private {
+            restrict(&tmp); // before anything is written into it
+        }
+        #[cfg(not(unix))]
+        let _ = &old;
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -803,6 +839,34 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(tmp.path().join("new.key")).unwrap().permissions().mode() & 0o777, 0o600);
         }
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2, "no temporary file left");
+    }
+
+    #[test]
+    fn whole_files() {
+        // config.toml: replaced whole, keeping its permissions, and through a link to it
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("config.toml");
+        std::fs::write(&p, b"old = 1").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        write_atomic(&p, b"new = 2").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"new = 2");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o640);
+            let link = tmp.path().join("linked.toml");
+            std::os::unix::fs::symlink(&p, &link).unwrap();
+            write_atomic(&link, b"via = 3").unwrap();
+            assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link stays a link");
+            assert_eq!(std::fs::read(&p).unwrap(), b"via = 3");
+            std::fs::remove_file(&link).unwrap();
+        }
+        write_atomic(&tmp.path().join("fresh.toml"), b"a = 1").unwrap();
         assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2, "no temporary file left");
     }
 

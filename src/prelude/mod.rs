@@ -150,7 +150,7 @@ impl Draft {
              # Keys and passwords are in secrets.toml beside this file.\n\n{}",
             toml::to_string_pretty(&self.cfg)?
         );
-        std::fs::write(&self.path, text).with_context(|| format!("writing {}", self.path.display()))?;
+        config::write_atomic(&self.path, text.as_bytes()).with_context(|| format!("writing {}", self.path.display()))?;
         let sp = config::secrets_path(&self.path);
         if self.secrets.is_empty() {
             let _ = std::fs::remove_file(&sp);
@@ -200,6 +200,7 @@ struct Downloader {
 pub const HELP: &str = "conductor setup [PART] [--yes] [settings]   (also: conductor prelude)
 
 Parts: music, server, admin, downloads, vpn, services, domain, import, service (default: all).
+`conductor setup link` shows the one-time link to make the first admin in a browser (Conductor running, no admin yet).
 --yes asks nothing: the settings below, then the current ones, are the answers.
 
   --music PATH (again for more; auto: the one the drives suggest)  --sentinel NAME  --data DIR  --listen ADDR:PORT

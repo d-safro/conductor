@@ -5,8 +5,8 @@
 # Puts conductor.exe (and ffmpeg.exe, if it's in this folder) into C:\Program Files\Conductor, writes
 # C:\ProgramData\conductor\config.toml (kept if it exists), installs and starts the service, and opens port 4533
 # for the local network only if you pass -OpenFirewall. The data folder is readable only by SYSTEM (the service) and
-# administrators: it holds secrets.toml, secret.key and conductor.log (with the one-time /setup link), so run
-# `conductor setup` and `conductor user …` in an administrator window. An older install from when Conductor was
+# administrators: it holds secrets.toml, secret.key and conductor.log, so run `conductor setup`, `conductor setup link`
+# (the one-time /setup link) and `conductor user …` in an administrator window. An older install from when Conductor was
 # called Maestro is moved over: its service removed, its data folder (C:\ProgramData\maestro) and settings kept
 # under the new name.
 param(
@@ -88,6 +88,11 @@ $exe = Join-Path $dir "conductor.exe"
 if (-not $svc) {
   & $exe --config $cfg service install
   if ($LASTEXITCODE -ne 0) { throw "couldn't install the service" }
+} else {
+  # a service installed by an older version: Windows starts it again when it fails (as `service install` sets now),
+  # 10 s later, then 30 s, then every minute, also when it stops with an error of its own
+  sc.exe failure Conductor reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+  sc.exe failureflag Conductor 1 | Out-Null
 }
 try {
   # an admin that's there already (an upgrade) is left as it is
@@ -110,6 +115,8 @@ try {
 }
 if ($LASTEXITCODE -ne 0) { throw "the service didn't start; see $data\conductor.log" }
 if ($OpenFirewall) {
+  # one rule, made again each time (the port may have changed): before, each run added another
+  Get-NetFirewallRule -DisplayName "Conductor (music server)" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   New-NetFirewallRule -DisplayName "Conductor (music server)" -Direction Inbound -Protocol TCP -LocalPort ($Listen.Split(':')[-1]) -Profile Private -Action Allow | Out-Null
   Write-Host "Opened the port for private networks."
 }
