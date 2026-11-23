@@ -4,6 +4,13 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.5.3 (2026-11-23)
+
+### Fixed
+- **After upgrading, albums are completed the new way at once:** an album 1.5.1 or older found nothing for on Deezer
+  was kept as "nothing" for a week, so 1.5.2's "Various Artists" search didn't reach it until then. Those are
+  looked for again now.
+
 ## 1.5.2 (2026-11-23)
 
 ### Fixed
