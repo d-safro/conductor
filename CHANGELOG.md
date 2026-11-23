@@ -4,7 +4,11 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
-## Unreleased
+## 1.0.0 (2026-11-22)
+
+1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with the fixes
+from a third full bug hunt (a review of the server's core, its installing and running, and a run of every feature
+against a real server):
 
 ### Fixed
 - **An album downloaded with someone else's tags** (a song from Soulseek whose album artist is made up: "Sticky
@@ -40,10 +44,10 @@ What changed in each release, newest first. The full notes for each are on the
 - **Setting up the Linux package's service** (`sudo -u conductor conductor --config /var/lib/conductor/config.toml
   setup`) put the database in the conductor user's `~/.local/share/conductor`, while the service reads
   `/var/lib/conductor`: the admin made in setup wasn't there and couldn't sign in. A new settings file given with
-  `--config` now keeps its data beside it (an existing one keeps what it has). If you set it up this way with 1.0.0,
+  `--config` now keeps its data beside it (an existing one keeps what it has). If you set it up this way with 1.0.0-rc.1,
   stop the service, move the files from `/var/lib/conductor/.local/share/conductor` into `/var/lib/conductor`, and
   set `data_dir = "/var/lib/conductor"` in its config.toml.
-- **A backup from 1.0.0-rc.1** was refused by 1.0.0 as "newer than this one": the prerelease was read as 1.0.0.1.
+- **A backup from 1.0.0-rc.1** would have been refused by 1.0.0 as "newer than this one": the prerelease was read as 1.0.0.1.
   A prerelease now comes before its release when a backup's version is checked.
 - **`conductor restore --force`** of a backup without settings in it (a server set up with environment settings only,
   as in Docker) moved the config.toml in use aside and put nothing back: the server came up without its music
@@ -77,12 +81,6 @@ What changed in each release, newest first. The full notes for each are on the
 - **A backup stopped halfway** (Conductor stopped or the computer went off during one) left a whole copy of the
   database in `<data>/.backup-…` and an unfinished `.zip.part`, for good. The daily backup now clears ones over an
   hour old.
-
-## 1.0.0 (2026-11-22)
-
-1.0: from here on, the promises in [docs/STABILITY.md](docs/STABILITY.md) hold. It is 1.0.0-rc.1 with these fixes:
-
-### Fixed
 - **The Arch package's version** left out the prerelease (1.0.0-rc.1 was 1.0.0-1), so pacman would not have replaced
   it with 1.0.0. A prerelease is now spelled the way pacman sorts it (1.0.0rc.1), and CI checks that every installed
   package's version sorts before its release on Debian, Fedora and Arch.
