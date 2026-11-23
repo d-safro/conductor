@@ -11,6 +11,8 @@ What changed in each release, newest first. The full notes for each are on the
   "a whole number"); they now take decimals, and a phone shows a keypad with a decimal point for them.
 - **Search ignored case only in A-Z**: "кино" didn't find "Кино" (SQLite's LIKE folds only ASCII). `search2`/`search3` and
   the Jam and Chorus guest pages now find Cyrillic, Greek and other names typed in any case.
+- **Recital** showed a broken-image icon (in Chrome, Edge and Encore's desktop app) for every album without a cover: the
+  server tells Recital "not found" so it can draw its own square, but the page never did. It now does.
 
 ## 1.0.0 (2026-11-22)
 
