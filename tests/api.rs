@@ -5921,3 +5921,89 @@ async fn an_album_is_completed_from_its_own_edition_not_a_deluxe_one() {
         assert_eq!(titles, want, "{album}");
     }
 }
+
+#[tokio::test]
+async fn a_song_fetched_for_an_album_joins_it_and_the_album_list_is_kept() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let downloads = tmp.path().join("complete");
+    // whoever shares it tagged it as another album, track 4
+    tone(&tmp.path().join("pk.flac"), "Psycho Killer", "Talking Heads", "Greatest Hits", 4, 3);
+    let flac = std::fs::read(tmp.path().join("pk.flac")).unwrap();
+    let (dz, sl) = fake_services(downloads.clone(), flac).await;
+    let s = Arc::new(
+        Server::start_with(|c| {
+            c.deezer_url = dz.clone();
+            c.catalog = true;
+            c.slskd_url = Some(sl.clone());
+            c.slskd_api_key = Some("test".into());
+            c.slskd_downloads = Some(downloads.clone());
+            c.slskd_fast_test = true;
+        })
+        .await,
+    );
+    // your album: one of its two songs, with its own album artist, year and genre, and no disc number
+    let tags = [
+        ("title", "Uh-Oh, Love Comes to Town"),
+        ("artist", "Talking Heads"),
+        ("album_artist", "Champagne Parker"),
+        ("album", "Talking Heads: 77"),
+        ("track", "2"),
+        ("date", "1977"),
+        ("genre", "New Wave"),
+    ];
+    tone_tags(&s.music.join("Talking Heads/77/02 Uh-Oh.flac"), 2, &tags);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let song = s.ok("search3", &[("query", "uh-oh"), ("artistCount", "0"), ("albumCount", "0")]).await["searchResult3"]["song"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| !x["id"].as_str().unwrap().starts_with("dz-"))
+        .unwrap()
+        .clone();
+    let (album, uh) = (song["albumId"].as_str().unwrap().to_string(), song["id"].as_str().unwrap().to_string());
+    let titles = async || -> Vec<String> {
+        let al = s.ok("getAlbum", &[("id", &album)]).await;
+        al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(titles().await, ["⬇ Psycho Killer", "Uh-Oh, Love Comes to Town"]);
+
+    // looked up once, then kept: opening it again reads the kept list (not Deezer)
+    sqlx::query("UPDATE album_song SET track_json = json_set(track_json, '$.title', 'Psycho Killer (kept)') WHERE key = 'dz-t-900'")
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+    assert_eq!(titles().await, ["⬇ Psycho Killer (kept)", "Uh-Oh, Love Comes to Town"]);
+    let kept: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT key, local_id FROM album_song WHERE album_id = ? ORDER BY pos").bind(&album).fetch_all(&s.st.db).await.unwrap();
+    assert_eq!(kept, [("dz-t-900".to_string(), None), ("dz-t-901".to_string(), Some(uh.clone()))]);
+
+    // heart the missing one: it's downloaded and filed into your album, as track 1 on disc 1
+    tokio::spawn(conductor::catalog::acquire::worker(s.st.clone()));
+    s.ok("star", &[("id", "dz-t-900")]).await;
+    let mut local = None;
+    wait_for(
+        async || {
+            let r = s.ok("lookupSongs", &[("id", "dz-t-900")]).await;
+            local = r["lookupSongs"]["song"][0]["songId"].as_str().map(String::from);
+            local.is_some()
+        },
+        "the song to arrive",
+    )
+    .await;
+    let local = local.unwrap();
+    let got = s.ok("getSong", &[("id", &local)]).await["song"].clone();
+    assert_eq!(got["albumId"], album.as_str(), "{got}");
+    assert_eq!((got["track"].as_i64(), got["discNumber"].as_i64(), got["year"].as_i64()), (Some(1), Some(1), Some(1977)));
+    assert_eq!(got["genre"], "New Wave");
+    assert_eq!(got["title"], "Psycho Killer");
+    // the album is whole, in order (a song with no disc number counts as disc 1), and the list points to the download
+    let al = s.ok("getAlbum", &[("id", &album)]).await;
+    let ids: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [local.as_str(), uh.as_str()], "{al}");
+    let kept: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT local_id FROM album_song WHERE album_id = ? ORDER BY pos").bind(&album).fetch_all(&s.st.db).await.unwrap();
+    assert_eq!(kept, [Some(local.clone()), Some(uh)]);
+}

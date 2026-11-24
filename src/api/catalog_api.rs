@@ -153,27 +153,23 @@ async fn complete_album(c: &Ctx, v: &mut Value) {
     let al = &v["album"];
     let Some(mine) = al["song"].as_array().cloned() else { return };
     let (artist, name) = (sv(al, "artist").to_string(), sv(al, "name").to_string());
-    let titles: Vec<String> = mine.iter().map(|s| sv(s, "title").into()).collect();
     // the album's artist tag can be wrong (a downloaded file's, from whoever shared it: "Sticky Fingers" by
     // "Champagne Parker"), so when it finds nothing, also by the artist all its songs have
     let by_songs = mine
         .first()
         .map(|x| sv(x, "artist").to_string())
         .filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case(&artist) && mine.iter().all(|x| sv(x, "artist") == a));
-    let did = match catalog::match_album(&c.st, &artist, &name, &titles).await {
-        Some(d) => Some(d),
-        None => match by_songs {
-            Some(a) => catalog::match_album(&c.st, &a, &name, &titles).await,
-            None => None,
-        },
-    };
-    let Some(did) = did else { return };
+    let artists: Vec<String> = std::iter::once(artist.clone()).chain(by_songs).collect();
     let local: Vec<(String, String)> = mine.iter().map(|s| (sv(s, "id").into(), sv(s, "title").into())).collect();
-    let (plan, extra) = catalog::full_album(&c.st, &did, &local).await;
+    // looked up once, then kept: the album's whole song list, each pointing to your copy or its download
+    let Some(catalog::albums::AlbumSongs { album: a, songs: plan, extra }) =
+        catalog::albums::album_songs(&c.st, sv(al, "id"), &artists, &name, &local).await
+    else {
+        return;
+    };
     if plan.iter().all(|(_, m)| m.is_some()) {
         return; // you have the whole album
     }
-    let a = c.st.catalog.dz.get(&format!("album/{did}"), &[]).await;
     let stat = status_map(c, &track_keys(&plan.iter().map(|p| p.0.clone()).collect::<Vec<_>>())).await;
     let (alid, arid, cover) = (sv(al, "id").to_string(), sv(al, "artistId").to_string(), sv(al, "coverArt").to_string());
     let mut songs = vec![];

@@ -380,7 +380,7 @@ pub async fn pass(st: &AppState) -> Result<Pass> {
     let q = format!(
         "SELECT t.id, t.library_id, t.rel_path, t.album_id, t.lm_size, t.lm_mtime FROM track t JOIN album al ON al.id = t.album_id
           WHERE {NEEDS} AND (t.lm_size IS NULL OR t.lm_size != t.size OR t.lm_mtime != t.mtime)
-          ORDER BY al.created_at DESC, t.album_id, t.disc, t.number"
+          ORDER BY al.created_at DESC, t.album_id, COALESCE(t.disc, 1), t.number"
     );
     type Due = (String, i64, String, String, Option<i64>, Option<i64>);
     let due: Vec<Due> = sqlx::query_as(sqlx::AssertSqlSafe(q)).fetch_all(&st.db).await?;

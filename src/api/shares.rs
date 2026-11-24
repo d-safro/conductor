@@ -108,7 +108,7 @@ async fn expand(c: &Ctx, ids: &[&str]) -> Result<Vec<String>, ApiError> {
             continue;
         }
         let album: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM track WHERE album_id = ? AND missing_since IS NULL ORDER BY disc, number, sort_title",
+            "SELECT id FROM track WHERE album_id = ? AND missing_since IS NULL ORDER BY COALESCE(disc, 1), number, sort_title",
         )
         .bind(id)
         .fetch_all(&c.st.db)

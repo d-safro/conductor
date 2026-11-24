@@ -4,6 +4,20 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.6.0 (2026-11-23)
+
+### New
+- **An album's song list is kept once it's looked up:** opening an album that Conductor matched to Deezer reads the
+  list it kept, not Deezer again, also after a restart and once you have every song. Each song on it points to your
+  copy, or, for one you don't have, to its download, and to your copy once it arrives.
+
+### Fixed
+- **Songs fetched for an album join it:** a song asked for from an album of yours (⬇ on it) is tagged, when it's
+  downloaded, with the album's name, artist, year and genre and its own disc and track number there, instead of
+  keeping the tags of whoever shared it, which made it an album of its own (or several).
+- **Songs with no disc number play in order with those on disc 1:** they were listed before disc 1, so an album with
+  some songs tagged "disc 1" and others with no disc started in the middle.
+
 ## 1.5.3 (2026-11-23)
 
 ### Fixed
