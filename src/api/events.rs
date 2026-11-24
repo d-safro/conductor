@@ -43,7 +43,7 @@ const MAX_BATCH: usize = 32;
 /// How long an app waits before reconnecting (the SSE `retry:` field), ms.
 const RETRY_MS: u64 = 5000;
 /// What the stream may send.
-pub const KINDS: &[&str] = &["hello", "resync", "devices", "command", "jam", "sync", "nowPlaying", "scan", "playlist", "requests"];
+pub const KINDS: &[&str] = &["hello", "resync", "devices", "command", "jam", "sync", "nowPlaying", "scan", "playlist", "requests", "songsRemoved"];
 
 fn device_ok(id: &str) -> bool {
     (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')

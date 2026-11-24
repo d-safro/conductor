@@ -120,7 +120,8 @@ EXTENSIONS = {
                       "`playlist` (`id`, `deleted`: one of yours, changed by an app, a friend, an import or its undo, "
                       "ListenBrainz or Spotify sync, On trial, a mix, or a song that arrived for it), `requests` (what you asked for changed: a song "
                       "found, its download's progress by 10%, arrived, kept; an admin hears of any change, Lidarr's "
-                      "albums too: getRequests; looked at every 3 s, so at most that often).\n"
+                      "albums too: getRequests; looked at every 3 s, so at most that often), `songsRemoved` (`ids`: "
+                      "songs an admin removed for good; drop your downloads of them and take them out of the queue).\n"
                       "- A keep-alive comment (`: keep-alive`, with the newest `id:`) every 20 s, so proxies keep "
                       "the stream open. Behind Caddy nothing is needed (it doesn't hold back event streams); nginx "
                       "is told by `X-Accel-Buffering: no`.\n"
@@ -128,6 +129,19 @@ EXTENSIONS = {
                       "replaces the older one. A stream that doesn't read what it's sent is closed, not buffered. A "
                       "changed password or a deleted API key ends it within a keep-alive.\n"
                       "- The event fields are below, under each event's name.\n"),
+    "encore.removeSongs": ("Take songs out of every library for good (admins only). Ask what would go first, show "
+                           "it and ask the user; then remove exactly those songs.",
+                           [("getSongRemoval", "Admins. `id` (repeat it): each song and its other copies (the same "
+                             "title by the same artist, as long within 3 s, in any library), with each one's library, "
+                             "file and size."),
+                            ("removeSongs", "Admins. `id` (repeat it), `confirm=permanently` (required): delete these "
+                             "songs' files (and a `.lrc` beside one), take them out of every playlist and play queue, "
+                             "and set a song Conductor downloaded aside so it isn't fetched again. `removed` and "
+                             "`failed` (ids). Every app hears `songsRemoved`.")],
+                           "- Nothing is deleted unless every song given can be (its drive connected; not when the "
+                           "server is read-only).\n"
+                           "- A song kept in a Lidarr album folder may be fetched again by Lidarr if it then wants the "
+                           "album.\n"),
     "encore.requests": ("The songs asked for (Stagehand: hearted or added ⬇ songs, synced playlists; Audition: songs "
                         "played on trial; Repertoire's mixes; ListenBrainz discoveries) and the albums Lidarr wants, "
                         "and how getting each is going, as Podium's admin page shows them. An admin sees all of them "

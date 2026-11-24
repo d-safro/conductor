@@ -1,0 +1,14 @@
+{
+  "songsRemoved": [
+    "object"
+  ],
+  "songsRemoved.failed": [
+    "array"
+  ],
+  "songsRemoved.removed": [
+    "array"
+  ],
+  "songsRemoved.removed[]": [
+    "string"
+  ]
+}

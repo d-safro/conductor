@@ -11,6 +11,7 @@ mod imports;
 mod info;
 mod for_you;
 mod items;
+mod removal;
 mod requests_api;
 mod scrobbling;
 pub(crate) mod media;
@@ -435,6 +436,7 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
             { "name": "encore.forYou", "versions": [1] },
             { "name": "encore.events", "versions": [1] },
             { "name": "encore.requests", "versions": [1] },
+            { "name": "encore.removeSongs", "versions": [1] },
         ] })),
         "getMusicFolders" => browse::music_folders(c).await,
         "getArtists" => browse::artists(c, false).await,
@@ -541,6 +543,8 @@ async fn dispatch_plain(c: &Ctx, method: &str) -> Result<Reply, ApiError> {
         "setRequestAside" => requests_api::set_request_aside(c).await,
         "searchRequestFiles" => requests_api::search_request_files(c).await,
         "pickRequestFile" => requests_api::pick_request_file(c).await,
+        "getSongRemoval" => removal::get_song_removal(c).await,
+        "removeSongs" => removal::remove_songs(c).await,
         "getPodcasts" => podcasts::get_podcasts(c).await,
         "getNewestPodcasts" => podcasts::newest(c).await,
         "getPodcastEpisode" => podcasts::get_episode(c).await,
