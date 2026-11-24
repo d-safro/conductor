@@ -626,3 +626,78 @@ async fn a_changed_password_or_stopping_server_ends_the_stream() {
     s.st.live.close_streams();
     assert!(mine.ends(5).await, "stopping the server didn't end the stream");
 }
+
+#[tokio::test]
+async fn a_song_removed_for_good_is_gone_everywhere_and_every_app_hears() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    let music = s._dir.path().join("music");
+    // another copy of "One", in another folder (same title, artist and length)
+    tone(&music.join("Copies/One.flac"), "One", 1);
+    library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let raw = async |user: &str, method: &str, params: &[(&str, &str)]| -> Value {
+        let r: Value = s.http.get(s.url(user, method, params)).send().await.unwrap().json().await.unwrap();
+        r["subsonic-response"].clone()
+    };
+    let one = s.song().await;
+    let two = s.ok("search3", &[("query", "Two")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+
+    // what would go: "One" and its copy; only an admin may ask
+    assert_eq!(raw(OTHER, "getSongRemoval", &[("id", &one)]).await["error"]["code"], 50);
+    let r = s.ok("getSongRemoval", &[("id", &one)]).await["songRemoval"].clone();
+    assert_eq!(r["count"], 2, "{r}");
+    assert_eq!(r["song"][0]["id"], one.as_str(), "the song asked about first");
+    let paths: Vec<&str> = r["song"].as_array().unwrap().iter().map(|x| x["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"Copies/One.flac") && paths.contains(&"Alpha/First/01 One.flac"), "{paths:?}");
+    assert_eq!(r["song"][0]["library"], "Music");
+    let copy = r["song"].as_array().unwrap().iter().find(|x| x["id"] != one.as_str()).unwrap()["id"].as_str().unwrap().to_string();
+
+    // in a playlist and the play queue; Conductor downloaded it
+    let pl = s.ok("createPlaylist", &[("name", "Mine"), ("songId", &one), ("songId", &two), ("songId", &copy)]).await["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    s.ok("savePlayQueue", &[("id", &one), ("id", &two), ("current", &one)]).await;
+    sqlx::query(
+        "INSERT INTO request (key, title, artists_json, album, duration_ms, folder, asked_at, status, local_id, rel)
+         VALUES ('dz-t-1', 'One', '[\"Alpha\"]', 'First', 2000, 'Songs', 0, 'done', ?, 'Copies/One.flac')",
+    )
+    .bind(&copy)
+    .execute(&s.st.db)
+    .await
+    .unwrap();
+
+    // not without saying so, and not for anyone but an admin
+    assert_eq!(raw(USER, "removeSongs", &[("id", &one)]).await["error"]["code"], 10);
+    assert_eq!(raw(OTHER, "removeSongs", &[("id", &one), ("confirm", "permanently")]).await["error"]["code"], 50);
+    assert!(music.join("Alpha/First/01 One.flac").is_file());
+
+    let mut theirs = s.open(OTHER, &[]).await;
+    let r = s.ok("removeSongs", &[("id", &one), ("id", &copy), ("confirm", "permanently")]).await["songsRemoved"].clone();
+    assert_eq!(r["removed"], json!([one, copy]), "{r}");
+    assert_eq!(r["failed"], json!([]));
+    assert!(!music.join("Alpha/First/01 One.flac").exists() && !music.join("Copies/One.flac").exists());
+    assert!(!music.join("Copies").exists(), "an emptied folder goes too");
+    assert!(music.join("Alpha/First/02 Two.flac").is_file());
+    // every app hears
+    let e = loop {
+        let e = theirs.event(Duration::from_secs(5)).await.expect("songsRemoved");
+        if e.event == "songsRemoved" {
+            break e;
+        }
+    };
+    assert_eq!(e.data["ids"], json!([one, copy]));
+    // gone from the library, the playlist and the queue; the download isn't fetched again
+    assert!(s.ok("search3", &[("query", "One")]).await["searchResult3"]["song"].as_array().is_none_or(|a| a.is_empty()));
+    let songs = s.ok("getPlaylist", &[("id", &pl)]).await["playlist"]["entry"].clone();
+    assert_eq!(songs.as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect::<Vec<_>>(), [two.as_str()]);
+    let q = s.ok("getPlayQueue", &[]).await["playQueue"].clone();
+    assert_eq!(q["entry"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect::<Vec<_>>(), [two.as_str()], "{q}");
+    let (status, local): (String, Option<String>) =
+        sqlx::query_as("SELECT status, local_id FROM request WHERE key = 'dz-t-1'").fetch_one(&s.st.db).await.unwrap();
+    assert_eq!((status.as_str(), local), ("skipped", None));
+    // a song that's gone already: nothing to remove
+    assert_eq!(raw(USER, "removeSongs", &[("id", &one), ("confirm", "permanently")]).await["error"]["code"], 70);
+}

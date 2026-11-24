@@ -1,0 +1,41 @@
+{
+  "songRemoval": [
+    "object"
+  ],
+  "songRemoval.count": [
+    "number"
+  ],
+  "songRemoval.size": [
+    "number"
+  ],
+  "songRemoval.song": [
+    "array"
+  ],
+  "songRemoval.song[]": [
+    "object"
+  ],
+  "songRemoval.song[].album": [
+    "string"
+  ],
+  "songRemoval.song[].artist": [
+    "string"
+  ],
+  "songRemoval.song[].duration": [
+    "number"
+  ],
+  "songRemoval.song[].id": [
+    "string"
+  ],
+  "songRemoval.song[].library": [
+    "string"
+  ],
+  "songRemoval.song[].path": [
+    "string"
+  ],
+  "songRemoval.song[].size": [
+    "number"
+  ],
+  "songRemoval.song[].title": [
+    "string"
+  ]
+}

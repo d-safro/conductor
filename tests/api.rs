@@ -6007,3 +6007,20 @@ async fn a_song_fetched_for_an_album_joins_it_and_the_album_list_is_kept() {
         sqlx::query_scalar("SELECT local_id FROM album_song WHERE album_id = ? ORDER BY pos").bind(&album).fetch_all(&s.st.db).await.unwrap();
     assert_eq!(kept, [Some(local.clone()), Some(uh)]);
 }
+
+#[tokio::test]
+async fn an_admin_removes_a_song_for_good() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let s = Server::start().await;
+    tone(&s.music.join("A/B/Gone.flac"), "Gone", "Artist", "Album", 1, 2);
+    tone(&s.music.join("A/B/Stays.flac"), "Stays", "Artist", "Album", 2, 2);
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let id = s.ok("search3", &[("query", "Gone")]).await["searchResult3"]["song"][0]["id"].as_str().unwrap().to_string();
+    let r = s.ok("getSongRemoval", &[("id", &id)]).await;
+    assert_eq!(r["songRemoval"]["song"][0]["path"], "A/B/Gone.flac", "{r}");
+    let r = s.ok("removeSongs", &[("id", &id), ("confirm", "permanently")]).await;
+    assert_eq!(r["songsRemoved"]["removed"][0], id.as_str());
+    assert!(!s.music.join("A/B/Gone.flac").exists() && s.music.join("A/B/Stays.flac").is_file());
+}
