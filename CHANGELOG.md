@@ -4,6 +4,15 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.7.1 (2026-11-24)
+
+### Fixed
+- **An album named with a subtitle shows all its songs:** an album filed as "Акустика: История Аквариума - Том I"
+  is just "Акустика" on Deezer, so its page showed only your songs. Conductor now also looks for its main title
+  (before ": " or ". "), for each name of an artist written "Aquarium [Аквариум]", and for the title alone when
+  Deezer has the artist under a name in another alphabet ("Aquarium" for "Аквариум"). A match by the main title
+  counts only when at least half your songs are on it.
+
 ## 1.7.0 (2026-11-24)
 
 ### New
