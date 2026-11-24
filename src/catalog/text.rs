@@ -135,6 +135,23 @@ pub fn clean_album(name: &str) -> String {
     clean_title(name)
 }
 
+/// The main title of an album named with a subtitle, which is often all a catalog calls it: "Акустика: История
+/// Аквариума - Том I", "Акустика. История Аквариума. Том I" → "Акустика". None without one ("St. Elsewhere" has
+/// none: a main title is three letters or more).
+pub fn main_title(name: &str) -> Option<String> {
+    let c = clean_album(name);
+    let at = [": ", ". ", " — ", " – "].iter().filter_map(|j| c.find(j)).min()?;
+    let m = c[..at].trim();
+    (m.chars().count() >= 3).then(|| m.to_string())
+}
+
+/// The names of an artist written with another in brackets: "Aquarium [Аквариум]" → "Aquarium", "Аквариум".
+pub fn bracket_names(name: &str) -> Vec<String> {
+    static BRACKETS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.+?)\s*[\[(](.+?)[\])]\s*$").unwrap());
+    let Some(m) = BRACKETS.captures(name.trim()) else { return vec![] };
+    [&m[1], &m[2]].iter().map(|x| x.trim().to_string()).filter(|x| x.chars().count() >= 2).collect()
+}
+
 /// Title key: "Movin' Out (Anthony's Song) - 2008 Remaster" → "movinout".
 pub fn tk(title: &str) -> String {
     norm(&clean_title(title))
@@ -218,6 +235,15 @@ mod tests {
         assert_eq!(lead_artist("Daft Punk feat. Pharrell Williams").as_deref(), Some("Daft Punk"));
         assert_eq!(lead_artist("Simon & Garfunkel").as_deref(), Some("Simon"));
         assert_eq!(lead_artist("Аквариум"), None);
+        assert_eq!(main_title("Акустика: История Аквариума - Том I").as_deref(), Some("Акустика"));
+        assert_eq!(main_title("Акустика. История Аквариума. Том I").as_deref(), Some("Акустика"));
+        assert_eq!(main_title("Акустика: История Аквариума, том I").as_deref(), Some("Акустика"));
+        assert_eq!(main_title("Exile on Main St. (2009 Re-Mastered)"), None);
+        assert_eq!(main_title("St. Elsewhere"), None);
+        assert_eq!(main_title("Акустика"), None);
+        assert_eq!(bracket_names("Aquarium [Аквариум]"), ["Aquarium", "Аквариум"]);
+        assert!(bracket_names("Аквариум").is_empty());
+        assert!(same_artist("Aquarium [Аквариум]", "Aquarium") && same_artist("Аквариум", "Aquarium"));
         assert_eq!(lead_artist("AC/DC"), None);
         assert!(same_artist("Андрей Макаревич & Папоротник", "Андрей Макаревич"));
         assert!(is_various("Various Artists") && is_various("Разные исполнители") && !is_various("Various Cruelties"));

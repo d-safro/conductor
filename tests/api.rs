@@ -856,6 +856,20 @@ async fn fake_services(downloads: std::path::PathBuf, flac: Vec<u8>) -> (String,
                 ] }),
                 "/album/80/tracks" => side(8000, &["Opening", "Second Song", "Closing"]),
                 "/album/80" => json!({ "id": 80, "title": "Guest Night", "artist": { "id": 5080, "name": "Various Artists" }, "nb_tracks": 3 }),
+                // an album Deezer has only by its main title ("Acoustics"), under the artist's Latin name, and found
+                // only by the title alone; and another artist's album of the same name
+                "/search/album" if q.contains("acoustics") => json!({ "data": if q.contains("story") || q.contains("live") || q.contains("delta") || q.contains("%d0") {
+                    vec![]
+                } else {
+                    vec![
+                        json!({ "id": 91, "title": "Acoustics", "artist": { "id": 5091, "name": "Someone Else" }, "record_type": "album", "nb_tracks": 2 }),
+                        json!({ "id": 90, "title": "Acoustics", "artist": { "id": 5090, "name": "Delta" }, "record_type": "album", "nb_tracks": 4 }),
+                    ]
+                } }),
+                "/album/90/tracks" => side(9000, &["Song for a New Life", "Roots", "Steel", "To My Star"]),
+                "/album/91/tracks" => side(9100, &["Other One", "Other Two"]),
+                "/album/90" => json!({ "id": 90, "title": "Acoustics", "artist": { "id": 5090, "name": "Delta" }, "nb_tracks": 4 }),
+                "/album/91" => json!({ "id": 91, "title": "Acoustics", "artist": { "id": 5091, "name": "Someone Else" }, "nb_tracks": 2 }),
                 // Deezer has no "Alpha & The Band", only Alpha
                 "/search/album" if q.contains("alpha") && q.contains("band") => json!({ "data": [] }),
                 "/search/album" if q.contains("alpha") => json!({ "data": [first] }),
@@ -5877,6 +5891,52 @@ async fn an_album_deezer_lists_as_various_artists_is_completed_only_when_its_son
         let al = s.ok("getAlbum", &[("id", &id)]).await;
         let titles: Vec<&str> = al["album"]["song"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
         assert_eq!(titles, want, "{who}");
+    }
+}
+
+#[tokio::test]
+async fn an_album_named_with_a_subtitle_is_completed_from_its_main_title() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dz, _) = fake_services(tmp.path().join("complete"), vec![]).await;
+    let s = Server::start_with(|c| {
+        c.deezer_url = dz.clone();
+        c.catalog = true;
+    })
+    .await;
+    // the same record filed three ways (two with its subtitle, one under the artist's Cyrillic name), and another
+    // album with the same main title and none of its songs
+    let filed = [
+        ("Delta [Дельта]", "Acoustics: The Story of Delta - Vol. I", "Roots"),
+        ("Delta [Дельта]", "Acoustics: The Story of Delta - Vol. I", "Steel"),
+        ("Дельта", "Acoustics", "To My Star"),
+        ("Delta", "Acoustics: Live at Home", "Encore Jam"),
+    ];
+    for (i, (who, album, title)) in filed.into_iter().enumerate() {
+        let tags = [("title", title), ("artist", who), ("album_artist", who), ("album", album)];
+        tone_tags(&s.music.join(format!("Delta/{i} {title}.flac")), i as u32 + 1, &tags);
+    }
+    conductor::library::scan(&s.st.db, &s.st.libs, &s.st.scan, false).await.unwrap();
+    let albums = s.ok("search3", &[("query", "Acoustics"), ("songCount", "0"), ("artistCount", "0")]).await["searchResult3"]["album"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let whole = ["Song for a New Life", "Roots", "Steel", "To My Star"];
+    for (album, mine, want) in [
+        ("Acoustics: The Story of Delta - Vol. I", vec!["Roots", "Steel"], whole.to_vec()),
+        ("Acoustics", vec!["To My Star"], whole.to_vec()),
+        ("Acoustics: Live at Home", vec!["Encore Jam"], vec!["Encore Jam"]),
+    ] {
+        let id = albums.iter().find(|a| a["name"] == album).unwrap_or_else(|| panic!("{album}: {albums:?}"))["id"].as_str().unwrap().to_string();
+        let al = s.ok("getAlbum", &[("id", &id)]).await;
+        let songs = al["album"]["song"].as_array().unwrap();
+        let titles: Vec<&str> = songs.iter().map(|x| x["title"].as_str().unwrap().trim_start_matches("⬇ ")).collect();
+        assert_eq!(titles, want, "{album}");
+        for m in mine {
+            assert!(songs.iter().any(|x| x["title"] == m), "{album}: {m} is yours, not ⬇");
+        }
     }
 }
 
