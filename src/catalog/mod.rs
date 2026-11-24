@@ -350,54 +350,75 @@ pub async fn album_tracks(st: &AppState, album_id: &str) -> Vec<Value> {
 pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[String]) -> Option<String> {
     // artists credited together ("Андрей Макаревич & Папоротник") are often under the first one only: searched
     // for that too when the whole name finds nothing.
-    let lead = text::lead_artist(artist);
-    // (`v2`: what's kept is looked for the 1.5.2 way, the first-named artist and "Various Artists" too; a miss kept
-    // by an older version is asked again rather than trusted for a week)
-    let key = format!("{}|{}|v2", ak(artist), alk(name));
+    // An artist written with another name in brackets ("Aquarium [Аквариум]") is searched for by each name too.
+    let mut names = vec![artist.to_string()];
+    for x in text::lead_artist(artist).into_iter().chain(text::bracket_names(artist)) {
+        if !names.contains(&x) {
+            names.push(x);
+        }
+    }
+    // (`v3`: what's kept is looked for the 1.7.1 way, by the main title of one with a subtitle and by the title
+    // alone too; a miss kept by an older version is asked again rather than trusted for a week)
+    let key = format!("{}|{}|v3", ak(artist), alk(name));
     if let Some(hit) = cache_get(st, "album", &key, 7).await {
         return hit;
     }
     let mut cands: Vec<Value> = vec![];
     let clean = text::clean_album(name);
-    for who in std::iter::once(artist.to_string()).chain(lead) {
+    // an album named with a subtitle ("Акустика: История Аквариума - Том I") may be only its main title in Deezer
+    // ("Акустика"): looked for when the whole title finds nothing, and taken only when most of your songs are on it
+    let main = text::main_title(name).filter(|m| alk(m) != alk(&clean));
+    let looked_for: Vec<&String> = std::iter::once(&clean).chain(main.as_ref()).collect();
+    'search: for title in &looked_for {
+        for who in &names {
+            if !cands.is_empty() {
+                break 'search;
+            }
+            for q in [format!(r#"artist:"{who}" album:"{title}""#), format!("{who} {title}")] {
+                let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
+                    // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless
+                    // the first search already found something to go on
+                    if cands.is_empty() {
+                        return None;
+                    }
+                    break;
+                };
+                for a in found {
+                    // (an album of the lead artist's counts: "Андрей Макаревич" is in "Андрей Макаревич & Папоротник")
+                    if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
+                        cands.push(a);
+                    }
+                }
+                // both searches, always: the exact one can find only a bigger edition ("Sticky Fingers (Super
+                // Deluxe)", and a live album that isn't a match) while the album itself ("Sticky Fingers
+                // (Remastered)") comes up only in the plain one. (One more request per album; kept for a week.)
+            }
+        }
+    }
+    // nothing found with the artist's name: Deezer may have the artist under a name of another alphabet ("Aquarium"
+    // for "Аквариум"), found only by the title alone; or the album may be one it lists as "Various Artists" (a
+    // record with guests on most songs, taken only when at least half your songs are on it, below)
+    for title in &looked_for {
         if !cands.is_empty() {
             break;
         }
-        for q in [format!(r#"artist:"{who}" album:"{clean}""#), format!("{who} {clean}")] {
-            let Some(found) = st.catalog.dz.try_list("search/album", &[("q", &q), ("limit", "15")]).await else {
-                // Deezer didn't answer: nothing is kept (it's asked again next time, not a week later), unless the
-                // first search already found something to go on
-                if cands.is_empty() {
-                    return None;
-                }
-                break;
-            };
-            for a in found {
-                // (an album of the lead artist's counts: "Андрей Макаревич" is in "Андрей Макаревич & Папоротник")
-                if same_artist(artist, s(&a["artist"], "name")) && !cands.iter().any(|c| n(c, "id") == n(&a, "id")) {
-                    cands.push(a);
-                }
-            }
-            // both searches, always: the exact one can find only a bigger edition ("Sticky Fingers (Super Deluxe)",
-            // and a live album that isn't a match) while the album itself ("Sticky Fingers (Remastered)") comes up
-            // only in the plain one. (One more request per album; the match is kept for a week.)
-        }
-    }
-    // nothing by the artist: the album may be one Deezer lists as "Various Artists" (a record with guests on most
-    // songs). Taken only when at least half your songs are on it (below).
-    if cands.is_empty() {
         // (Deezer didn't answer: nothing is kept)
-        let found = st.catalog.dz.try_list("search/album", &[("q", &clean), ("limit", "15")]).await?;
-        cands.extend(found.into_iter().filter(|a| text::is_various(s(&a["artist"], "name"))));
+        let found = st.catalog.dz.try_list("search/album", &[("q", title.as_str()), ("limit", "25")]).await?;
+        cands.extend(found.into_iter().filter(|a| {
+            let by = s(&a["artist"], "name");
+            text::is_various(by) || same_artist(artist, by)
+        }));
     }
     let want = alk(name);
+    let want_main = main.as_deref().map(alk);
     let mine = edition_tier(name);
-    let mut scored: Vec<(f64, Value)> = vec![];
+    let mut scored: Vec<(f64, bool, Value)> = vec![];
     for a in cands {
-        let sim = ratio(&want, &alk(s(&a, "title")));
-        if sim < 0.85 {
-            continue;
-        }
+        let title = alk(s(&a, "title"));
+        let whole = ratio(&want, &title);
+        let by_main = want_main.as_deref().map(|m| ratio(m, &title)).unwrap_or(0.0);
+        // (by its main title: below an album named in full, and only with most of your songs on it)
+        let (sim, short) = if whole >= 0.85 { (whole, false) } else if by_main >= 0.85 { (by_main - 0.5, true) } else { continue };
         let mut sc = sim * 2.0 + if s(&a, "title").trim().eq_ignore_ascii_case(name.trim()) { 1.0 } else { 0.0 };
         sc += if s(&a, "record_type") == "album" { 0.5 } else { 0.0 };
         // the plain album first, then a remaster of it (the same songs), and only then a deluxe edition (unless
@@ -407,12 +428,12 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
             1 => sc -= 0.5,
             _ => sc -= 1.5,
         }
-        scored.push((sc, a));
+        scored.push((sc, short, a));
     }
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     let have: HashSet<String> = titles.iter().map(|t| tk(t)).collect();
     let mut best: Option<(f64, String)> = None;
-    for (sc, a) in scored.into_iter().take(4) {
+    for (sc, short, a) in scored.into_iter().take(4) {
         let tracks = album_tracks(st, &n(&a, "id").to_string()).await;
         // how many of your songs it has, each counted once: a deluxe edition with two takes of one of them ("Wild
         // Horses (2009 Mix)" and "(Acoustic Version)") isn't a better match for it
@@ -420,6 +441,9 @@ pub async fn match_album(st: &AppState, artist: &str, name: &str, titles: &[Stri
         let cover = have.iter().filter(|h| keys.contains(*h)).count() as f64 / have.len().max(1) as f64;
         if text::is_various(s(&a["artist"], "name")) && !same_artist(artist, s(&a["artist"], "name")) && cover < 0.5 {
             continue; // anyone's compilation with this name
+        }
+        if short && cover < 0.5 {
+            continue; // another album with the same main title
         }
         // (all else the same: the one with fewer songs, nearer the album as it came out)
         let total = sc + cover * 3.0 - tracks.len() as f64 * 0.001;
