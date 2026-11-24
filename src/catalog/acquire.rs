@@ -398,6 +398,7 @@ async fn check_transfers(st: &AppState, sl: &Slskd) -> Result<usize> {
                 let remove = format!("/transfers/downloads/{}/{}?remove=true", urlencode(user), urlencode(tid));
                 if state.contains("Succeeded") {
                     let Some(src) = st.cfg.slskd_downloads.as_deref().and_then(|d| locate(d, file)) else { continue };
+                    tag_into_album(st, &r.key, &src).await;
                     match file_it(st, r, &src).await {
                         Ok(rel) => {
                             sqlx::query("UPDATE request SET status = 'done', rel = ?, arrived_at = ? WHERE key = ?")
@@ -488,6 +489,55 @@ async fn file_it(st: &AppState, r: &Req, src: &Path) -> Result<String> {
     }
     move_into(src, &dst).await?;
     Ok(rel)
+}
+
+/// A song missing from one of your albums (listed there ⬇) joins it when it arrives: the download is tagged with the
+/// album's name, artist, year and genre and the song's disc and track number on it (its title and artist stay the
+/// download's). Otherwise it would be an album of its own, named and numbered however whoever shared it tagged it.
+async fn tag_into_album(st: &AppState, key: &str, src: &Path) {
+    let Some(into) = super::albums::filed_into(st, key).await else { return };
+    let path = src.to_path_buf();
+    let what = into.clone();
+    match tokio::task::spawn_blocking(move || write_album_tags(&path, &what)).await {
+        Ok(Ok(())) => info!(album = %into.album, track = into.track, "filed into your album"),
+        Ok(Err(e)) => warn!(album = %into.album, "couldn't tag a download for its album: {e:#}"),
+        Err(e) => warn!("tagging a download: {e}"),
+    }
+}
+
+pub(crate) fn write_album_tags(path: &Path, into: &super::albums::FiledInto) -> Result<()> {
+    use lofty::{
+        config::WriteOptions,
+        prelude::*,
+        tag::{ItemKey, Tag},
+    };
+    let mut tf = lofty::read_from_path(path)?;
+    if tf.primary_tag().is_none() {
+        // (an MP3 with only an ID3v1 tag: its title and artist come along into the new one)
+        let mut tag = Tag::new(tf.primary_tag_type());
+        for item in tf.first_tag().map(|t| t.items().cloned().collect::<Vec<_>>()).unwrap_or_default() {
+            tag.insert(item);
+        }
+        tf.insert_tag(tag);
+    }
+    let tag = tf.primary_tag_mut().ok_or_else(|| anyhow!("no tag"))?;
+    tag.set_album(into.album.clone());
+    tag.remove_key(&ItemKey::AlbumArtist);
+    tag.insert_text(ItemKey::AlbumArtist, into.album_artist.clone());
+    tag.remove_track_total();
+    tag.set_track(into.track.max(1) as u32);
+    tag.remove_disk_total();
+    tag.set_disk(into.disc.max(1) as u32);
+    if let Some(y) = into.year {
+        tag.remove_key(&ItemKey::Year);
+        tag.remove_key(&ItemKey::RecordingDate);
+        tag.set_year(y as u32);
+    }
+    if let Some(g) = &into.genre {
+        tag.set_genre(g.clone());
+    }
+    tag.save_to_path(path, WriteOptions::default())?;
+    Ok(())
 }
 
 /// Move a file to `dst` (which isn't there). From another drive it's copied under a hidden name beside `dst` and
@@ -779,6 +829,7 @@ async fn upgrade_transfer(st: &AppState, sl: &Slskd, u: &Upgrade, f: &Value) -> 
     if state.contains("Succeeded") {
         let file = u.up_file.clone().unwrap_or_default();
         let Some(src) = st.cfg.slskd_downloads.as_deref().and_then(|d| locate(d, &file)) else { return Ok(()) };
+        tag_into_album(st, &u.req.key, &src).await;
         match swap_in(st, u, &src).await {
             Ok(rel) => {
                 sqlx::query(

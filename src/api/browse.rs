@@ -113,7 +113,7 @@ pub async fn album(c: &Ctx) -> Result<Reply, ApiError> {
     let id = c.p.req("id")?;
     let a =
         items::albums_where(c, "al.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Album"))?;
-    let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number, t.sort_title").await?;
+    let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY COALESCE(t.disc, 1), t.number, t.sort_title").await?;
     let mut v = album_json(&a);
     v["song"] = songs.iter().map(song_json).collect();
     ok(json!({ "album": v }))
@@ -148,7 +148,7 @@ pub async fn directory(c: &Ctx) -> Result<Reply, ApiError> {
                 .into_iter()
                 .next()
                 .ok_or_else(|| ApiError::not_found("Album"))?;
-            let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY t.disc, t.number").await?;
+            let songs = items::tracks_where(c, "t.album_id = ?", &[id], "ORDER BY COALESCE(t.disc, 1), t.number").await?;
             let mut d = json!({ "id": a.id, "name": a.name, "parent": a.artist_id, "songCount": a.song_count,
                 "playCount": a.play_count.unwrap_or(0), "userRating": a.rating.unwrap_or(0),
                 "child": songs.iter().map(song_json).collect::<Vec<_>>() });
@@ -225,7 +225,7 @@ pub async fn songs_by_genre(c: &Ctx) -> Result<Reply, ApiError> {
         c,
         &format!("{} AND {}", crate::library::has_genre_sql("t.genre"), Folders::of(c)?.tracks()),
         &[g],
-        &format!("ORDER BY t.album_name, t.disc, t.number LIMIT {count} OFFSET {offset}"),
+        &format!("ORDER BY t.album_name, COALESCE(t.disc, 1), t.number LIMIT {count} OFFSET {offset}"),
     )
     .await?;
     ok(json!({ "songsByGenre": { "song": rows.iter().map(song_json).collect::<Vec<_>>() } }))

@@ -2,7 +2,7 @@
 
 <!-- Written by tools/api_docs.py from its EXTENSIONS, the handlers in src/ and docs/api/shapes/: edit those, then run it. -->
 
-Stagehand: songs you don't have, from Deezer, marked ⬇ / ⏳ / ✕. They appear in search3, getAlbum and getArtist answers with `dz-…` ids (accepted everywhere an id is); hearting or adding one asks for it. Only with a downloader (or `catalog = true`).
+Stagehand: songs you don't have, from Deezer, marked ⬇ / ⏳ / ✕. They appear in search3, getAlbum and getArtist answers with `dz-…` ids (accepted everywhere an id is); hearting or adding one asks for it. Only with a downloader (or `catalog = true`). A library album's list from Deezer is looked up once and kept; a ⬇ song from it is filed into that album when it's downloaded (tagged with the album's name, artist, year, genre, disc and track).
 
 ## `lookupSongs`
 

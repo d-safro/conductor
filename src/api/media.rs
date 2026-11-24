@@ -152,7 +152,7 @@ async fn zip_of(c: &Ctx, id: &str, artist: bool) -> Result<Reply, ApiError> {
         let a = items::albums_where(c, "al.id = ?", &[id], "").await?.into_iter().next().ok_or_else(|| ApiError::not_found("Album"))?;
         ("t.album_id = ?", format!("{} - {}", a.artist_name, a.name))
     };
-    let songs = items::tracks_where(c, cond, &[id], "ORDER BY al.year, al.sort_name, al.id, t.disc, t.number, t.sort_title").await?;
+    let songs = items::tracks_where(c, cond, &[id], "ORDER BY al.year, al.sort_name, al.id, COALESCE(t.disc, 1), t.number, t.sort_title").await?;
     let discs: std::collections::HashMap<&str, i64> = songs.iter().fold(Default::default(), |mut m, t| {
         let e = m.entry(t.album_id.as_str()).or_insert(0);
         *e = (*e).max(t.disc.unwrap_or(1));

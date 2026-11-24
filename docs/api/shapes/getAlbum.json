@@ -263,6 +263,9 @@
   "album.song[].sortName": [
     "string"
   ],
+  "album.song[].starred": [
+    "string"
+  ],
   "album.song[].suffix": [
     "string"
   ],

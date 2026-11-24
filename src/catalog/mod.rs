@@ -5,6 +5,7 @@
 //! Marks at the start of titles (for apps that don't read `lookupState`): ⬇ not asked for · ⏳ on its way · ✕ not found.
 
 pub mod acquire;
+pub mod albums;
 pub mod deezer;
 pub mod lidarr;
 pub mod requests;
