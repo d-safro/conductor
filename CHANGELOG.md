@@ -4,6 +4,16 @@ What changed in each release, newest first. The full notes for each are on the
 [releases page](https://github.com/d-safro/conductor/releases); what stays the same from 1.0 on is in
 [docs/STABILITY.md](docs/STABILITY.md).
 
+## 1.7.0 (2026-11-24)
+
+### New
+- **Remove a song for good** (`encore.removeSongs`, admins only; Encore 1.19's "Remove from library…"): a song and
+  every other copy of it (the same title by the same artist, as long, in any library) is deleted from the server.
+  The app asks what would go first and shows each file. Then the files go, the song leaves every playlist and play
+  queue, a song Conductor downloaded is set aside so it isn't fetched again, and every app hears it and drops its
+  download. Nothing is deleted without `confirm=permanently`, or when the drive isn't connected or the server is
+  read-only.
+
 ## 1.6.0 (2026-11-23)
 
 ### New
